@@ -70,20 +70,21 @@ Strings inside `launchArgs` and `attachArgs` support runtime token substitution:
 }
 ```
 
-#### Compiled Native Executable (`exe-cdp`)
+#### Pure Node.js Localization Daemon (`node-cdp`)
 ```json
 {
   "id": "antigravity-hans",
   "name": "Antigravity Hans (Dynamic Localization)",
-  "description": "Injects UI localization via event-driven CDP hooks.",
+  "description": "Pure Node.js CDP localization daemon with zero .exe binaries.",
   "enabled": true,
   "autoAttach": true,
-  "type": "exe-cdp",
-  "command": "plugins\\antigravity-hans\\antigravity-hans-windows-amd64.exe",
-  "launchArgs": ["--app", "--attach-only"],
-  "attachArgs": ["--app", "--attach-only"],
-  "stopArgs": ["--stop"],
-  "processMatch": "antigravity-hans-windows-amd64.exe"
+  "type": "node-cdp",
+  "command": "node",
+  "launchArgs": ["plugins\\antigravity-hans\\index.js", "--daemon"],
+  "attachArgs": ["plugins\\antigravity-hans\\index.js", "--daemon"],
+  "stopArgs": ["plugins\\antigravity-hans\\index.js", "--stop"],
+  "healthUrl": "http://127.0.0.1:12397/health",
+  "processMatch": "antigravity-hans\\index.js"
 }
 ```
 

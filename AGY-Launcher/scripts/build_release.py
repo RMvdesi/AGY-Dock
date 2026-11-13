@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
 
 LAUNCHER_DIR = Path(__file__).resolve().parent.parent
@@ -90,63 +90,54 @@ def build_desktop_onedir(launcher_dir: Path, dist_dir: Path, build_dir: Path) ->
     return target_app_dir
 
 
-def create_payload_archive(app_dir: Path, payload_zip: Path) -> Path:
-    payload_zip.parent.mkdir(parents=True, exist_ok=True)
-    tmp_zip = payload_zip.with_suffix(".zip.tmp")
-    files = sorted((p for p in app_dir.rglob("*") if p.is_file()), key=lambda p: p.as_posix().lower())
-    with zipfile.ZipFile(tmp_zip, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-        for file_path in files:
-            rel = file_path.relative_to(app_dir).as_posix()
-            zf.write(file_path, arcname=rel)
-    tmp_zip.replace(payload_zip)
-    return payload_zip
+def find_iscc_executable() -> Path:
+    candidates: list[Path] = []
+    env_iscc = str(os.environ.get("ISCC_PATH") or "").strip()
+    if env_iscc:
+        candidates.append(Path(env_iscc))
+    for name in ("ISCC.exe", "ISCC"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(Path(found))
+    for env_key, suffix in (
+        ("ProgramFiles(x86)", ("Inno Setup 6", "ISCC.exe")),
+        ("ProgramFiles", ("Inno Setup 6", "ISCC.exe")),
+        ("LOCALAPPDATA", ("Programs", "Inno Setup 6", "ISCC.exe")),
+    ):
+        base = str(os.environ.get(env_key) or "").strip()
+        if base:
+            candidates.append(Path(base).joinpath(*suffix))
+
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+    raise FileNotFoundError(
+        "Missing Inno Setup compiler (ISCC.exe). Install JRSoftware.InnoSetup or set ISCC_PATH."
+    )
 
 
 def build_setup_installer(
     launcher_dir: Path,
     dist_dir: Path,
-    build_dir: Path,
-    payload_zip: Path,
+    app_dir: Path,
     version: str,
 ) -> Path:
-    icon_path = launcher_dir / "assets" / "app.ico"
-    example_cfg = launcher_dir / "plugins.example.json"
+    iss_path = launcher_dir / "scripts" / "installer.iss"
+    if not iss_path.is_file():
+        raise FileNotFoundError(f"Missing Inno Setup script: {iss_path}")
+
     setup_name = f"AGY-Plugin-Manager-Setup-v{version}"
     setup_exe = dist_dir / f"{setup_name}.exe"
     if setup_exe.exists():
         setup_exe.unlink()
 
+    iscc = find_iscc_executable()
     cmd = [
-        sys.executable,
-        "-m",
-        "PyInstaller",
-        "--noconfirm",
-        "--clean",
-        "--onefile",
-        "--windowed",
-        "--name",
-        setup_name,
-        "--icon",
-        str(icon_path),
-        "--paths",
-        str(launcher_dir),
-        "--exclude-module",
-        "PySide6",
-        "--exclude-module",
-        "shiboken6",
-        "--add-data",
-        f"{payload_zip};.",
-        "--add-data",
-        f"{icon_path};assets",
-        "--add-data",
-        f"{example_cfg};.",
-        "--distpath",
-        str(dist_dir),
-        "--workpath",
-        str(build_dir / "setup"),
-        "--specpath",
-        str(build_dir),
-        str(launcher_dir / "scripts" / "installer_ui.py"),
+        str(iscc),
+        f"/DAppVersion={version}",
+        f"/DAppDir={app_dir}",
+        f"/DOutputDir={dist_dir}",
+        str(iss_path),
     ]
     _run(cmd, cwd=launcher_dir)
 
@@ -176,8 +167,7 @@ def main() -> int:
     build_dir.mkdir(parents=True, exist_ok=True)
 
     app_dir = build_desktop_onedir(launcher_dir, dist_dir, build_dir)
-    payload_zip = create_payload_archive(app_dir, build_dir / "payload.zip")
-    setup_exe = build_setup_installer(launcher_dir, dist_dir, build_dir, payload_zip, version)
+    setup_exe = build_setup_installer(launcher_dir, dist_dir, app_dir, version)
 
     app_mb = sum(p.stat().st_size for p in app_dir.rglob("*") if p.is_file()) / (1024 * 1024)
     setup_mb = setup_exe.stat().st_size / (1024 * 1024)

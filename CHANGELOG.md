@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.2.0] - 2026-11-14
+
+### Changed
+- 将 `antigravity-hans` 动态汉化插件彻底重构为纯 Node.js（`node-cdp`）引擎，内置官方 `yuexps/Antigravity-Hans@v0.4.10` JS 脚本，移除 `.exe` 二进制文件，彻底消除火绒等安全软件启发式误报与删除问题（打包为 `antigravity-hans-v0.5.0.zip`）。
+- 使用标准 **Inno Setup 6 (`ISCC.exe`)** 替代 PyInstaller `--onefile` 自解压安装包，产出 `AGY-Plugin-Manager-Setup-v2.2.0.exe`，大幅降低安装阶段安全拦截，并提供标准安装/卸载与 `AGY Plugin Manager`、`Antigravity (AGY-Launcher)` 快捷方式。
+
+### Fixed
+- 修复目标机器未安装系统全局 `node.exe` 或 `PATH` 未刷新时启动插件报 `[WinError 2] 系统找不到指定的文件` 并导致 `--quick-launch` 闪退的问题：新增多路径 Node.js 搜索与 `Antigravity.exe`（`ELECTRON_RUN_AS_NODE=1`）自动回退运行时，同时排除插件宿主进程被误判为 IDE 主窗口。
+- 新增按插件粒度的启动异常隔离与 UI 状态自动刷新，单个插件失败不会中断 Antigravity 主程序拉起或阻断其他正常插件。
+
 ## [2.1.2] - 2026-11-14
 
 ### Fixed

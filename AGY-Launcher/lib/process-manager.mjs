@@ -24,7 +24,7 @@ const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_BASE_DIR = path.resolve(__dirname, '..');
 export const DEFAULT_NO_PROXY = '127.0.0.1,localhost,::1';
-export const APP_VERSION = '2.1.2';
+export const APP_VERSION = '2.2.0';
 export const DEFAULT_UPDATE_SITE_URL = 'https://ahmustudyhelper.xyz';
 export const DEFAULT_PRODUCT_SLUG = 'agy-plugin-manager';
 const UPDATE_SEMVER_RE = /^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$/;
@@ -105,6 +105,17 @@ export function parseDevToolsActivePort(raw) {
   };
 }
 
+const MANAGED_PLUGIN_SCRIPT_RE = /[\\/]+plugins[\\/]+[a-z0-9][a-z0-9._-]*[\\/]+[^\\/\s]+\.(?:m?js|cjs)(?:\s|$|["'])/i;
+
+/**
+ * Returns true when a process is hosting a managed JS plugin runtime.
+ */
+export function isManagedPluginRuntimeProcess(proc) {
+  if (!proc) return false;
+  const cmd = String(proc.CommandLine || '');
+  return cmd.toLowerCase().includes('--agy-node-runtime') || MANAGED_PLUGIN_SCRIPT_RE.test(cmd);
+}
+
 /**
  * Classifies Antigravity.exe processes into main GUI, sidecar runtime, and Chromium child processes.
  */
@@ -117,6 +128,7 @@ export function classifyAntigravityProcesses(processes) {
   for (const proc of processes || []) {
     const name = String(proc.Name || '');
     if (name.toLowerCase() !== 'antigravity.exe') continue;
+    if (isManagedPluginRuntimeProcess(proc)) continue;
     all.push(proc);
     const cmd = String(proc.CommandLine || '');
     if (/--type=/i.test(cmd)) {
@@ -1172,14 +1184,28 @@ export class AgyProcessManager {
     };
   }
 
-  resolveCommand(command) {
+  resolveCommandWithEnv(command, antigravityExe = '') {
     const cmd = String(command || '').trim();
     if (!cmd) throw new Error('插件启动命令不能为空');
-    if (path.isAbsolute(cmd)) return cmd;
-    if (cmd.includes('\\') || cmd.includes('/') || /\.(exe|cmd|bat|ps1)$/i.test(cmd)) {
-      return path.resolve(this.baseDir, cmd);
+    if (path.isAbsolute(cmd)) return { cmd, extraEnv: {} };
+    if (cmd.includes('\\') || cmd.includes('/') || /\.(cmd|bat|ps1)$/i.test(cmd)) {
+      return { cmd: path.resolve(this.baseDir, cmd), extraEnv: {} };
     }
-    return cmd;
+    if (cmd.toLowerCase() === 'node' || cmd.toLowerCase() === 'node.exe') {
+      const agy = String(antigravityExe || '').trim();
+      const hasNodeOnPath = process.execPath && /node(?:\.exe)?$/i.test(process.execPath) && existsSync(process.execPath);
+      if (hasNodeOnPath) return { cmd: process.execPath, extraEnv: {} };
+      if (agy && existsSync(agy)) return { cmd: agy, extraEnv: { ELECTRON_RUN_AS_NODE: '1' } };
+      return { cmd, extraEnv: {} };
+    }
+    if (/\.exe$/i.test(cmd)) {
+      return { cmd: path.resolve(this.baseDir, cmd), extraEnv: {} };
+    }
+    return { cmd, extraEnv: {} };
+  }
+
+  resolveCommand(command) {
+    return this.resolveCommandWithEnv(command).cmd;
   }
 
   getPluginArgs(plugin, mode = 'attach') {
@@ -1476,7 +1502,12 @@ foreach ($proc in (Get-Process -Id ${pidList} -ErrorAction SilentlyContinue)) {
           this.log(`跳过插件: ${plugin.id} (enabled=${Boolean(plugin.enabled)}, autoAttach=${plugin.autoAttach !== false})`);
           continue;
         }
-        results.push(await this.startPlugin(plugin.id, 'launch'));
+        try {
+          results.push(await this.startPlugin(plugin.id, 'launch'));
+        } catch (err) {
+          this.log(`启动插件 ${plugin.id} 失败: ${err.message}`, 'ERROR');
+          results.push({ id: plugin.id, status: 'error', error: err.message });
+        }
       }
 
       return { skipped: false, cdp, results, overview: await this.getOverview() };
@@ -1499,7 +1530,12 @@ foreach ($proc in (Get-Process -Id ${pidList} -ErrorAction SilentlyContinue)) {
         this.log(`跳过已禁用插件: ${plugin.id}`);
         continue;
       }
-      results.push(await this.startPlugin(plugin.id, 'attach'));
+      try {
+        results.push(await this.startPlugin(plugin.id, 'attach'));
+      } catch (err) {
+        this.log(`启动插件 ${plugin.id} 失败: ${err.message}`, 'ERROR');
+        results.push({ id: plugin.id, status: 'error', error: err.message });
+      }
     }
     return { cdp, results, overview: await this.getOverview() };
   }
@@ -1509,7 +1545,7 @@ foreach ($proc in (Get-Process -Id ${pidList} -ErrorAction SilentlyContinue)) {
     const plugin = config.plugins.find((p) => p.id === id);
     if (!plugin) throw new Error(`未找到插件: ${id}`);
 
-    const cmd = this.resolveCommand(plugin.command);
+    const { cmd, extraEnv } = this.resolveCommandWithEnv(plugin.command, config.antigravityExe || '');
     if ((cmd.includes(path.sep) || /\.(exe|cmd|bat|ps1)$/i.test(cmd)) && !existsSync(cmd)) {
       const msg = `插件可执行文件不存在，跳过 ${plugin.id}: ${cmd}`;
       this.log(msg, 'ERROR');
@@ -1539,7 +1575,7 @@ foreach ($proc in (Get-Process -Id ${pidList} -ErrorAction SilentlyContinue)) {
     const errFd = openSync(errPath, 'w');
 
     this.log(`正在静默启动插件 ${plugin.id}: ${cmd} ${args.join(' ')}`);
-    const env = { ...process.env, ...(plugin.env && typeof plugin.env === 'object' ? plugin.env : {}) };
+    const env = { ...process.env, ...extraEnv, ...(plugin.env && typeof plugin.env === 'object' ? plugin.env : {}) };
     let child;
     try {
       child = spawn(cmd, args, {
@@ -1572,7 +1608,7 @@ foreach ($proc in (Get-Process -Id ${pidList} -ErrorAction SilentlyContinue)) {
     const plugin = config.plugins.find((p) => p.id === id);
     if (!plugin) throw new Error(`未找到插件: ${id}`);
 
-    const cmd = this.resolveCommand(plugin.command);
+    const { cmd, extraEnv } = this.resolveCommandWithEnv(plugin.command, config.antigravityExe || '');
     let stoppedAny = false;
 
     if (Array.isArray(plugin.stopArgs) && plugin.stopArgs.length > 0) {
@@ -1582,6 +1618,7 @@ foreach ($proc in (Get-Process -Id ${pidList} -ErrorAction SilentlyContinue)) {
         try {
           await execFileAsync(cmd, plugin.stopArgs, {
             cwd: path.dirname(this.pluginsDir),
+            env: { ...process.env, ...extraEnv },
             windowsHide: true,
             timeout: 8000,
           });

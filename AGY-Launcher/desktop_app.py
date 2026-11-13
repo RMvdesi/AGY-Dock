@@ -164,14 +164,32 @@ def main() -> int:
     manager = AgyProcessManager(base_dir=base_dir)
 
     if args.quick_launch:
-        manager.launch_antigravity_and_attach(focus_if_running=True)
-        cfg = manager.load_config()
-        if cfg.get("lifecycle", {}).get("autoCleanupOnExit", True) is not False and not notify_existing_instance("PING"):
-            _spawn_detached_exit_watcher(manager)
-        return 0
+        try:
+            manager.launch_antigravity_and_attach(focus_if_running=True)
+            cfg = manager.load_config()
+            if cfg.get("lifecycle", {}).get("autoCleanupOnExit", True) is not False and not notify_existing_instance("PING"):
+                _spawn_detached_exit_watcher(manager)
+            return 0
+        except Exception as exc:
+            manager.log(f"快速启动失败: {exc}", "ERROR")
+            if getattr(sys, "frozen", False):
+                try:
+                    import ctypes
+                    ctypes.windll.user32.MessageBoxW(0, str(exc), "AGY Plugin Manager - 启动失败", 0x10)
+                except Exception:
+                    pass
+            else:
+                print(f"[ERROR] {exc}", file=sys.stderr)
+            return 1
     if args.attach:
-        manager.attach_enabled_plugins()
-        return 0
+        try:
+            manager.attach_enabled_plugins()
+            return 0
+        except Exception as exc:
+            manager.log(f"热附着失败: {exc}", "ERROR")
+            if not getattr(sys, "frozen", False):
+                print(f"[ERROR] {exc}", file=sys.stderr)
+            return 1
     if args.stop:
         manager.stop_all_plugins()
         return 0

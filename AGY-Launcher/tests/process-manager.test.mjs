@@ -612,7 +612,7 @@ test('installPluginPackage rejects Zip-Slip and installs real packages with over
     const pkgFiles = readdirSync(realPackagesDir).filter((f) => f.endsWith('.zip'));
     const expectedMarkers = {
       'office-viewer': 'index.js',
-      'antigravity-hans': 'antigravity-hans-windows-amd64.exe',
+      'antigravity-hans': 'index.js',
       'agy-telemetry': 'index.js',
     };
     const foundZips = {};

@@ -6,6 +6,20 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.2.0] - 2026-11-14 01:10
+
+### Summary
+- Replaced `antigravity-hans-windows-amd64.exe` with a pure Node.js (`node-cdp`) implementation (`plugins/antigravity-hans/index.js` + `lib/cdp.js` + `lib/service.js`) embedding official `yuexps/Antigravity-Hans@v0.4.10` JS overlays (`antigravity-hans-overlay.js`, `swarm-overlay.js`) and packaged `antigravity-hans-v0.5.0.zip` with zero `.exe` files.
+- Replaced the PyInstaller `--onefile` installer with a standard Inno Setup 6 (`scripts/installer.iss`) setup wizard compiled via `ISCC.exe`, producing `AGY-Plugin-Manager-Setup-v2.2.0.exe` with standard desktop/Start Menu shortcuts (`AGY Plugin Manager` and `Antigravity (AGY-Launcher)`), automatic `Antigravity.exe` detection, and uninstaller support.
+- Fixed `[WinError 2]` on machines without global `node.exe` by adding `resolve_node_executable()` (standard Windows paths, nvm/fnm/volta/scoop, registry, and `Antigravity.exe` with `ELECTRON_RUN_AS_NODE=1` fallback), `is_managed_plugin_runtime_process()` exclusion in `classify_antigravity_processes()`, per-plugin error isolation in `attach_enabled_plugins()`, clean headless error handling in `desktop_app.py`, and UI refresh/trace preservation in `main_window.py`.
+
+### Files Changed
+- `AGY-Launcher/plugins/antigravity-hans/` — Pure Node.js plugin (`package.json` `0.5.0`, `index.js`, `lib/cdp.js`, `lib/service.js`, `overlays/*.js`); removed binary `.exe`.
+- `AGY-Launcher/plugins.json`, `AGY-Launcher/PLUGIN_INTEGRATION.md`, `AGY-Launcher/plugin-packages/antigravity-hans-v0.5.0.zip` — Updated plugin metadata, schema docs, and ZIP bundle.
+- `AGY-Launcher/desktop/core.py`, `AGY-Launcher/desktop_app.py`, `AGY-Launcher/desktop/main_window.py`, `AGY-Launcher/lib/process-manager.mjs` — Added resilient Node runtime resolution, Electron-Node fallback, process classification guard, per-plugin launch isolation, and version bump to `2.2.0`.
+- `AGY-Launcher/scripts/installer.iss`, `AGY-Launcher/scripts/build_release.py`, `.release.json` — Switched Windows setup packaging to Inno Setup 6 (`ISCC.exe`) and updated CI pipeline commands.
+- `VERSION`, `AGY-Launcher/server.mjs`, `CHANGELOG.md`, `AGY-Launcher/MAINTENANCE_LOG.md`, `AGY-Launcher/tests/test_desktop.py`, `AGY-Launcher/tests/process-manager.test.mjs` — Version `2.2.0` sync and added unit tests.
+
 ## [v2.1.2] - 2026-11-14 00:42
 
 ### Summary

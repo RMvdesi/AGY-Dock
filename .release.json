@@ -13,6 +13,7 @@
       "runner": "windows-latest",
       "commands": [
         ["python", "-m", "pip", "install", "--quiet", "PySide6", "pyinstaller"],
+        ["powershell", "-NoProfile", "-Command", "if (-not (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -and -not (Test-Path 'C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe') -and -not (Test-Path \"$env:LOCALAPPDATA\\Programs\\Inno Setup 6\\ISCC.exe\")) { choco install innosetup -y --no-progress }"],
         ["python", "-m", "unittest", "discover", "-s", "AGY-Launcher/tests", "-v"],
         ["node", "--test", "AGY-Launcher/tests/process-manager.test.mjs"],
         ["python", "AGY-Launcher/scripts/build_release.py"]

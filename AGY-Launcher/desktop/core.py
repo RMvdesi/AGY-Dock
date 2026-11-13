@@ -47,6 +47,7 @@ GENERIC_RUNTIMES = {
 VALID_LOG_ID_RE = re.compile(r"^[a-z0-9._-]+$", re.IGNORECASE)
 VALID_PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-_]{1,63}$", re.IGNORECASE)
 PLUGIN_DIR_REF_RE = re.compile(r"(?:^|[\\/])plugins[\\/]([a-z0-9][a-z0-9._-]{0,63})(?:[\\/]|$)", re.IGNORECASE)
+MANAGED_PLUGIN_SCRIPT_RE = re.compile(r"[\\/]+plugins[\\/]+[a-z0-9][a-z0-9._-]*[\\/]+[^\\/\s]+\.(?:m?js|cjs)(?:\s|$|\"|')", re.IGNORECASE)
 DEFAULT_NO_PROXY = "127.0.0.1,localhost,::1"
 SUPPORTED_PACKAGE_EXTS = {".zip", ".agypkg", ".agy-plugin"}
 PROXY_PROCESS_NAMES = (
@@ -66,7 +67,7 @@ SOCKS_ONLY_PORTS = {1080, 2080, 7891, 10808}
 MIXED_PROXY_PORTS = {7897, 7890}
 ANTIGRAVITY_INSTALLER_SKIP_RE = re.compile(r"(?:agy-launcher|plugin[\s_-]*manager)", re.IGNORECASE)
 
-APP_VERSION = "2.1.2"
+APP_VERSION = "2.2.0"
 DEFAULT_UPDATE_SITE_URL = "https://ahmustudyhelper.xyz"
 DEFAULT_PRODUCT_SLUG = "agy-plugin-manager"
 UPDATE_SEMVER_RE = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$")
@@ -293,10 +294,95 @@ def build_antigravity_launch_params(
     return agy_args, env, True
 
 
+def is_managed_plugin_runtime_process(proc: dict[str, Any] | None) -> bool:
+    """Returns True when an executable (including Electron fallback) hosts a managed JS plugin."""
+    if not proc:
+        return False
+    cmd = str(proc.get("CommandLine") or "")
+    return "--agy-node-runtime" in cmd.lower() or bool(MANAGED_PLUGIN_SCRIPT_RE.search(cmd))
+
+
+def resolve_node_executable(
+    antigravity_exe: str = "",
+    extra_dirs: list[Path] | None = None,
+) -> tuple[str, dict[str, str]]:
+    """Resolves a Node.js executable, falling back to Antigravity.exe with ELECTRON_RUN_AS_NODE=1."""
+    candidates: list[Path] = []
+    for base in extra_dirs or []:
+        if base:
+            candidates.append(Path(base) / "runtime" / "node" / "node.exe")
+
+    for which_name in ("node", "node.exe"):
+        found = shutil.which(which_name)
+        if found:
+            candidates.append(Path(found))
+
+    env = os.environ
+    for env_dir in (
+        env.get("ProgramFiles"),
+        env.get("ProgramFiles(x86)"),
+    ):
+        if env_dir:
+            candidates.append(Path(env_dir) / "nodejs" / "node.exe")
+
+    if env.get("LOCALAPPDATA"):
+        local_app = Path(env["LOCALAPPDATA"])
+        candidates.append(local_app / "Programs" / "node" / "node.exe")
+        fnm_shells = local_app / "fnm_multishells"
+        if fnm_shells.is_dir():
+            for child in sorted(fnm_shells.iterdir(), reverse=True):
+                candidates.append(child / "node.exe")
+
+    if env.get("NVM_SYMLINK"):
+        candidates.append(Path(env["NVM_SYMLINK"]) / "node.exe")
+    if env.get("NVM_HOME") and Path(env["NVM_HOME"]).is_dir():
+        for child in sorted(Path(env["NVM_HOME"]).iterdir(), reverse=True):
+            if child.is_dir():
+                candidates.append(child / "node.exe")
+    if env.get("FNM_DIR") and (Path(env["FNM_DIR"]) / "node-versions").is_dir():
+        for child in sorted((Path(env["FNM_DIR"]) / "node-versions").iterdir(), reverse=True):
+            candidates.append(child / "installation" / "node.exe")
+
+    user_profile = Path(env.get("USERPROFILE") or str(Path.home()))
+    candidates.extend(
+        [
+            user_profile / ".volta" / "bin" / "node.exe",
+            user_profile / "scoop" / "apps" / "nodejs" / "current" / "node.exe",
+            user_profile / "scoop" / "apps" / "nodejs-lts" / "current" / "node.exe",
+        ]
+    )
+
+    if winreg is not None:
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            install_path = _read_reg_value(hive, r"SOFTWARE\Node.js", "InstallPath")
+            if install_path:
+                candidates.append(Path(str(install_path).strip()) / "node.exe")
+
+    for cand in candidates:
+        try:
+            if cand.is_file():
+                return str(cand), {}
+        except OSError:
+            continue
+
+    agy_cand = str(antigravity_exe or "").strip()
+    if agy_cand and Path(agy_cand).is_file():
+        return agy_cand, {"ELECTRON_RUN_AS_NODE": "1"}
+
+    detected = detect_antigravity_exe(processes=[])
+    detected_path = str(detected.get("path") or "").strip()
+    if detected_path and Path(detected_path).is_file():
+        return detected_path, {"ELECTRON_RUN_AS_NODE": "1"}
+
+    return "", {}
+
+
 def classify_antigravity_processes(processes: list[dict[str, Any]] | None) -> dict[str, list[dict[str, Any]]]:
     """Splits Antigravity.exe processes into main GUI, sidecar runtime, and Electron children."""
     all_procs = [
-        p for p in (processes or []) if str(p.get("Name", "")).lower() == "antigravity.exe"
+        p
+        for p in (processes or [])
+        if str(p.get("Name", "")).lower() == "antigravity.exe" and not is_managed_plugin_runtime_process(p)
     ]
     sidecar: list[dict[str, Any]] = []
     child: list[dict[str, Any]] = []
@@ -1262,15 +1348,41 @@ class AgyProcessManager:
         self.save_config(config)
         return ui
 
-    def resolve_command(self, command: str) -> str:
+    def resolve_command_with_env(
+        self,
+        command: str,
+        *,
+        antigravity_exe: str = "",
+    ) -> tuple[str, dict[str, str]]:
         cmd = str(command or "").strip()
         if not cmd:
             raise ValueError("插件启动命令不能为空")
         p = Path(cmd)
         if p.is_absolute():
-            return str(p)
-        if "\\" in cmd or "/" in cmd or re.search(r"\.(exe|cmd|bat|ps1|py)$", cmd, re.IGNORECASE):
-            return str((self.base_dir / p).resolve())
+            return str(p), {}
+        if "\\" in cmd or "/" in cmd or re.search(r"\.(cmd|bat|ps1|py)$", cmd, re.IGNORECASE):
+            return str((self.base_dir / p).resolve()), {}
+        if cmd.lower() in {"node", "node.exe"}:
+            agy_hint = str(antigravity_exe or "").strip()
+            if not agy_hint:
+                agy_hint = str(getattr(self, "_detected_antigravity_exe", "") or "").strip()
+            resolved_node, extra_env = resolve_node_executable(
+                antigravity_exe=agy_hint,
+                extra_dirs=[
+                    self.base_dir,
+                    self.paths.assets_dir,
+                    Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else self.base_dir,
+                ],
+            )
+            if resolved_node:
+                return resolved_node, extra_env
+            return cmd, {}
+        if cmd.lower().endswith(".exe"):
+            return str((self.base_dir / p).resolve()), {}
+        return cmd, {}
+
+    def resolve_command(self, command: str) -> str:
+        cmd, _ = self.resolve_command_with_env(command)
         return cmd
 
     def get_plugin_args(self, plugin: dict[str, Any], mode: str = "attach") -> list[str]:
@@ -1407,11 +1519,14 @@ class AgyProcessManager:
             matched = match_plugin_processes(processes, plugin)
             health = self.fetch_health(plugin.get("healthUrl"))
             pids = [int(p["ProcessId"]) for p in matched if p.get("ProcessId")]
-            cmd_path = self.resolve_command(plugin.get("command", ""))
+            cmd_path, _ = self.resolve_command_with_env(
+                plugin.get("command", ""),
+                antigravity_exe=agy_exe,
+            )
             is_path_cmd = "\\" in cmd_path or "/" in cmd_path or bool(
                 re.search(r"\.(exe|cmd|bat|ps1)$", cmd_path, re.IGNORECASE)
             )
-            executable_exists = Path(cmd_path).exists() if is_path_cmd else True
+            executable_exists = Path(cmd_path).exists() if is_path_cmd else bool(shutil.which(cmd_path))
             plugins.append(
                 {
                     **plugin,
@@ -1514,7 +1629,7 @@ class AgyProcessManager:
                 if int(initial_cdp.get("mainProcessCount") or 0) == 0:
                     time.sleep(2.2)
 
-                timeout_sec = int(config.get("cdpWaitSeconds") or 20)
+                timeout_sec = int(config.get("cdpWaitSeconds") or config.get("cdpWaitTimeoutSec") or 20)
                 deadline = time.monotonic() + timeout_sec
                 ready_cdp = None
                 while time.monotonic() < deadline:
@@ -1541,7 +1656,11 @@ class AgyProcessManager:
             if plugin.get("enabled") is False:
                 self.log(f"跳过已禁用插件: {plugin['id']}")
                 continue
-            results.append(self.start_plugin(plugin["id"], mode=mode))
+            try:
+                results.append(self.start_plugin(plugin["id"], mode=mode))
+            except Exception as exc:
+                self.log(f"启动插件 {plugin['id']} 失败: {exc}", "ERROR")
+                results.append({"id": plugin["id"], "status": "error", "error": str(exc)})
         return results
 
     def start_plugin(self, plugin_id: str, mode: str = "attach") -> dict[str, Any]:
@@ -1550,13 +1669,24 @@ class AgyProcessManager:
         if not plugin:
             raise KeyError(f"未找到插件: {plugin_id}")
 
-        cmd = self.resolve_command(plugin["command"])
+        agy_exe = str(config.get("antigravityExe") or "")
+        cmd, extra_env = self.resolve_command_with_env(plugin["command"], antigravity_exe=agy_exe)
         is_path_cmd = "\\" in cmd or "/" in cmd or bool(
             re.search(r"\.(exe|cmd|bat|ps1)$", cmd, re.IGNORECASE)
         )
         if is_path_cmd and not Path(cmd).exists():
             self.log(f"插件 {plugin['id']} 启动命令不存在: {cmd}", "ERROR")
             raise FileNotFoundError(f"插件命令不存在: {cmd}")
+        if not is_path_cmd and not shutil.which(cmd):
+            if cmd.lower() in {"node", "node.exe"}:
+                msg = (
+                    "未找到 Node.js 运行时 (node.exe)，且未检测到可用于 Electron Node 回退的 "
+                    "Antigravity.exe。请安装 Node.js 或在设置中指定 Antigravity 客户端路径。"
+                )
+            else:
+                msg = f"在系统 PATH 中找不到插件启动命令: {cmd}"
+            self.log(f"插件 {plugin['id']} {msg}", "ERROR")
+            raise FileNotFoundError(msg)
 
         cdp = self.get_active_cdp_info()
         cdp_port = str(cdp["port"] or config.get("defaultCdpPort") or 9222)
@@ -1573,17 +1703,25 @@ class AgyProcessManager:
         out_log = self.paths.logs_dir / f"{plugin['id']}.out.log"
         err_log = self.paths.logs_dir / f"{plugin['id']}.err.log"
 
+        proc_env = os.environ.copy()
+        if extra_env:
+            proc_env.update(extra_env)
+        if isinstance(plugin.get("env"), dict):
+            proc_env.update({str(k): str(v) for k, v in plugin["env"].items()})
+
         with out_log.open("a", encoding="utf-8") as out_fh, err_log.open("a", encoding="utf-8") as err_fh:
             proc = subprocess.Popen(
                 [cmd, *args],
                 cwd=str(self.paths.plugins_dir.parent),
+                env=proc_env,
                 stdin=subprocess.DEVNULL,
                 stdout=out_fh,
                 stderr=err_fh,
                 creationflags=CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
             )
 
-        self.log(f"已触发托管插件 {plugin['id']} ({mode}): {cmd} {' '.join(args)}")
+        runtime_tag = " [Electron-Node]" if extra_env.get("ELECTRON_RUN_AS_NODE") == "1" else ""
+        self.log(f"已触发托管插件 {plugin['id']} ({mode}){runtime_tag}: {cmd} {' '.join(args)}")
         return {"id": plugin["id"], "pid": proc.pid, "mode": mode, "cdpPort": cdp_port}
 
     def stop_plugin(self, plugin_id: str) -> dict[str, Any]:
@@ -1592,7 +1730,8 @@ class AgyProcessManager:
         if not plugin:
             raise KeyError(f"未找到插件: {plugin_id}")
 
-        cmd = self.resolve_command(plugin["command"])
+        agy_exe = str(config.get("antigravityExe") or "")
+        cmd, extra_env = self.resolve_command_with_env(plugin["command"], antigravity_exe=agy_exe)
         stopped_any = False
 
         stop_args = plugin.get("stopArgs")
@@ -1600,12 +1739,17 @@ class AgyProcessManager:
             is_path_cmd = "\\" in cmd or "/" in cmd or bool(
                 re.search(r"\.(exe|cmd|bat|ps1)$", cmd, re.IGNORECASE)
             )
-            if not is_path_cmd or Path(cmd).exists():
+            cmd_ready = Path(cmd).exists() if is_path_cmd else bool(shutil.which(cmd))
+            if cmd_ready:
+                proc_env = os.environ.copy()
+                if extra_env:
+                    proc_env.update(extra_env)
                 self.log(f"尝试优雅停止插件 {plugin['id']}: {cmd} {' '.join(stop_args)}")
                 try:
                     subprocess.run(
                         [cmd, *[str(x) for x in stop_args]],
                         cwd=str(self.paths.plugins_dir.parent),
+                        env=proc_env,
                         capture_output=True,
                         creationflags=CREATE_NO_WINDOW,
                         timeout=8,

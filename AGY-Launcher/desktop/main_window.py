@@ -469,7 +469,7 @@ class TaskWorker(QRunnable):
                 pass
         except Exception as exc:
             try:
-                self.signals.failed.emit(f"{exc}\n{traceback.format_exc(limit=1)}".strip())
+                self.signals.failed.emit(f"{exc}\n{traceback.format_exc(limit=8)}".strip())
             except RuntimeError:
                 pass
 
@@ -2500,15 +2500,22 @@ class MainWindow(QMainWindow):
         def run() -> dict[str, Any]:
             return self.manager.launch_antigravity_and_attach(focus_if_running=True)
 
-        def done(_res: dict[str, Any]) -> None:
+        def done(res: dict[str, Any]) -> None:
             self.quick_launch_btn.setEnabled(True)
-            self._show_toast("Antigravity 已就绪")
+            errors = [item for item in (res.get("results") or []) if item.get("status") == "error"]
+            if errors:
+                err_summary = "; ".join(f"{e.get('id')}: {e.get('error')}" for e in errors[:2])
+                self._show_toast("Antigravity 已启动（部分插件失败）")
+                QMessageBox.warning(self, "部分插件启动失败", err_summary)
+            else:
+                self._show_toast("Antigravity 已就绪")
             self.refresh_all()
 
         def fail(err: str) -> None:
             self.quick_launch_btn.setEnabled(True)
             QMessageBox.warning(self, "启动失败", err)
             self._notify_error(err)
+            self.refresh_all()
 
         self._run_async(run, done, fail)
 
@@ -2518,11 +2525,17 @@ class MainWindow(QMainWindow):
             self.attach_btn.setEnabled(False)
         self._show_toast("正在热附着插件...")
 
-        def done(_res: Any) -> None:
+        def done(res: Any) -> None:
             self.home_attach_btn.setEnabled(True)
             if hasattr(self, "attach_btn"):
                 self.attach_btn.setEnabled(True)
-            self._show_toast("热附着完成")
+            errors = [item for item in (res if isinstance(res, list) else []) if isinstance(item, dict) and item.get("status") == "error"]
+            if errors:
+                err_summary = "; ".join(f"{e.get('id')}: {e.get('error')}" for e in errors[:2])
+                self._show_toast("热附着完成（存在失败）")
+                QMessageBox.warning(self, "部分插件热附着失败", err_summary)
+            else:
+                self._show_toast("热附着完成")
             self.refresh_all()
 
         def fail(err: str) -> None:
@@ -2530,6 +2543,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, "attach_btn"):
                 self.attach_btn.setEnabled(True)
             self._notify_error(err)
+            self.refresh_all()
 
         self._run_async(self.manager.attach_enabled_plugins, done, fail)
 

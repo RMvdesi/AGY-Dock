@@ -32,11 +32,13 @@ from desktop.core import (  # noqa: E402
     detect_antigravity_exe,
     detect_system_proxy,
     find_antigravity_cleanup_targets,
+    is_managed_plugin_runtime_process,
     is_newer_semver,
     match_plugin_processes,
     parse_devtools_active_port,
     parse_listening_pids_for_port,
     parse_semver,
+    resolve_node_executable,
     resolve_plugin_version,
     resolve_runtime_dirs,
     validate_update_site_url,
@@ -532,7 +534,7 @@ class DesktopCoreTests(unittest.TestCase):
             real_packages_dir = ROOT_DIR / "plugin-packages"
             expected_ids = {
                 "office-viewer": "index.js",
-                "antigravity-hans": "antigravity-hans-windows-amd64.exe",
+                "antigravity-hans": "index.js",
                 "agy-telemetry": "index.js",
             }
             installed_zips: dict[str, Path] = {}
@@ -540,6 +542,9 @@ class DesktopCoreTests(unittest.TestCase):
                 matches = list(real_packages_dir.glob(f"{pid}*.zip"))
                 self.assertEqual(len(matches), 1, f"Expected single package zip for {pid}, found {matches}")
                 zip_file = matches[0]
+                if pid == "antigravity-hans":
+                    with zipfile.ZipFile(zip_file, "r") as zf:
+                        self.assertFalse(any(name.lower().endswith(".exe") for name in zf.namelist()))
                 installed_zips[pid] = zip_file
                 res = mgr.install_plugin_package(zip_file, overwrite=True)
                 self.assertEqual(res["plugin"]["id"], pid)
@@ -826,6 +831,94 @@ class DesktopCoreTests(unittest.TestCase):
         self.assertGreater(observed["install_h"], 20)
         self.assertLessEqual(observed["install_bottom"], observed["root_h"])
         self.assertLessEqual(observed["cancel_bottom"], observed["root_h"])
+
+    def test_node_runtime_fallback_classification_and_plugin_isolation(self) -> None:
+        from unittest.mock import patch
+
+        fake_processes = [
+            {"ProcessId": 1001, "Name": "Antigravity.exe", "CommandLine": r'"C:\Apps\Antigravity.exe"'},
+            {
+                "ProcessId": 1002,
+                "Name": "Antigravity.exe",
+                "CommandLine": r'"C:\Apps\Antigravity.exe" "D:\Mgr\plugins\antigravity-hans\index.js" --daemon',
+            },
+            {"ProcessId": 1003, "Name": "Antigravity.exe", "CommandLine": r'"C:\Apps\Antigravity.exe" --type=renderer'},
+        ]
+        self.assertFalse(is_managed_plugin_runtime_process(fake_processes[0]))
+        self.assertTrue(is_managed_plugin_runtime_process(fake_processes[1]))
+        classified = classify_antigravity_processes(fake_processes)
+        self.assertEqual([p["ProcessId"] for p in classified["main"]], [1001])
+        self.assertEqual([p["ProcessId"] for p in classified["all"]], [1001, 1003])
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            fake_agy = tmp_path / "Antigravity.exe"
+            fake_agy.write_bytes(b"MZ")
+            with patch("desktop.core.shutil.which", return_value=None), patch(
+                "desktop.core.detect_antigravity_exe",
+                return_value={"found": False, "path": ""},
+            ), patch.dict(
+                os.environ,
+                {"ProgramFiles": str(tmp_path / "empty_pf"), "ProgramFiles(x86)": str(tmp_path / "empty_pf86"), "LOCALAPPDATA": str(tmp_path / "empty_local"), "USERPROFILE": str(tmp_path / "empty_home"), "NVM_HOME": "", "NVM_SYMLINK": "", "FNM_DIR": ""},
+                clear=False,
+            ), patch("desktop.core.winreg", None):
+                resolved_exe, env_map = resolve_node_executable(antigravity_exe=str(fake_agy), extra_dirs=[])
+                self.assertEqual(resolved_exe, str(fake_agy))
+                self.assertEqual(env_map, {"ELECTRON_RUN_AS_NODE": "1"})
+
+            mgr = AgyProcessManager(base_dir=tmp_path)
+            mgr.save_config(
+                {
+                    "managerPort": 12400,
+                    "antigravityExe": str(fake_agy),
+                    "plugins": [
+                        {
+                            "id": "broken-plugin",
+                            "name": "Broken",
+                            "enabled": True,
+                            "type": "custom-cdp",
+                            "command": "plugins\\missing\\nope.exe",
+                        },
+                        {
+                            "id": "healthy-plugin",
+                            "name": "Healthy",
+                            "enabled": True,
+                            "type": "node-cdp",
+                            "command": "node",
+                            "launchArgs": ["plugins\\healthy-plugin\\index.js"],
+                        },
+                    ],
+                }
+            )
+            with patch.object(
+                mgr,
+                "start_plugin",
+                side_effect=[FileNotFoundError("插件命令不存在"), {"id": "healthy-plugin", "pid": 4321, "mode": "attach"}],
+            ):
+                results = mgr.attach_enabled_plugins(mode="attach")
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0]["id"], "broken-plugin")
+            self.assertEqual(results[0]["status"], "error")
+            self.assertEqual(results[1]["id"], "healthy-plugin")
+            self.assertEqual(results[1]["pid"], 4321)
+
+    def test_inno_setup_script_and_iscc_locator(self) -> None:
+        from scripts import build_release
+
+        iss_path = ROOT_DIR / "scripts" / "installer.iss"
+        raw = iss_path.read_bytes()
+        self.assertTrue(raw.startswith(b"\xef\xbb\xbf"), "installer.iss must carry UTF-8 BOM for Inno Setup")
+        text = raw.decode("utf-8-sig")
+        for needle in (
+            "AGY-Plugin-Manager-Setup-v{#AppVersion}",
+            "AGY Plugin Manager.exe",
+            "Antigravity (AGY-Launcher)",
+            "--quick-launch",
+            "PrivilegesRequired=lowest",
+        ):
+            self.assertIn(needle, text)
+        iscc = build_release.find_iscc_executable()
+        self.assertTrue(iscc.is_file())
 
 
 if __name__ == "__main__":
