@@ -47,7 +47,7 @@ GENERIC_RUNTIMES = {
 VALID_LOG_ID_RE = re.compile(r"^[a-z0-9._-]+$", re.IGNORECASE)
 VALID_PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-_]{1,63}$", re.IGNORECASE)
 PLUGIN_DIR_REF_RE = re.compile(r"(?:^|[\\/])plugins[\\/]([a-z0-9][a-z0-9._-]{0,63})(?:[\\/]|$)", re.IGNORECASE)
-MANAGED_PLUGIN_SCRIPT_RE = re.compile(r"[\\/]+plugins[\\/]+[a-z0-9][a-z0-9._-]*[\\/]+[^\\/\s]+\.(?:m?js|cjs)(?:\s|$|\"|')", re.IGNORECASE)
+MANAGED_PLUGIN_SCRIPT_RE = re.compile(r"(?:^|[\s\"'\\/])plugins[\\/]+[a-z0-9][a-z0-9._-]*[\\/]+[^\\/\s\"']+\.(?:m?js|cjs)(?:\s|$|\"|')", re.IGNORECASE)
 DEFAULT_NO_PROXY = "127.0.0.1,localhost,::1"
 SUPPORTED_PACKAGE_EXTS = {".zip", ".agypkg", ".agy-plugin"}
 PROXY_PROCESS_NAMES = (
@@ -67,7 +67,7 @@ SOCKS_ONLY_PORTS = {1080, 2080, 7891, 10808}
 MIXED_PROXY_PORTS = {7897, 7890}
 ANTIGRAVITY_INSTALLER_SKIP_RE = re.compile(r"(?:agy-launcher|plugin[\s_-]*manager)", re.IGNORECASE)
 
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.2.1"
 DEFAULT_UPDATE_SITE_URL = "https://ahmustudyhelper.xyz"
 DEFAULT_PRODUCT_SLUG = "agy-plugin-manager"
 UPDATE_SEMVER_RE = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$")
@@ -395,6 +395,8 @@ def classify_antigravity_processes(processes: list[dict[str, Any]] | None) -> di
             "sidecar_sdk" in lower
             or "register_loader" in lower
             or "--inspect-port=" in lower
+            or "--import=" in lower
+            or "mcp_entry" in lower
             or "sidecars\\" in lower
             or "sidecars/" in lower
         ):
@@ -1699,6 +1701,8 @@ class AgyProcessManager:
             str(item).replace("{CDP_PORT}", cdp_port).replace("{BASE_DIR}", str(self.base_dir))
             for item in raw_args
         ]
+        if extra_env.get("ELECTRON_RUN_AS_NODE") == "1" and "--agy-node-runtime" not in args:
+            args.append("--agy-node-runtime")
 
         out_log = self.paths.logs_dir / f"{plugin['id']}.out.log"
         err_log = self.paths.logs_dir / f"{plugin['id']}.err.log"

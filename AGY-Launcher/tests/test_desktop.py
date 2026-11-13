@@ -842,13 +842,25 @@ class DesktopCoreTests(unittest.TestCase):
                 "Name": "Antigravity.exe",
                 "CommandLine": r'"C:\Apps\Antigravity.exe" "D:\Mgr\plugins\antigravity-hans\index.js" --daemon',
             },
+            {
+                "ProcessId": 1004,
+                "Name": "Antigravity.exe",
+                "CommandLine": r'"C:\Apps\Antigravity.exe" plugins\office-viewer\index.js --daemon',
+            },
+            {
+                "ProcessId": 1005,
+                "Name": "Antigravity.exe",
+                "CommandLine": r'"C:\Apps\Antigravity.exe" --import=file:///C:/ext/dist/loader.js main.mjs',
+            },
             {"ProcessId": 1003, "Name": "Antigravity.exe", "CommandLine": r'"C:\Apps\Antigravity.exe" --type=renderer'},
         ]
         self.assertFalse(is_managed_plugin_runtime_process(fake_processes[0]))
         self.assertTrue(is_managed_plugin_runtime_process(fake_processes[1]))
+        self.assertTrue(is_managed_plugin_runtime_process(fake_processes[2]))
         classified = classify_antigravity_processes(fake_processes)
         self.assertEqual([p["ProcessId"] for p in classified["main"]], [1001])
-        self.assertEqual([p["ProcessId"] for p in classified["all"]], [1001, 1003])
+        self.assertEqual([p["ProcessId"] for p in classified["sidecar"]], [1005])
+        self.assertEqual([p["ProcessId"] for p in classified["all"]], [1001, 1005, 1003])
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

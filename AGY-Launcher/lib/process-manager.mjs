@@ -24,7 +24,7 @@ const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_BASE_DIR = path.resolve(__dirname, '..');
 export const DEFAULT_NO_PROXY = '127.0.0.1,localhost,::1';
-export const APP_VERSION = '2.2.0';
+export const APP_VERSION = '2.2.1';
 export const DEFAULT_UPDATE_SITE_URL = 'https://ahmustudyhelper.xyz';
 export const DEFAULT_PRODUCT_SLUG = 'agy-plugin-manager';
 const UPDATE_SEMVER_RE = /^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$/;
@@ -105,7 +105,7 @@ export function parseDevToolsActivePort(raw) {
   };
 }
 
-const MANAGED_PLUGIN_SCRIPT_RE = /[\\/]+plugins[\\/]+[a-z0-9][a-z0-9._-]*[\\/]+[^\\/\s]+\.(?:m?js|cjs)(?:\s|$|["'])/i;
+const MANAGED_PLUGIN_SCRIPT_RE = /(?:^|[\s"'\\/])plugins[\\/]+[a-z0-9][a-z0-9._-]*[\\/]+[^\\/\s"']+\.(?:m?js|cjs)(?:\s|$|["'])/i;
 
 /**
  * Returns true when a process is hosting a managed JS plugin runtime.
@@ -1569,6 +1569,9 @@ foreach ($proc in (Get-Process -Id ${pidList} -ErrorAction SilentlyContinue)) {
     }
 
     const args = this.getPluginArgs(plugin, mode);
+    if (extraEnv.ELECTRON_RUN_AS_NODE === '1' && !args.includes('--agy-node-runtime')) {
+      args.push('--agy-node-runtime');
+    }
     const outPath = path.join(this.logsDir, `${plugin.id}.out.log`);
     const errPath = path.join(this.logsDir, `${plugin.id}.err.log`);
     const outFd = openSync(outPath, 'w');

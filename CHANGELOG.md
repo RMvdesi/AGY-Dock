@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1] - 2026-11-14
+
+### Fixed
+- 修复插件通过 `Antigravity.exe`（`ELECTRON_RUN_AS_NODE=1`）回退启动时传入相对路径参数（如 `plugins\office-viewer\index.js`）未能命中 `MANAGED_PLUGIN_SCRIPT_RE`、导致插件进程被误判为“Antigravity 主窗口仍在运行”且阻塞「清理残留进程」的问题。
+- 在通过 Electron-Node 回退启动插件时附加 `--agy-node-runtime` 显式标记，并将 `--import=` / `mcp_entry` 纳入 sidecar 分类。
+- 修复 `office-viewer`（`v1.0.2`）、`agy-telemetry`（`v1.0.4`）与 `antigravity-hans`（`v0.5.1`）插件的宿主存活检测逻辑，改为过滤 `--type=`、sidecar 与托管插件进程后统计真正的 Antigravity IDE 主窗口，避免主窗口关闭后插件驻留不退。
+
 ## [2.2.0] - 2026-11-14
 
 ### Changed

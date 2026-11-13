@@ -6,6 +6,13 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.2.1] - 2026-11-14 01:30
+
+### Summary
+- Fixed `MANAGED_PLUGIN_SCRIPT_RE` in `desktop/core.py` and `lib/process-manager.mjs` requiring a leading path separator before `plugins/`, which missed relative plugin arguments (`plugins\office-viewer\index.js`) when launched via `Antigravity.exe` (`ELECTRON_RUN_AS_NODE=1`) and misclassified running plugin daemons as live `Antigravity` main windows.
+- Added explicit `--agy-node-runtime` argument tagging for Electron-Node fallback launches and aligned `core.py` sidecar detection with `--import=` and `mcp_entry`.
+- Updated `inspectAntigravity` across `office-viewer` (`1.0.2`), `agy-telemetry` (`1.0.4`), and `antigravity-hans` (`0.5.1`) to filter out `--type=`, sidecar, `--agy-node-runtime`, and `plugins/` processes via `Win32_Process` so `--daemon` plugins exit cleanly once Antigravity closes.
+
 ## [v2.2.0] - 2026-11-14 01:10
 
 ### Summary
