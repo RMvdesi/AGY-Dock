@@ -4,11 +4,12 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import QEvent, QMimeData, QObject, QPointF, QRectF, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
+from PySide6.QtCore import QEvent, QMimeData, QObject, QPointF, QRectF, QRunnable, QSize, Qt, QThreadPool, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
     QColor,
+    QDesktopServices,
     QDragEnterEvent,
     QDragLeaveEvent,
     QDragMoveEvent,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -49,7 +51,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from desktop.core import AgyProcessManager
+from desktop.core import APP_VERSION, AgyProcessManager, build_update_urls, validate_update_site_url
 from desktop.dialogs import PluginEditorDialog
 from desktop.icons import native_graphic_svg, plugin_graphic_svg, render_svg_pixmap
 from desktop.theme import apply_dwm_titlebar_theme, build_stylesheet, get_palette, resolve_is_dark
@@ -502,6 +504,13 @@ class MainWindow(QMainWindow):
         self._saw_antigravity_main = False
         self._exit_zero_streak = 0
         self._cleanup_in_flight = False
+        self._update_check_in_flight = False
+        self._latest_update_info: dict[str, Any] | None = None
+        try:
+            _, default_landing_url = build_update_urls(current_version=APP_VERSION)
+        except Exception:
+            default_landing_url = "https://ahmustudyhelper.xyz"
+        self._current_update_url = default_landing_url
 
         config = self.manager.load_config()
         ui_cfg = config.get("ui") or {}
@@ -533,6 +542,9 @@ class MainWindow(QMainWindow):
         self._toast_timer.timeout.connect(self.toast_lbl.hide)
 
         QTimer.singleShot(40, self.refresh_all)
+        update_cfg = config.get("update") if isinstance(config.get("update"), dict) else {}
+        if update_cfg.get("autoCheckOnStartup", True) is not False:
+            QTimer.singleShot(450, lambda: self._check_for_updates(manual=False))
 
     # ------------------------------------------------------------------
     # UI Construction: Proposal 4 Top Capsule Dock + Multi-Page Canvas
@@ -560,6 +572,8 @@ class MainWindow(QMainWindow):
         self.toast_lbl = QLabel("", self)
         self.toast_lbl.setObjectName("FloatingToast")
         self.toast_lbl.hide()
+
+        self._build_floating_update_banner()
 
     def _make_clean_scroll(
         self,
@@ -1140,6 +1154,40 @@ class MainWindow(QMainWindow):
         m_lay.addLayout(m_btns)
         body_lay.addWidget(m_card)
 
+        # Card 1.5: Software Update
+        u_card = QFrame()
+        u_card.setObjectName("WhiteCard")
+        u_lay = QVBoxLayout(u_card)
+        u_lay.setContentsMargins(20, 18, 20, 18)
+        u_lay.setSpacing(8)
+        u_hdr = QHBoxLayout()
+        u_t = QLabel("版本与更新")
+        u_t.setObjectName("CardTitle")
+        self.update_current_ver_tag = QLabel(f"v{APP_VERSION}")
+        self.update_current_ver_tag.setObjectName("VersionTag")
+        self.update_status_lbl = QLabel("每次启动自动检查更新（非强制）")
+        self.update_status_lbl.setObjectName("DotMuted")
+        self.open_update_site_btn = QPushButton("前往官网")
+        self.open_update_site_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.open_update_site_btn.clicked.connect(self._open_update_website)
+        self.check_update_btn = QPushButton("检查更新")
+        self.check_update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.check_update_btn.clicked.connect(lambda: self._check_for_updates(manual=True))
+        u_hdr.addWidget(u_t)
+        u_hdr.addSpacing(8)
+        u_hdr.addWidget(self.update_current_ver_tag)
+        u_hdr.addSpacing(8)
+        u_hdr.addWidget(self.update_status_lbl)
+        u_hdr.addStretch(1)
+        u_hdr.addWidget(self.open_update_site_btn)
+        u_hdr.addWidget(self.check_update_btn)
+        u_hint = QLabel("更新检测与文案由 HaoAn Lab 官网统一提供，发现新版本时将在右上角悬浮提示，可随时忽略继续使用。")
+        u_hint.setObjectName("MutedLabel")
+        u_hint.setWordWrap(True)
+        u_lay.addLayout(u_hdr)
+        u_lay.addWidget(u_hint)
+        body_lay.addWidget(u_card)
+
         # Card 2: Antigravity Path
         agy_card = QFrame()
         agy_card.setObjectName("WhiteCard")
@@ -1459,6 +1507,8 @@ class MainWindow(QMainWindow):
             app.setStyleSheet(build_stylesheet(is_dark, assets_dir=assets_root))
         for sw in self._switches:
             sw.set_dark_mode(is_dark)
+        if hasattr(self, "_update_banner_shadow"):
+            self._update_banner_shadow.setColor(QColor(0, 0, 0, 120 if is_dark else 42))
         apply_dwm_titlebar_theme(self, is_dark)
         if self._overview:
             self._render_overview()
@@ -1466,10 +1516,193 @@ class MainWindow(QMainWindow):
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         apply_dwm_titlebar_theme(self, resolve_is_dark(self._theme_mode))
+        self._position_update_banner()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._position_toast()
+        self._position_update_banner()
+
+    def _build_floating_update_banner(self) -> None:
+        self.update_banner = QFrame(self)
+        self.update_banner.setObjectName("FloatingUpdateCard")
+        self.update_banner.setFixedWidth(332)
+        shadow = QGraphicsDropShadowEffect(self.update_banner)
+        shadow.setBlurRadius(24)
+        shadow.setOffset(0, 6)
+        shadow.setColor(QColor(0, 0, 0, 42))
+        self._update_banner_shadow = shadow
+        self.update_banner.setGraphicsEffect(shadow)
+
+        lay = QVBoxLayout(self.update_banner)
+        lay.setContentsMargins(16, 14, 14, 14)
+        lay.setSpacing(8)
+
+        hdr = QHBoxLayout()
+        hdr.setSpacing(8)
+        self.update_badge_lbl = QLabel("发现新版本")
+        self.update_badge_lbl.setObjectName("PillOk")
+        self.update_close_btn = QPushButton("×")
+        self.update_close_btn.setObjectName("FloatingCloseBtn")
+        self.update_close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_close_btn.setToolTip("关闭提示")
+        self.update_close_btn.clicked.connect(self._dismiss_update_banner)
+        hdr.addWidget(self.update_badge_lbl)
+        hdr.addStretch(1)
+        hdr.addWidget(self.update_close_btn)
+
+        self.update_title_lbl = QLabel("")
+        self.update_title_lbl.setObjectName("FloatingUpdateTitle")
+        self.update_title_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        self.update_title_lbl.setWordWrap(True)
+
+        self.update_body_lbl = QLabel("")
+        self.update_body_lbl.setObjectName("FloatingUpdateBody")
+        self.update_body_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        self.update_body_lbl.setWordWrap(True)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+        self.update_dismiss_btn = QPushButton("暂不更新")
+        self.update_dismiss_btn.setObjectName("LinkButton")
+        self.update_dismiss_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_dismiss_btn.clicked.connect(self._dismiss_update_banner)
+        self.update_now_btn = QPushButton("立即更新")
+        self.update_now_btn.setObjectName("PrimaryButton")
+        self.update_now_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_now_btn.clicked.connect(self._open_update_website)
+        actions.addWidget(self.update_dismiss_btn)
+        actions.addStretch(1)
+        actions.addWidget(self.update_now_btn)
+
+        lay.addLayout(hdr)
+        lay.addWidget(self.update_title_lbl)
+        lay.addWidget(self.update_body_lbl)
+        lay.addLayout(actions)
+        self.update_banner.hide()
+
+    def _position_update_banner(self) -> None:
+        if not hasattr(self, "update_banner"):
+            return
+        self.update_banner.adjustSize()
+        x = max(24, self.width() - self.update_banner.width() - 32)
+        y = 66
+        self.update_banner.move(x, y)
+
+    def _show_update_banner(self, result: dict[str, Any]) -> None:
+        self._latest_update_info = dict(result)
+        latest = str(result.get("latestVersion") or "").strip()
+        prompt = result.get("prompt") if isinstance(result.get("prompt"), dict) else {}
+        title = str(prompt.get("title") or "").strip() or (
+            f"AGY Plugin Manager v{latest} 已发布" if latest else "发现新版本"
+        )
+        body = str(prompt.get("body") or "").strip() or "前往 HaoAn Lab 官网查看更新日志并获取最新版本。"
+        changelog = str(result.get("changelog") or "").strip()
+        if changelog and changelog not in body:
+            first_lines = [line.strip() for line in changelog.splitlines() if line.strip()][:2]
+            if first_lines:
+                body = f"{body}\n" + " · ".join(first_lines)
+        update_url = str(result.get("updateUrl") or "").strip()
+        if update_url:
+            try:
+                validate_update_site_url(update_url)
+                self._current_update_url = update_url
+            except Exception:
+                pass
+        self.update_badge_lbl.setText(f"新版本 v{latest}" if latest else "发现新版本")
+        self.update_title_lbl.setText(title)
+        self.update_body_lbl.setText(body)
+        self.update_now_btn.setText("立即更新")
+        self.update_banner.adjustSize()
+        self._position_update_banner()
+        self.update_banner.show()
+        self.update_banner.raise_()
+
+    def _dismiss_update_banner(self) -> None:
+        if hasattr(self, "update_banner"):
+            self.update_banner.hide()
+
+    def _open_update_website(self) -> None:
+        target = self._current_update_url or "https://ahmustudyhelper.xyz"
+        try:
+            parsed = QUrl(validate_update_site_url(target))
+        except Exception:
+            parsed = QUrl("https://ahmustudyhelper.xyz")
+        QDesktopServices.openUrl(parsed)
+
+    def _check_for_updates(self, manual: bool = False) -> None:
+        if self._update_check_in_flight:
+            return
+        self._update_check_in_flight = True
+        if hasattr(self, "check_update_btn"):
+            self.check_update_btn.setEnabled(False)
+            self.check_update_btn.setText("检查中...")
+        if hasattr(self, "update_status_lbl") and manual:
+            self._set_dot(self.update_status_lbl, "muted", "正在连接官网检查更新...")
+
+        def run() -> dict[str, Any]:
+            return self.manager.check_for_updates()
+
+        def done(result: dict[str, Any]) -> None:
+            self._update_check_in_flight = False
+            if hasattr(self, "check_update_btn"):
+                self.check_update_btn.setEnabled(True)
+                self.check_update_btn.setText("检查更新")
+            self._handle_update_check_result(result, manual=manual)
+
+        def fail(err: str) -> None:
+            self._update_check_in_flight = False
+            if hasattr(self, "check_update_btn"):
+                self.check_update_btn.setEnabled(True)
+                self.check_update_btn.setText("检查更新")
+            if hasattr(self, "update_status_lbl"):
+                tone = "warn" if manual else "muted"
+                self._set_dot(self.update_status_lbl, tone, "暂无法连接更新服务")
+            if manual:
+                self._notify_error(err)
+
+        self._run_async(run, done, fail)
+
+    def _handle_update_check_result(self, result: dict[str, Any], *, manual: bool) -> None:
+        status = str(result.get("status") or "")
+        msg = str(result.get("message") or "").strip()
+        update_url = str(result.get("updateUrl") or "").strip()
+        if update_url:
+            try:
+                validate_update_site_url(update_url)
+                self._current_update_url = update_url
+            except Exception:
+                pass
+
+        if result.get("hasUpdate"):
+            latest = str(result.get("latestVersion") or "").strip()
+            if hasattr(self, "update_status_lbl"):
+                self._set_dot(self.update_status_lbl, "ok", f"发现新版本 v{latest}")
+            self._show_update_banner(result)
+            return
+
+        if status == "ok":
+            if hasattr(self, "update_status_lbl"):
+                self._set_dot(self.update_status_lbl, "ok", msg or f"已是最新版本 (v{APP_VERSION})")
+            self._dismiss_update_banner()
+            if manual:
+                self._show_toast(msg or "当前已是最新版本")
+            return
+
+        if status == "unpublished":
+            if hasattr(self, "update_status_lbl"):
+                self._set_dot(self.update_status_lbl, "muted", msg or "官网暂未发布新版本")
+            if manual:
+                self._show_toast(msg or "官网暂未发布新版本")
+            return
+
+        # Network or response error: never disrupt normal usage; notify toast only on manual trigger.
+        if hasattr(self, "update_status_lbl"):
+            self._set_dot(self.update_status_lbl, "warn" if manual else "muted", "暂无法连接更新服务")
+        if manual:
+            self._show_toast(msg or "检查更新失败")
+        else:
+            self.manager.log(f"启动自动检查更新未完成（已跳过，不影响正常使用）: {msg or 'network unavailable'}")
 
     def _position_toast(self) -> None:
         if not hasattr(self, "toast_lbl"):

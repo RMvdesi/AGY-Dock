@@ -7,7 +7,7 @@ import { AgyProcessManager } from './lib/process-manager.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, 'ui');
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 
 function sendJson(res, status, payload) {
   if (res.writableEnded) return;
@@ -171,6 +171,11 @@ export function createManagerServer({
 
       if (req.method === 'GET' && pathname === '/api/native-plugins') {
         sendJson(res, 200, { plugins: manager.listNativePlugins() });
+        return;
+      }
+
+      if (req.method === 'GET' && pathname === '/api/update-check') {
+        sendJson(res, 200, await manager.checkForUpdates());
         return;
       }
 

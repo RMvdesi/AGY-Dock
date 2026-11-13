@@ -355,6 +355,35 @@ def build_stylesheet(is_dark: bool, assets_dir: Path | str | None = None) -> str
       font-size: 9pt;
       font-weight: 500;
     }}
+    QFrame#FloatingUpdateCard {{
+      background-color: {c["elevated"]};
+      border: 1px solid {c["border_strong"]};
+      border-radius: 14px;
+    }}
+    QLabel#FloatingUpdateTitle {{
+      font-size: 10pt;
+      font-weight: 700;
+      color: {c["text"]};
+    }}
+    QLabel#FloatingUpdateBody {{
+      font-size: 8.8pt;
+      color: {c["muted"]};
+    }}
+    QPushButton#FloatingCloseBtn {{
+      background-color: transparent;
+      border: none;
+      border-radius: 8px;
+      color: {c["faint"]};
+      font-size: 10.5pt;
+      font-weight: 600;
+      min-width: 22px;
+      min-height: 22px;
+      padding: 0px 4px;
+    }}
+    QPushButton#FloatingCloseBtn:hover {{
+      background-color: {c["subtle"]};
+      color: {c["text"]};
+    }}
 
     /* Buttons */
     QPushButton {{

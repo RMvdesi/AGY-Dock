@@ -3,12 +3,15 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import platform as std_platform
 import re
 import shutil
 import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -62,6 +65,79 @@ COMMON_PROXY_PORTS = (7897, 7890, 10808, 10809, 1080, 2080, 2081, 7891, 8080)
 SOCKS_ONLY_PORTS = {1080, 2080, 7891, 10808}
 MIXED_PROXY_PORTS = {7897, 7890}
 ANTIGRAVITY_INSTALLER_SKIP_RE = re.compile(r"(?:agy-launcher|plugin[\s_-]*manager)", re.IGNORECASE)
+
+APP_VERSION = "2.1.0"
+DEFAULT_UPDATE_SITE_URL = "https://ahmustudyhelper.xyz"
+DEFAULT_PRODUCT_SLUG = "agy-plugin-manager"
+UPDATE_SEMVER_RE = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$")
+PRODUCT_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+
+def detect_host_arch() -> str:
+    """Maps the Windows host architecture to HaoAn Lab platform/arch vocabulary."""
+    machine = str(std_platform.machine() or "").strip().lower()
+    if machine in ("arm64", "aarch64"):
+        return "arm64"
+    return "x64"
+
+
+def parse_semver(raw: str | None) -> tuple[int, int, int] | None:
+    """Parses bare or v-prefixed SemVer strings into a numeric (major, minor, patch) tuple."""
+    text = str(raw or "").strip()
+    match = UPDATE_SEMVER_RE.match(text)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def normalize_semver_str(raw: str | None, fallback: str = APP_VERSION) -> str:
+    """Returns canonical bare SemVer X.Y.Z string without a leading 'v'."""
+    parsed = parse_semver(raw)
+    if parsed is not None:
+        return f"{parsed[0]}.{parsed[1]}.{parsed[2]}"
+    fb = parse_semver(fallback)
+    return f"{fb[0]}.{fb[1]}.{fb[2]}" if fb else "2.1.0"
+
+
+def is_newer_semver(candidate: str | None, current: str | None) -> bool:
+    """Returns True when candidate SemVer is strictly newer than current SemVer."""
+    cand_tuple = parse_semver(candidate)
+    curr_tuple = parse_semver(current)
+    if cand_tuple is None or curr_tuple is None:
+        return False
+    return cand_tuple > curr_tuple
+
+
+def validate_update_site_url(site_url: str | None) -> str:
+    """Ensures update checks and browser redirects only target HTTPS or localhost."""
+    cleaned = str(site_url or DEFAULT_UPDATE_SITE_URL).strip().rstrip("/")
+    parsed = urllib.parse.urlparse(cleaned)
+    if parsed.scheme == "https" and parsed.netloc:
+        return cleaned
+    if parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1"):
+        return cleaned
+    raise ValueError("更新服务地址必须使用 HTTPS（本地调试仅限 localhost / 127.0.0.1）")
+
+
+def build_update_urls(
+    site_url: str | None = None,
+    product_slug: str | None = None,
+    current_version: str | None = None,
+    platform_name: str = "windows",
+    arch: str | None = None,
+) -> tuple[str, str]:
+    """Builds HaoAn Lab release-latest API URL and official website update landing URL."""
+    base = validate_update_site_url(site_url)
+    slug = str(product_slug or DEFAULT_PRODUCT_SLUG).strip().lower()
+    if not PRODUCT_SLUG_RE.match(slug):
+        raise ValueError(f"无效的官网产品 slug: {product_slug}")
+    ver = normalize_semver_str(current_version or APP_VERSION)
+    resolved_arch = arch if arch in ("x64", "arm64", "universal") else detect_host_arch()
+    query = urllib.parse.urlencode({"platform": platform_name, "arch": resolved_arch, "from": ver})
+    quoted_slug = urllib.parse.quote(slug, safe="")
+    manifest_url = f"{base}/api/v1/products/{quoted_slug}/releases/latest?{query}"
+    landing_url = f"{base}/updates/{quoted_slug}?{query}"
+    return manifest_url, landing_url
 
 
 class RuntimeDirs(NamedTuple):
@@ -1348,6 +1424,7 @@ class AgyProcessManager:
 
         return {
             "timestamp": datetime.now().isoformat(),
+            "version": APP_VERSION,
             "baseDir": str(self.base_dir),
             "dataDir": str(self.paths.data_dir),
             "assetsDir": str(self.paths.assets_dir),
@@ -2068,4 +2145,175 @@ $sc.Save()
             icon_path=agy_icon,
             description="无黑框启动 Antigravity 并静默加载托管插件",
         )
-        return {"managerShortcut": manager_shortcut, "agyShortcut": agy_shortcut}
+        return {
+            "managerShortcut": manager_shortcut,
+            "agyShortcut": agy_shortcut,
+        }
+
+    def get_update_settings(self) -> dict[str, Any]:
+        config = self.load_config()
+        raw = config.get("update") if isinstance(config.get("update"), dict) else {}
+        site_url = validate_update_site_url(raw.get("siteUrl") or DEFAULT_UPDATE_SITE_URL)
+        slug = str(raw.get("productSlug") or DEFAULT_PRODUCT_SLUG).strip().lower() or DEFAULT_PRODUCT_SLUG
+        if not PRODUCT_SLUG_RE.match(slug):
+            slug = DEFAULT_PRODUCT_SLUG
+        return {
+            "siteUrl": site_url,
+            "productSlug": slug,
+            "autoCheckOnStartup": raw.get("autoCheckOnStartup", True) is not False,
+            "currentVersion": normalize_semver_str(APP_VERSION),
+        }
+
+    def check_for_updates(
+        self,
+        timeout_sec: float = 6.0,
+        *,
+        site_url: str | None = None,
+        product_slug: str | None = None,
+        current_version: str | None = None,
+    ) -> dict[str, Any]:
+        """Queries HaoAn Lab latest-release manifest without blocking app usage."""
+        settings = self.get_update_settings()
+        target_site = site_url or settings["siteUrl"]
+        target_slug = product_slug or settings["productSlug"]
+        current = normalize_semver_str(current_version or settings["currentVersion"])
+        arch = detect_host_arch()
+        manifest_url, landing_url = build_update_urls(
+            site_url=target_site,
+            product_slug=target_slug,
+            current_version=current,
+            platform_name="windows",
+            arch=arch,
+        )
+        checked_at = datetime.now().isoformat()
+
+        def clean_text(raw_val: Any) -> str:
+            return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", str(raw_val or "")).strip()
+
+        req = urllib.request.Request(
+            manifest_url,
+            headers={
+                "Accept": "application/json",
+                "Cache-Control": "no-store",
+                "User-Agent": f"AGY-Plugin-Manager/{current}",
+            },
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=max(2.0, float(timeout_sec))) as resp:
+                if resp.status != 200:
+                    return {
+                        "status": "error",
+                        "hasUpdate": False,
+                        "currentVersion": current,
+                        "latestVersion": "",
+                        "manifestUrl": manifest_url,
+                        "updateUrl": landing_url,
+                        "prompt": {"title": "", "body": "", "button": "立即更新"},
+                        "message": f"更新检查返回 HTTP {resp.status}",
+                        "checkedAt": checked_at,
+                    }
+                payload = json.loads(resp.read(262144).decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return {
+                    "status": "unpublished",
+                    "hasUpdate": False,
+                    "currentVersion": current,
+                    "latestVersion": "",
+                    "manifestUrl": manifest_url,
+                    "updateUrl": landing_url,
+                    "prompt": {"title": "", "body": "", "button": "立即更新"},
+                    "message": "官网暂未发布可用版本",
+                    "checkedAt": checked_at,
+                }
+            return {
+                "status": "error",
+                "hasUpdate": False,
+                "currentVersion": current,
+                "latestVersion": "",
+                "manifestUrl": manifest_url,
+                "updateUrl": landing_url,
+                "prompt": {"title": "", "body": "", "button": "立即更新"},
+                "message": f"更新检查失败 (HTTP {exc.code})",
+                "checkedAt": checked_at,
+            }
+        except Exception as exc:
+            return {
+                "status": "error",
+                "hasUpdate": False,
+                "currentVersion": current,
+                "latestVersion": "",
+                "manifestUrl": manifest_url,
+                "updateUrl": landing_url,
+                "prompt": {"title": "", "body": "", "button": "立即更新"},
+                "message": f"无法连接官网更新服务: {exc}",
+                "checkedAt": checked_at,
+            }
+
+        if not isinstance(payload, dict):
+            return {
+                "status": "error",
+                "hasUpdate": False,
+                "currentVersion": current,
+                "latestVersion": "",
+                "manifestUrl": manifest_url,
+                "updateUrl": landing_url,
+                "prompt": {"title": "", "body": "", "button": "立即更新"},
+                "message": "官网更新响应格式无效",
+                "checkedAt": checked_at,
+            }
+
+        release = payload.get("release")
+        if release is None:
+            return {
+                "status": "unpublished",
+                "hasUpdate": False,
+                "currentVersion": current,
+                "latestVersion": "",
+                "manifestUrl": manifest_url,
+                "updateUrl": landing_url,
+                "prompt": {"title": "", "body": "", "button": "立即更新"},
+                "message": "官网暂未发布可用版本",
+                "checkedAt": checked_at,
+            }
+        if not isinstance(release, dict) or parse_semver(str(release.get("version") or "")) is None:
+            return {
+                "status": "error",
+                "hasUpdate": False,
+                "currentVersion": current,
+                "latestVersion": "",
+                "manifestUrl": manifest_url,
+                "updateUrl": landing_url,
+                "prompt": {"title": "", "body": "", "button": "立即更新"},
+                "message": "官网更新清单缺少有效 SemVer 版本号",
+                "checkedAt": checked_at,
+            }
+
+        latest_version = normalize_semver_str(str(release.get("version") or ""))
+        has_update = is_newer_semver(latest_version, current)
+        prompt_raw = payload.get("prompt") if isinstance(payload.get("prompt"), dict) else {}
+        prompt_title = clean_text(prompt_raw.get("title")) or f"AGY Plugin Manager v{latest_version} 已发布"
+        prompt_body = clean_text(prompt_raw.get("body")) or (
+            f"当前版本 v{current}，最新版本 v{latest_version}，可前往 HaoAn Lab 官网更新。"
+        )
+        prompt_button = clean_text(prompt_raw.get("button")) or "立即更新"
+
+        return {
+            "status": "ok",
+            "hasUpdate": has_update,
+            "currentVersion": current,
+            "latestVersion": latest_version,
+            "available": bool(payload.get("available")),
+            "manifestUrl": manifest_url,
+            "updateUrl": landing_url,
+            "prompt": {
+                "title": prompt_title,
+                "body": prompt_body,
+                "button": prompt_button,
+            },
+            "changelog": clean_text(release.get("changelog")),
+            "instructions": clean_text(payload.get("instructions")),
+            "message": f"发现新版本 v{latest_version}" if has_update else f"已是最新版本 (v{current})",
+            "checkedAt": checked_at,
+        }

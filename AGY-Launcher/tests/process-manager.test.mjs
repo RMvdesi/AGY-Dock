@@ -6,16 +6,21 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
+  APP_VERSION,
   AgyProcessManager,
   DEFAULT_NO_PROXY,
   buildAntigravityLaunchParams,
+  buildUpdateUrls,
   classifyAntigravityProcesses,
   detectAntigravityExe,
   detectSystemProxy,
   findAntigravityCleanupTargets,
+  isNewerSemver,
   matchPluginProcesses,
   parseDevToolsActivePort,
   parseListeningPidsForPort,
+  parseSemver,
+  validateUpdateSiteUrl,
 } from '../lib/process-manager.mjs';
 import { findAppBrowserExecutable } from '../cli.mjs';
 import { createManagerServer } from '../server.mjs';
@@ -629,6 +634,78 @@ test('installPluginPackage rejects Zip-Slip and installs real packages with over
     assert.equal(replacedRes.replaced, true);
     assert.equal(replacedRes.plugin.id, 'agy-telemetry');
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('HaoAn Lab update check parses release manifests, handles 404/up-to-date, and enforces HTTPS/localhost', async () => {
+  assert.deepEqual(parseSemver('2.1.0'), [2, 1, 0]);
+  assert.equal(isNewerSemver('2.2.0', '2.1.0'), true);
+  assert.equal(isNewerSemver('2.1.0', '2.1.0'), false);
+  assert.equal(isNewerSemver('2.0.5', '2.1.0'), false);
+  assert.throws(() => validateUpdateSiteUrl('http://untrusted.example.com'), /HTTPS/);
+
+  const urls = buildUpdateUrls({ currentVersion: APP_VERSION, arch: 'x64' });
+  assert.equal(
+    urls.manifestUrl,
+    `https://ahmustudyhelper.xyz/api/v1/products/agy-plugin-manager/releases/latest?platform=windows&arch=x64&from=${APP_VERSION}`
+  );
+  assert.equal(
+    urls.landingUrl,
+    `https://ahmustudyhelper.xyz/updates/agy-plugin-manager?platform=windows&arch=x64&from=${APP_VERSION}`
+  );
+
+  let mode = 'upgrade';
+  const mockServer = http.createServer((req, res) => {
+    if (mode === '404') {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    const body =
+      mode === 'current'
+        ? {
+            release: { version: APP_VERSION, changelog: 'same' },
+            prompt: { title: 'Current', body: 'Already latest', button: 'OK' },
+          }
+        : {
+            release: { version: '8.0.0', changelog: 'New build' },
+            available: true,
+            prompt: { title: 'Website Managed Title', body: 'Website Managed Body', button: '下载' },
+          };
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(body));
+  });
+
+  await new Promise((resolve) => mockServer.listen(0, '127.0.0.1', resolve));
+  const address = mockServer.address();
+  const siteUrl = `http://127.0.0.1:${address.port}`;
+
+  const { root, manager } = createTempManagerFixture();
+  try {
+    const cfg = manager.loadConfig();
+    cfg.update = { siteUrl, productSlug: 'agy-plugin-manager', autoCheckOnStartup: true };
+    manager.saveConfig(cfg);
+
+    const upgradeRes = await manager.checkForUpdates();
+    assert.equal(upgradeRes.status, 'ok');
+    assert.equal(upgradeRes.hasUpdate, true);
+    assert.equal(upgradeRes.latestVersion, '8.0.0');
+    assert.equal(upgradeRes.prompt.title, 'Website Managed Title');
+    assert.equal(upgradeRes.prompt.body, 'Website Managed Body');
+    assert.equal(upgradeRes.updateUrl.startsWith(`${siteUrl}/updates/agy-plugin-manager?`), true);
+
+    mode = 'current';
+    const currentRes = await manager.checkForUpdates();
+    assert.equal(currentRes.status, 'ok');
+    assert.equal(currentRes.hasUpdate, false);
+
+    mode = '404';
+    const notFoundRes = await manager.checkForUpdates();
+    assert.equal(notFoundRes.status, 'unpublished');
+    assert.equal(notFoundRes.hasUpdate, false);
+  } finally {
+    await new Promise((resolve) => mockServer.close(resolve));
     rmSync(root, { recursive: true, force: true });
   }
 });

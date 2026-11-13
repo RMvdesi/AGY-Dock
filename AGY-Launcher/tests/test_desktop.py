@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import http.server
 import json
 import os
+import re
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -15,22 +19,27 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from PySide6.QtCore import QMimeData, QUrl  # noqa: E402
-from PySide6.QtGui import QIcon  # noqa: E402
+from PySide6.QtGui import QDesktopServices, QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from desktop.core import (  # noqa: E402
+    APP_VERSION,
     DEFAULT_NO_PROXY,
     AgyProcessManager,
     build_antigravity_launch_params,
+    build_update_urls,
     classify_antigravity_processes,
     detect_antigravity_exe,
     detect_system_proxy,
     find_antigravity_cleanup_targets,
+    is_newer_semver,
     match_plugin_processes,
     parse_devtools_active_port,
     parse_listening_pids_for_port,
+    parse_semver,
     resolve_plugin_version,
     resolve_runtime_dirs,
+    validate_update_site_url,
 )
 from desktop.dialogs import PluginEditorDialog  # noqa: E402
 from desktop.main_window import MainWindow, _extract_plugin_package_paths  # noqa: E402
@@ -54,6 +63,7 @@ def build_temp_manager() -> tuple[tempfile.TemporaryDirectory[str], AgyProcessMa
                 "antigravityExe": r"C:\Missing\Antigravity.exe",
                 "antigravityArgs": [],
                 "proxy": {"enabled": False, "httpProxy": "http://127.0.0.1:7890"},
+                "update": {"autoCheckOnStartup": False},
                 "plugins": [
                     {
                         "id": "demo-plugin",
@@ -548,6 +558,175 @@ class DesktopCoreTests(unittest.TestCase):
             self.assertTrue(reinstalled["replaced"])
             self.assertEqual(reinstalled["plugin"]["id"], "agy-telemetry")
         finally:
+            tmp.cleanup()
+
+    def test_haoan_lab_update_check_and_floating_banner(self) -> None:
+        server_mjs_text = (ROOT_DIR / "server.mjs").read_text(encoding="utf-8")
+        ver_match = re.search(r"const\s+VERSION\s*=\s*['\"]([^'\"]+)['\"]", server_mjs_text)
+        self.assertIsNotNone(ver_match)
+        self.assertEqual(APP_VERSION, ver_match.group(1))
+
+        self.assertEqual(parse_semver("v2.1.0"), (2, 1, 0))
+        self.assertTrue(is_newer_semver("2.2.0", "2.1.0"))
+        self.assertFalse(is_newer_semver("2.1.0", "2.1.0"))
+        self.assertFalse(is_newer_semver("2.0.9", "2.1.0"))
+        with self.assertRaises(ValueError):
+            validate_update_site_url("http://evil.example.com")
+
+        manifest_url, landing_url = build_update_urls(current_version="2.1.0", arch="x64")
+        self.assertEqual(
+            manifest_url,
+            "https://ahmustudyhelper.xyz/api/v1/products/agy-plugin-manager/releases/latest?platform=windows&arch=x64&from=2.1.0",
+        )
+        self.assertEqual(
+            landing_url,
+            "https://ahmustudyhelper.xyz/updates/agy-plugin-manager?platform=windows&arch=x64&from=2.1.0",
+        )
+
+        # Spin up a local HaoAn Lab mock endpoint supporting upgrade, current, and 404 modes.
+        server_state: dict[str, Any] = {
+            "mode": "upgrade",
+            "requests": [],
+        }
+
+        class MockUpdateHandler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+                pass
+
+            def do_GET(self) -> None:  # noqa: N802
+                server_state["requests"].append(self.path)
+                if server_state["mode"] == "404":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                if server_state["mode"] == "current":
+                    payload = {
+                        "product": {"slug": "agy-plugin-manager", "name": "AGY Plugin Manager"},
+                        "release": {"version": APP_VERSION, "changelog": "当前正式版"},
+                        "available": True,
+                        "prompt": {"title": "暂无更新", "body": "已是最新正式版", "button": "查看"},
+                    }
+                else:
+                    payload = {
+                        "product": {"slug": "agy-plugin-manager", "name": "AGY Plugin Manager"},
+                        "release": {
+                            "version": "9.9.0",
+                            "changelog": "优化插件热加载\n增强网站更新适配",
+                        },
+                        "available": True,
+                        "prompt": {
+                            "title": "AGY Plugin Manager 有新版本可用",
+                            "body": f"当前版本 {APP_VERSION}，正式版本 9.9.0，欢迎前往官网获取新包。",
+                            "button": "查看更新并下载",
+                        },
+                    }
+                raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockUpdateHandler)
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+
+        tmp = tempfile.TemporaryDirectory(prefix="agy-update-test-")
+        app = QApplication.instance() or QApplication([])
+        opened_urls: list[str] = []
+        orig_open_url = QDesktopServices.openUrl
+        QDesktopServices.openUrl = staticmethod(lambda url: opened_urls.append(url.toString()) or True)  # type: ignore[method-assign]
+        try:
+            root = Path(tmp.name)
+            mgr = AgyProcessManager(
+                base_dir=root / "AGY-Launcher",
+                app_data_dir=root / "AppData",
+                gemini_plugins_dir=root / ".gemini" / "plugins",
+                gemini_config_path=root / ".gemini" / "config.json",
+            )
+            mgr.list_processes = lambda: []  # type: ignore[method-assign]
+            cfg = mgr.load_config()
+            cfg["update"] = {
+                "siteUrl": f"http://127.0.0.1:{port}",
+                "productSlug": "agy-plugin-manager",
+                "autoCheckOnStartup": True,
+            }
+            mgr.save_config(cfg)
+
+            # 1. Newer release available -> non-forced prompt with website copy
+            res_upgrade = mgr.check_for_updates()
+            self.assertEqual(res_upgrade["status"], "ok")
+            self.assertTrue(res_upgrade["hasUpdate"])
+            self.assertEqual(res_upgrade["latestVersion"], "9.9.0")
+            self.assertEqual(res_upgrade["prompt"]["title"], "AGY Plugin Manager 有新版本可用")
+            self.assertIn(f"正式版本 9.9.0", res_upgrade["prompt"]["body"])
+            self.assertIn(f"/updates/agy-plugin-manager?platform=windows&arch=", res_upgrade["updateUrl"])
+
+            # 2. Already up-to-date
+            server_state["mode"] = "current"
+            res_current = mgr.check_for_updates()
+            self.assertEqual(res_current["status"], "ok")
+            self.assertFalse(res_current["hasUpdate"])
+
+            # 3. Unpublished (HTTP 404)
+            server_state["mode"] = "404"
+            res_404 = mgr.check_for_updates()
+            self.assertEqual(res_404["status"], "unpublished")
+            self.assertFalse(res_404["hasUpdate"])
+
+            # 4. PySide6 UI startup auto-check + manual check + top-right floating banner + dismiss & CTA
+            server_state["mode"] = "upgrade"
+            server_state["requests"].clear()
+            win = MainWindow(mgr, QIcon())
+            win._overview_timer.stop()
+            win._log_timer.stop()
+            win.show()
+            app.processEvents()
+
+            # Wait briefly so the 450ms startup auto-check QTimer fires against the local mock server.
+            deadline = time.monotonic() + 3.0
+            while not win.update_banner.isVisible() and time.monotonic() < deadline:
+                app.processEvents()
+                time.sleep(0.03)
+
+            self.assertEqual(win.check_update_btn.text(), "检查更新")
+            self.assertGreaterEqual(len(server_state["requests"]), 1)
+            self.assertTrue(win.update_banner.isVisible())
+            self.assertGreater(win.update_banner.x(), win.width() // 2)
+            self.assertEqual(win.update_banner.y(), 66)
+            self.assertEqual(win.update_title_lbl.text(), "AGY Plugin Manager 有新版本可用")
+            self.assertIn("正式版本 9.9.0", win.update_body_lbl.text())
+            self.assertEqual(win.update_now_btn.text(), "立即更新")
+
+            win.update_now_btn.click()
+            app.processEvents()
+            self.assertEqual(len(opened_urls), 1)
+            self.assertIn(f"http://127.0.0.1:{port}/updates/agy-plugin-manager", opened_urls[0])
+
+            win.update_dismiss_btn.click()
+            app.processEvents()
+            self.assertFalse(win.update_banner.isVisible())
+
+            # Manual check triggers cleanly as well
+            server_state["mode"] = "current"
+            win.check_update_btn.click()
+            deadline2 = time.monotonic() + 3.0
+            while win._update_check_in_flight and time.monotonic() < deadline2:
+                app.processEvents()
+                time.sleep(0.03)
+            self.assertIn("已是最新版本", win.update_status_lbl.text())
+            self.assertFalse(win.update_banner.isVisible())
+
+            win.tray_icon.hide()
+            win.thread_pool.waitForDone(4000)
+            app.processEvents()
+            win.deleteLater()
+            app.processEvents()
+        finally:
+            QDesktopServices.openUrl = orig_open_url  # type: ignore[method-assign]
+            httpd.shutdown()
+            httpd.server_close()
             tmp.cleanup()
 
 

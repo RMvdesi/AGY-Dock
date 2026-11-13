@@ -6,6 +6,31 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.1.0] - 2026-11-14 00:02
+
+### Summary
+- Adapted AGY Plugin Manager (`agy-plugin-manager`) to the HaoAn Lab (`https://ahmustudyhelper.xyz`) website release & integration specification (`distribution_mode=managed`, `runtime_mode=none`, `auth_mode=none`) for non-forced update checking.
+- Added backend and Node parity helpers (`APP_VERSION`, `parse_semver()`, `is_newer_semver()`, `build_update_urls()`, `validate_update_site_url()`, `AgyProcessManager.check_for_updates()`, plus Node `checkForUpdates()` & `GET /api/update-check`) querying `GET /api/v1/products/agy-plugin-manager/releases/latest` cleanly with graceful 404/offline handling.
+- Implemented a non-blocking **top-right floating update card** (`FloatingUpdateCard` in `MainWindow`) displaying website-managed `prompt.title` & `prompt.body` as plain text, dismissible without blocking normal usage, with an **"立即更新"** CTA opening `https://ahmustudyhelper.xyz/updates/agy-plugin-manager?platform=windows&arch=<x64|arm64>&from=<version>`.
+- Added once-per-startup asynchronous update checking (`QTimer.singleShot`) and a **"版本与更新"** settings card inside `设置与维护` featuring the manual **"检查更新"** button and **"前往官网"** shortcut.
+- Documented permanent compliance requirements for future versions in root `AGENTS.md` and `AGY-Launcher/AGENTS.md`.
+
+### Files Changed
+- `AGENTS.md` & `AGY-Launcher/AGENTS.md` — Added mandatory rules requiring future `AGY-Launcher` versions to comply with the HaoAn Lab update-check API, landing URL, plain-text copy safety, and version/artifact parity.
+- `AGY-Launcher/desktop/core.py` — Added `APP_VERSION = "2.1.0"`, SemVer comparison, HTTPS/localhost URL validation, `build_update_urls()`, `get_update_settings()`, `check_for_updates()`, and `version` field in `get_overview()`.
+- `AGY-Launcher/lib/process-manager.mjs` & `AGY-Launcher/server.mjs` — Bumped `VERSION` / `APP_VERSION` to `2.1.0`, added Node `checkForUpdates()` parity helpers and `GET /api/update-check`.
+- `AGY-Launcher/desktop/theme.py` & `AGY-Launcher/desktop/main_window.py` — Styled and implemented `FloatingUpdateCard` (Light/Dark + drop shadow), startup auto-check, Settings **"版本与更新"** card with manual **"检查更新"** button, and **"立即更新"** browser launch.
+- `AGY-Launcher/tests/test_desktop.py` & `AGY-Launcher/tests/process-manager.test.mjs` — Added automated tests covering version parity, SemVer/URL guards, mock HaoAn Lab release JSON (upgrade/current/404), startup/manual checks, and top-right floating banner UI behavior.
+- `AGY-Launcher/MAINTENANCE_LOG.md` — Recorded `[v2.1.0]` maintenance log entry.
+
+### Verification
+- `python scripts/build_release.py` -> Built `dist/AGY-Plugin-Manager` (`107.5 MB`) and `dist/AGY-Plugin-Manager-Setup-v2.1.0.exe` (`54.8 MB`) with exit code `0`.
+- Offscreen PySide6 captures (`QT_QPA_PLATFORM=offscreen`, `QT_QPA_FONTDIR=C:\Windows\Fonts`) verified Light/Dark `FloatingUpdateCard` top-right placement (`y=66`, crisp typography/shadow, no clipping) and Settings **"版本与更新"** card layout.
+- `python -m unittest discover -s tests -v` -> Ran 10 tests, all passed (`OK`).
+- `node --test tests\process-manager.test.mjs` -> 8 passed, 0 failed.
+
+---
+
 ## [v2.0.0] - 2026-11-13 23:45
 
 ### Summary

@@ -24,6 +24,11 @@ const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_BASE_DIR = path.resolve(__dirname, '..');
 export const DEFAULT_NO_PROXY = '127.0.0.1,localhost,::1';
+export const APP_VERSION = '2.1.0';
+export const DEFAULT_UPDATE_SITE_URL = 'https://ahmustudyhelper.xyz';
+export const DEFAULT_PRODUCT_SLUG = 'agy-plugin-manager';
+const UPDATE_SEMVER_RE = /^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$/;
+const PRODUCT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SUPPORTED_PACKAGE_EXTS = new Set(['.zip', '.agypkg', '.agy-plugin']);
 const VALID_PLUGIN_ID_RE = /^[a-z0-9][a-z0-9-_]{1,63}$/i;
 const PROXY_PROCESS_NAMES = [
@@ -2067,4 +2072,188 @@ $sc.Save()
       description: '打开 AGY Plugin Manager 独立桌面控制台',
     });
   }
+
+  async checkForUpdates({ timeoutMs = 6000, siteUrl, productSlug, currentVersion } = {}) {
+    const config = this.loadConfig();
+    const updateCfg = config && typeof config.update === 'object' && config.update ? config.update : {};
+    const targetSite = validateUpdateSiteUrl(siteUrl || updateCfg.siteUrl || DEFAULT_UPDATE_SITE_URL);
+    const targetSlug = String(productSlug || updateCfg.productSlug || DEFAULT_PRODUCT_SLUG).trim().toLowerCase();
+    const current = normalizeSemverStr(currentVersion || APP_VERSION);
+    const { manifestUrl, landingUrl } = buildUpdateUrls({
+      siteUrl: targetSite,
+      productSlug: targetSlug,
+      currentVersion: current,
+    });
+    const checkedAt = new Date().toISOString();
+    const cleanText = (val) => String(val || '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '').trim();
+
+    try {
+      const response = await fetch(manifestUrl, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          'Cache-Control': 'no-store',
+          'User-Agent': `AGY-Plugin-Manager/${current}`,
+        },
+        signal: AbortSignal.timeout(Math.max(2000, Number(timeoutMs) || 6000)),
+      });
+      if (response.status === 404) {
+        return {
+          status: 'unpublished',
+          hasUpdate: false,
+          currentVersion: current,
+          latestVersion: '',
+          manifestUrl,
+          updateUrl: landingUrl,
+          prompt: { title: '', body: '', button: '立即更新' },
+          message: '官网暂未发布可用版本',
+          checkedAt,
+        };
+      }
+      if (!response.ok) {
+        return {
+          status: 'error',
+          hasUpdate: false,
+          currentVersion: current,
+          latestVersion: '',
+          manifestUrl,
+          updateUrl: landingUrl,
+          prompt: { title: '', body: '', button: '立即更新' },
+          message: `更新检查失败 (HTTP ${response.status})`,
+          checkedAt,
+        };
+      }
+      const payload = await response.json();
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return {
+          status: 'error',
+          hasUpdate: false,
+          currentVersion: current,
+          latestVersion: '',
+          manifestUrl,
+          updateUrl: landingUrl,
+          prompt: { title: '', body: '', button: '立即更新' },
+          message: '官网更新响应格式无效',
+          checkedAt,
+        };
+      }
+      if (!payload.release) {
+        return {
+          status: 'unpublished',
+          hasUpdate: false,
+          currentVersion: current,
+          latestVersion: '',
+          manifestUrl,
+          updateUrl: landingUrl,
+          prompt: { title: '', body: '', button: '立即更新' },
+          message: '官网暂未发布可用版本',
+          checkedAt,
+        };
+      }
+      if (!parseSemver(payload.release.version)) {
+        return {
+          status: 'error',
+          hasUpdate: false,
+          currentVersion: current,
+          latestVersion: '',
+          manifestUrl,
+          updateUrl: landingUrl,
+          prompt: { title: '', body: '', button: '立即更新' },
+          message: '官网更新清单缺少有效 SemVer 版本号',
+          checkedAt,
+        };
+      }
+      const latestVersion = normalizeSemverStr(payload.release.version);
+      const hasUpdate = isNewerSemver(latestVersion, current);
+      const promptRaw = payload.prompt && typeof payload.prompt === 'object' ? payload.prompt : {};
+      return {
+        status: 'ok',
+        hasUpdate,
+        currentVersion: current,
+        latestVersion,
+        available: Boolean(payload.available),
+        manifestUrl,
+        updateUrl: landingUrl,
+        prompt: {
+          title: cleanText(promptRaw.title) || `AGY Plugin Manager v${latestVersion} 已发布`,
+          body: cleanText(promptRaw.body) || `当前版本 v${current}，最新版本 v${latestVersion}，可前往 HaoAn Lab 官网更新。`,
+          button: cleanText(promptRaw.button) || '立即更新',
+        },
+        changelog: cleanText(payload.release.changelog),
+        instructions: cleanText(payload.instructions),
+        message: hasUpdate ? `发现新版本 v${latestVersion}` : `已是最新版本 (v${current})`,
+        checkedAt,
+      };
+    } catch (err) {
+      return {
+        status: 'error',
+        hasUpdate: false,
+        currentVersion: current,
+        latestVersion: '',
+        manifestUrl,
+        updateUrl: landingUrl,
+        prompt: { title: '', body: '', button: '立即更新' },
+        message: `无法连接官网更新服务: ${err?.message || String(err)}`,
+        checkedAt,
+      };
+    }
+  }
+}
+
+export function detectHostArch() {
+  return process.arch === 'arm64' ? 'arm64' : 'x64';
+}
+
+export function parseSemver(raw) {
+  const match = UPDATE_SEMVER_RE.exec(String(raw || '').trim());
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+export function normalizeSemverStr(raw, fallback = APP_VERSION) {
+  const parsed = parseSemver(raw) || parseSemver(fallback) || [2, 1, 0];
+  return `${parsed[0]}.${parsed[1]}.${parsed[2]}`;
+}
+
+export function isNewerSemver(candidate, current) {
+  const a = parseSemver(candidate);
+  const b = parseSemver(current);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] > b[i]) return true;
+    if (a[i] < b[i]) return false;
+  }
+  return false;
+}
+
+export function validateUpdateSiteUrl(siteUrl) {
+  const cleaned = String(siteUrl || DEFAULT_UPDATE_SITE_URL).trim().replace(/\/+$/, '');
+  const parsed = new URL(cleaned);
+  if (parsed.protocol === 'https:') return cleaned;
+  if (parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')) {
+    return cleaned;
+  }
+  throw new Error('更新服务地址必须使用 HTTPS（本地调试仅限 localhost / 127.0.0.1）');
+}
+
+export function buildUpdateUrls({
+  siteUrl = DEFAULT_UPDATE_SITE_URL,
+  productSlug = DEFAULT_PRODUCT_SLUG,
+  currentVersion = APP_VERSION,
+  platformName = 'windows',
+  arch = detectHostArch(),
+} = {}) {
+  const base = validateUpdateSiteUrl(siteUrl);
+  const slug = String(productSlug || DEFAULT_PRODUCT_SLUG).trim().toLowerCase();
+  if (!PRODUCT_SLUG_RE.test(slug)) {
+    throw new Error(`无效的官网产品 slug: ${productSlug}`);
+  }
+  const ver = normalizeSemverStr(currentVersion);
+  const resolvedArch = ['x64', 'arm64', 'universal'].includes(arch) ? arch : detectHostArch();
+  const params = new URLSearchParams({ platform: platformName, arch: resolvedArch, from: ver });
+  const encodedSlug = encodeURIComponent(slug);
+  return {
+    manifestUrl: `${base}/api/v1/products/${encodedSlug}/releases/latest?${params.toString()}`,
+    landingUrl: `${base}/updates/${encodedSlug}?${params.toString()}`,
+  };
 }
