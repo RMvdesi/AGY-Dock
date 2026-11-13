@@ -541,10 +541,22 @@ class MainWindow(QMainWindow):
         self._toast_timer.setSingleShot(True)
         self._toast_timer.timeout.connect(self.toast_lbl.hide)
 
-        QTimer.singleShot(40, self.refresh_all)
+        self._startup_timers: list[QTimer] = []
+
+        def _schedule_startup(delay_ms: int, callback: Any) -> None:
+            t = QTimer(self)
+            t.setSingleShot(True)
+            t.setInterval(delay_ms)
+            t.timeout.connect(callback)
+            self._startup_timers.append(t)
+            t.start()
+
+        _schedule_startup(40, self.refresh_all)
+        if ui_cfg.get("autoCreateShortcutsOnStartup", True) is not False:
+            _schedule_startup(250, self._ensure_default_shortcuts)
         update_cfg = config.get("update") if isinstance(config.get("update"), dict) else {}
         if update_cfg.get("autoCheckOnStartup", True) is not False:
-            QTimer.singleShot(450, lambda: self._check_for_updates(manual=False))
+            _schedule_startup(450, lambda: self._check_for_updates(manual=False))
 
     # ------------------------------------------------------------------
     # UI Construction: Proposal 4 Top Capsule Dock + Multi-Page Canvas
@@ -1622,6 +1634,13 @@ class MainWindow(QMainWindow):
         if hasattr(self, "update_banner"):
             self.update_banner.hide()
 
+    def _ensure_default_shortcuts(self) -> None:
+        self._run_async(
+            self.manager.ensure_default_shortcuts_once,
+            lambda _res: None,
+            lambda _err: None,
+        )
+
     def _open_update_website(self) -> None:
         target = self._current_update_url or "https://ahmustudyhelper.xyz"
         try:
@@ -1742,10 +1761,16 @@ class MainWindow(QMainWindow):
         ):
             self.show_and_raise()
 
-    def _quit_completely(self) -> None:
-        self._force_quit = True
+    def stop_background_timers(self) -> None:
         self._overview_timer.stop()
         self._log_timer.stop()
+        self._toast_timer.stop()
+        for t in self._startup_timers:
+            t.stop()
+
+    def _quit_completely(self) -> None:
+        self._force_quit = True
+        self.stop_background_timers()
         self.tray_icon.hide()
         self.thread_pool.waitForDone(2000)
         QApplication.quit()
@@ -1763,8 +1788,7 @@ class MainWindow(QMainWindow):
                     2000,
                 )
             return
-        self._overview_timer.stop()
-        self._log_timer.stop()
+        self.stop_background_timers()
         self.tray_icon.hide()
         self.thread_pool.waitForDone(2000)
         super().closeEvent(event)

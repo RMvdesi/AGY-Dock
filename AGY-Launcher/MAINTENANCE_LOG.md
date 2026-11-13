@@ -6,6 +6,30 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.1.1] - 2026-11-14 00:35
+
+### Summary
+- Fixed the Windows setup installer GUI (`scripts/installer_ui.py`) where the bottom action bar (`立即安装` / `取消`) could be clipped off-screen under Windows DPI scaling due to `body` (`expand=True`) being packed before `footer` (`side="bottom"`) inside a fixed non-resizable `620x470` window; reordered packing (`footer` before `body`) and switched to `winfo_reqwidth()` / `winfo_reqheight()` auto-fit sizing with `minsize(600, 500)` and `resizable(True, True)`.
+- Synchronized installer UI version with `desktop.core.APP_VERSION` (`2.1.1`) instead of hardcoding `v2.0.0`, and aligned Node (`server.mjs`, `lib/process-manager.mjs`) and root `VERSION` / `.release.json` metadata.
+- Added automatic creation of both `AGY Plugin Manager.lnk` and `Antigravity (AGY-Launcher).lnk` (`--quick-launch`) during setup (`installer_ui.py`), updated `Uninstall.cmd` to remove both shortcuts, and added one-time `AgyProcessManager.ensure_default_shortcuts_once()` on manager startup when `Antigravity.exe` is detected/configured without overriding deliberate user deletion.
+- Added HaoAn Lab OIDC automated release workflow (`.github/workflows/release.yml`, `.release.json`, `scripts/*.mjs`, `VERSION`, `CHANGELOG.md`) so tag pushes (`v*`) build & publish directly to GitHub Releases and synchronize `https://ahmustudyhelper.xyz`.
+
+### Files Changed
+- `AGY-Launcher/scripts/installer_ui.py` — Imported live `APP_VERSION`, fixed `footer`/`body` packing order and responsive geometry, added `LAUNCHER_SHORTCUT_NAME` (`Antigravity (AGY-Launcher).lnk`) creation with `--quick-launch`, updated `Uninstall.cmd` cleanup, and exposed `on_ready`/`run_mainloop` hooks for automated geometry verification.
+- `AGY-Launcher/desktop/core.py` & `AGY-Launcher/desktop/main_window.py` — Bumped `APP_VERSION = "2.1.1"`, added optional `desktop_dir` override to `AgyProcessManager`, added `ensure_default_shortcuts_once()`, and scheduled startup shortcut initialization check in `MainWindow`.
+- `AGY-Launcher/server.mjs` & `AGY-Launcher/lib/process-manager.mjs` — Synchronized `VERSION` / `APP_VERSION` to `2.1.1`.
+- `AGY-Launcher/tests/test_desktop.py` — Isolated `desktop_dir` in `build_temp_manager`, verified `Antigravity (AGY-Launcher).lnk` installer/startup/uninstall behavior, and added `test_installer_gui_action_buttons_visible_inside_viewport`.
+- `VERSION`, `CHANGELOG.md`, `.release.json`, `.github/workflows/release.yml`, `scripts/*.mjs`, `release.ps1`, `.gitignore` — Added HaoAn Lab CI OIDC build & website sync pipeline.
+- `AGY-Launcher/MAINTENANCE_LOG.md` — Recorded `[v2.1.1]` maintenance log entry.
+
+### Verification
+- Visual `PrintWindow` capture (`662x709`) of `scripts/installer_ui.py` confirmed header `AGY Plugin Manager v2.1.1`, updated shortcut label, and clean bottom action bar (`立即安装` / `取消`) inside viewport with no clipping.
+- `python -m unittest discover -s "AGY-Launcher/tests" -v` -> Ran 12 tests, all passed (`OK`).
+- `node --test "AGY-Launcher/tests/process-manager.test.mjs"` -> 8 passed, 0 failed.
+- `python "AGY-Launcher/scripts/build_release.py"` -> Built `dist/AGY-Plugin-Manager` (`107.5 MB`) and `dist/AGY-Plugin-Manager-Setup-v2.1.1.exe` (`54.8 MB`) with exit code `0`.
+
+---
+
 ## [v2.1.0] - 2026-11-14 00:02
 
 ### Summary

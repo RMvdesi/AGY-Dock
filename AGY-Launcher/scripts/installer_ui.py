@@ -23,12 +23,12 @@ LAUNCHER_DIR = SCRIPT_DIR.parent
 if str(LAUNCHER_DIR) not in sys.path:
     sys.path.insert(0, str(LAUNCHER_DIR))
 
-from desktop.core import CREATE_NO_WINDOW, _write_json_atomic, detect_antigravity_exe
+from desktop.core import APP_VERSION, CREATE_NO_WINDOW, _write_json_atomic, detect_antigravity_exe
 
 APP_DISPLAY_NAME = "AGY Plugin Manager"
-APP_VERSION = "2.0.0"
 APP_EXE_NAME = "AGY Plugin Manager.exe"
 SHORTCUT_NAME = "AGY Plugin Manager.lnk"
+LAUNCHER_SHORTCUT_NAME = "Antigravity (AGY-Launcher).lnk"
 
 DEFAULT_CONFIG_TEMPLATE: dict[str, Any] = {
     "managerPort": 12400,
@@ -164,8 +164,17 @@ def _initialize_or_preserve_config(dest_dir: Path, antigravity_exe: str) -> tupl
     return config_path, False
 
 
-def _create_windows_shortcut(shortcut_path: Path, target_exe: Path, work_dir: Path, description: str) -> str:
+def _create_windows_shortcut(
+    shortcut_path: Path,
+    target_exe: Path,
+    work_dir: Path,
+    description: str,
+    *,
+    arguments: str = "",
+    icon_path: Path | None = None,
+) -> str:
     shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_icon = icon_path if (icon_path is not None and icon_path.is_file()) else target_exe
 
     def ps_quote(val: str) -> str:
         return "'" + str(val).replace("'", "''") + "'"
@@ -174,8 +183,9 @@ def _create_windows_shortcut(shortcut_path: Path, target_exe: Path, work_dir: Pa
 $wsh = New-Object -ComObject WScript.Shell
 $sc = $wsh.CreateShortcut({ps_quote(str(shortcut_path))})
 $sc.TargetPath = {ps_quote(str(target_exe))}
+$sc.Arguments = {ps_quote(arguments)}
 $sc.WorkingDirectory = {ps_quote(str(work_dir))}
-$sc.IconLocation = {ps_quote(str(target_exe) + ',0')}
+$sc.IconLocation = {ps_quote(str(resolved_icon) + ',0')}
 $sc.Description = {ps_quote(description)}
 $sc.Save()
 """
@@ -189,16 +199,32 @@ $sc.Save()
     return str(shortcut_path)
 
 
-def _create_shortcuts(dest_dir: Path, desktop: bool, start_menu: bool) -> dict[str, str]:
+def _create_shortcuts(
+    dest_dir: Path,
+    desktop: bool,
+    start_menu: bool,
+    antigravity_exe: str = "",
+) -> dict[str, str]:
     created: dict[str, str] = {}
     exe_path = dest_dir / APP_EXE_NAME
+    agy_path = Path(antigravity_exe.strip()) if str(antigravity_exe or "").strip() else None
+    launcher_icon = agy_path if (agy_path is not None and agy_path.is_file()) else exe_path
+
     if desktop:
         desktop_dir = Path("D:/Desktop") if Path("D:/Desktop").exists() else (Path.home() / "Desktop")
         created["desktop"] = _create_windows_shortcut(
             desktop_dir / SHORTCUT_NAME,
             exe_path,
             dest_dir,
-            "Open AGY Plugin Manager",
+            "打开 AGY Plugin Manager 桌面控制中心",
+        )
+        created["desktopLauncher"] = _create_windows_shortcut(
+            desktop_dir / LAUNCHER_SHORTCUT_NAME,
+            exe_path,
+            dest_dir,
+            "无黑框启动 Antigravity 并静默加载托管插件",
+            arguments="--quick-launch",
+            icon_path=launcher_icon,
         )
     if start_menu:
         appdata = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
@@ -207,7 +233,15 @@ def _create_shortcuts(dest_dir: Path, desktop: bool, start_menu: bool) -> dict[s
             start_dir / SHORTCUT_NAME,
             exe_path,
             dest_dir,
-            "Open AGY Plugin Manager",
+            "打开 AGY Plugin Manager 桌面控制中心",
+        )
+        created["startMenuLauncher"] = _create_windows_shortcut(
+            start_dir / LAUNCHER_SHORTCUT_NAME,
+            exe_path,
+            dest_dir,
+            "无黑框启动 Antigravity 并静默加载托管插件",
+            arguments="--quick-launch",
+            icon_path=launcher_icon,
         )
     return created
 
@@ -215,6 +249,15 @@ def _create_shortcuts(dest_dir: Path, desktop: bool, start_menu: bool) -> dict[s
 def _write_uninstall_script(dest_dir: Path) -> Path:
     uninstall_path = dest_dir / "Uninstall.cmd"
     # Pure ASCII batch script: safe across all Windows codepages, no labels inside if (...) blocks.
+    shortcut_targets = [
+        f'D:\\Desktop\\{SHORTCUT_NAME}',
+        f'D:\\Desktop\\{LAUNCHER_SHORTCUT_NAME}',
+        f'%USERPROFILE%\\Desktop\\{SHORTCUT_NAME}',
+        f'%USERPROFILE%\\Desktop\\{LAUNCHER_SHORTCUT_NAME}',
+        f'%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\{SHORTCUT_NAME}',
+        f'%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\{LAUNCHER_SHORTCUT_NAME}',
+    ]
+    cleanup_lines = "".join(f'if exist "{p}" del /f /q "{p}" >nul 2>&1\r\n' for p in shortcut_targets)
     content = (
         "@echo off\r\n"
         "setlocal\r\n"
@@ -223,9 +266,7 @@ def _write_uninstall_script(dest_dir: Path) -> Path:
         'echo Stopping AGY Plugin Manager...\r\n'
         f'taskkill /IM "{APP_EXE_NAME}" /F >nul 2>&1\r\n'
         'echo Removing shortcuts...\r\n'
-        f'if exist "D:\\Desktop\\{SHORTCUT_NAME}" del /f /q "D:\\Desktop\\{SHORTCUT_NAME}" >nul 2>&1\r\n'
-        f'if exist "%USERPROFILE%\\Desktop\\{SHORTCUT_NAME}" del /f /q "%USERPROFILE%\\Desktop\\{SHORTCUT_NAME}" >nul 2>&1\r\n'
-        f'if exist "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\{SHORTCUT_NAME}" del /f /q "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\{SHORTCUT_NAME}" >nul 2>&1\r\n'
+        f"{cleanup_lines}"
         'cd /d "%LOCALAPPDATA%"\r\n'
         'echo Removing application directory...\r\n'
         'start "" /b cmd /c "ping 127.0.0.1 -n 3 >nul & rmdir /s /q ""%INSTALL_DIR%"""\r\n'
@@ -287,6 +328,7 @@ def perform_install(
         target_dir,
         desktop=create_desktop_shortcut,
         start_menu=create_start_menu_shortcut,
+        antigravity_exe=antigravity_exe,
     )
 
     if progress_cb:
@@ -307,7 +349,11 @@ def perform_install(
     }
 
 
-def run_gui_wizard(initial_dest: Path | None = None) -> int:
+def run_gui_wizard(
+    initial_dest: Path | None = None,
+    on_ready: Callable[[Any, dict[str, Any]], None] | None = None,
+    run_mainloop: bool = True,
+) -> int:
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
@@ -318,8 +364,6 @@ def run_gui_wizard(initial_dest: Path | None = None) -> int:
 
     root = tk.Tk()
     root.title(f"{APP_DISPLAY_NAME} v{APP_VERSION} 安装向导")
-    root.geometry("620x470")
-    root.resizable(False, False)
     root.configure(bg="#F5F7FA")
 
     ico_path = get_bundle_root() / "assets" / "app.ico"
@@ -352,9 +396,8 @@ def run_gui_wizard(initial_dest: Path | None = None) -> int:
     status_var = tk.StringVar(value="准备就绪，点击「立即安装」开始部署。")
     progress_var = tk.IntVar(value=0)
 
-    header = tk.Frame(root, bg="#0F172A", height=84)
-    header.pack(fill="x")
-    header.pack_propagate(False)
+    header = tk.Frame(root, bg="#0F172A")
+    header.pack(side="top", fill="x")
     tk.Label(
         header,
         text=f"{APP_DISPLAY_NAME}  v{APP_VERSION}",
@@ -368,10 +411,31 @@ def run_gui_wizard(initial_dest: Path | None = None) -> int:
         font=(font_family, 9),
         fg="#94A3B8",
         bg="#0F172A",
-    ).pack(anchor="w", padx=24)
+    ).pack(anchor="w", padx=24, pady=(0, 14))
 
-    body = tk.Frame(root, bg="#F5F7FA", padx=24, pady=18)
-    body.pack(fill="both", expand=True)
+    # Pack footer BEFORE body so high-DPI scaling never squeezes out the install/cancel action bar.
+    footer = tk.Frame(root, bg="#EEF2F6", padx=24, pady=12)
+    footer.pack(side="bottom", fill="x")
+
+    install_btn = tk.Button(
+        footer,
+        text="立即安装",
+        font=(font_family, 9, "bold"),
+        bg="#2563EB",
+        fg="#FFFFFF",
+        activebackground="#1D4ED8",
+        activeforeground="#FFFFFF",
+        relief="flat",
+        padx=20,
+        pady=7,
+        cursor="hand2",
+    )
+    cancel_btn = ttk.Button(footer, text="取消", command=root.destroy)
+    cancel_btn.pack(side="right")
+    install_btn.pack(side="right", padx=(0, 10))
+
+    body = tk.Frame(root, bg="#F5F7FA", padx=24, pady=16)
+    body.pack(side="top", fill="both", expand=True)
 
     # Install Directory
     tk.Label(body, text="安装目录", font=(font_family, 9, "bold"), fg="#1E293B", bg="#F5F7FA").pack(anchor="w")
@@ -421,7 +485,7 @@ def run_gui_wizard(initial_dest: Path | None = None) -> int:
     opts_frame = tk.LabelFrame(body, text=" 安装选项 ", font=(font_family, 9), fg="#334155", bg="#F5F7FA", padx=12, pady=8)
     opts_frame.pack(fill="x", pady=(0, 14))
     tk.Checkbutton(
-        opts_frame, text="创建桌面快捷方式 (AGY Plugin Manager)", variable=desktop_var,
+        opts_frame, text="创建桌面快捷方式（插件管理器 与 Antigravity 启动器）", variable=desktop_var,
         bg="#F5F7FA", activebackground="#F5F7FA", font=(font_family, 9)
     ).pack(anchor="w")
     tk.Checkbutton(
@@ -438,28 +502,6 @@ def run_gui_wizard(initial_dest: Path | None = None) -> int:
     progress_bar.pack(fill="x", pady=(0, 6))
     status_label = tk.Label(body, textvariable=status_var, font=(font_family, 8), fg="#475569", bg="#F5F7FA")
     status_label.pack(anchor="w")
-
-    # Footer buttons
-    footer = tk.Frame(root, bg="#EEF2F6", height=58, padx=24)
-    footer.pack(fill="x", side="bottom")
-    footer.pack_propagate(False)
-
-    install_btn = tk.Button(
-        footer,
-        text="立即安装",
-        font=(font_family, 9, "bold"),
-        bg="#2563EB",
-        fg="#FFFFFF",
-        activebackground="#1D4ED8",
-        activeforeground="#FFFFFF",
-        relief="flat",
-        padx=18,
-        pady=6,
-        cursor="hand2",
-    )
-    cancel_btn = ttk.Button(footer, text="取消", command=root.destroy)
-    cancel_btn.pack(side="right", pady=13)
-    install_btn.pack(side="right", padx=(0, 10), pady=12)
 
     installing = {"active": False, "done": False}
 
@@ -528,7 +570,34 @@ def run_gui_wizard(initial_dest: Path | None = None) -> int:
         threading.Thread(target=worker, daemon=True).start()
 
     install_btn.config(command=start_install)
-    root.mainloop()
+    root.update_idletasks()
+    win_w = max(640, root.winfo_reqwidth() + 16)
+    win_h = max(540, root.winfo_reqheight() + 16)
+    root.geometry(f"{win_w}x{win_h}")
+    root.minsize(600, 500)
+    root.resizable(True, True)
+    root.update()
+    if on_ready is not None:
+        on_ready(
+            root,
+            {
+                "header": header,
+                "body": body,
+                "footer": footer,
+                "install_btn": install_btn,
+                "cancel_btn": cancel_btn,
+                "dest_entry": dest_entry,
+                "agy_entry": agy_entry,
+            },
+        )
+    if run_mainloop:
+        root.mainloop()
+    else:
+        try:
+            if root.winfo_exists():
+                root.destroy()
+        except Exception:
+            pass
     return 0
 
 

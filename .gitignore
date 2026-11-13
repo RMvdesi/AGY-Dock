@@ -28,3 +28,11 @@ AGY-Launcher/.app-profile/
 !AGY-Launcher/plugins.example.json
 !AGY-Launcher/plugin-packages/
 !AGY-Launcher/plugin-packages/*.zip
+
+# CI Release staging artifacts
+.release-artifacts/
+release-downloads/
+.release-original/
+release-notes.md
+release-manifest.json
+SHA256SUMS

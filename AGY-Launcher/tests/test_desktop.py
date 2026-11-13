@@ -99,6 +99,7 @@ def build_temp_manager() -> tuple[tempfile.TemporaryDirectory[str], AgyProcessMa
         app_data_dir=app_data,
         gemini_plugins_dir=gemini_plugins,
         gemini_config_path=gemini_cfg,
+        desktop_dir=root / "Desktop",
     )
     return tmp, mgr
 
@@ -322,11 +323,10 @@ class DesktopCoreTests(unittest.TestCase):
             dlg.cmd_edit.setText("node")
             self.assertEqual(dlg.payload()["id"], "dlg-test")
 
-            win._overview_timer.stop()
-            win._log_timer.stop()
+            win.stop_background_timers()
             win.tray_icon.hide()
-            win.thread_pool.waitForDone(8000)
             app.processEvents()
+            win.thread_pool.waitForDone(8000)
             win.deleteLater()
             app.processEvents()
         finally:
@@ -718,9 +718,10 @@ class DesktopCoreTests(unittest.TestCase):
             self.assertIn("已是最新版本", win.update_status_lbl.text())
             self.assertFalse(win.update_banner.isVisible())
 
+            win.stop_background_timers()
             win.tray_icon.hide()
-            win.thread_pool.waitForDone(4000)
             app.processEvents()
+            win.thread_pool.waitForDone(8000)
             win.deleteLater()
             app.processEvents()
         finally:
@@ -728,6 +729,103 @@ class DesktopCoreTests(unittest.TestCase):
             httpd.shutdown()
             httpd.server_close()
             tmp.cleanup()
+
+    def test_installer_shortcuts_uninstall_and_first_run_launcher(self) -> None:
+        from scripts import installer_ui
+
+        self.assertEqual(installer_ui.APP_VERSION, APP_VERSION)
+
+        with tempfile.TemporaryDirectory(prefix="agy-shortcut-test-") as raw_tmp:
+            root = Path(raw_tmp)
+            dest = root / "install_dir"
+            dest.mkdir(parents=True)
+            (dest / installer_ui.APP_EXE_NAME).write_bytes(b"")
+            fake_agy = root / "Antigravity.exe"
+            fake_agy.write_bytes(b"")
+
+            uninstall_cmd = installer_ui._write_uninstall_script(dest).read_text(encoding="ascii")
+            self.assertIn("AGY Plugin Manager.lnk", uninstall_cmd)
+            self.assertIn("Antigravity (AGY-Launcher).lnk", uninstall_cmd)
+
+            desk_dir = root / "Desktop"
+            mgr = AgyProcessManager(
+                base_dir=root / "AGY",
+                app_data_dir=root / "AppData",
+                gemini_plugins_dir=root / ".gemini" / "plugins",
+                gemini_config_path=root / ".gemini" / "config.json",
+                desktop_dir=desk_dir,
+            )
+            cfg = mgr.load_config()
+            cfg["antigravityExe"] = str(fake_agy)
+            mgr.save_config(cfg)
+
+            first = mgr.ensure_default_shortcuts_once()
+            self.assertTrue(first["created"])
+            self.assertTrue((desk_dir / "AGY Plugin Manager.lnk").is_file())
+            self.assertTrue((desk_dir / "Antigravity (AGY-Launcher).lnk").is_file())
+
+            # Deleting shortcut manually must not recreate on subsequent launches once initialized
+            (desk_dir / "Antigravity (AGY-Launcher).lnk").unlink()
+            second = mgr.ensure_default_shortcuts_once()
+            self.assertFalse(second["created"])
+            self.assertEqual(second["reason"], "already_initialized")
+            self.assertFalse((desk_dir / "Antigravity (AGY-Launcher).lnk").exists())
+
+            # Note: verify installer_ui _create_shortcuts invokes both manager & launcher creation
+            calls: list[tuple[str, str]] = []
+            orig_sc = installer_ui._create_windows_shortcut
+            installer_ui._create_windows_shortcut = lambda p, exe, wd, desc, **kw: calls.append((Path(p).name, str(kw.get("arguments", "")))) or str(p)  # type: ignore[assignment]
+            try:
+                res = installer_ui._create_shortcuts(dest, desktop=True, start_menu=True, antigravity_exe=str(fake_agy))
+                self.assertIn("desktop", res)
+                self.assertIn("desktopLauncher", res)
+                self.assertIn("startMenu", res)
+                self.assertIn("startMenuLauncher", res)
+                self.assertTrue(any(name == "Antigravity (AGY-Launcher).lnk" and args == "--quick-launch" for name, args in calls))
+            finally:
+                installer_ui._create_windows_shortcut = orig_sc  # type: ignore[assignment]
+
+    def test_installer_gui_action_buttons_visible_inside_viewport(self) -> None:
+        from scripts import installer_ui
+
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        version_file = repo_root / "VERSION"
+        if version_file.is_file():
+            self.assertEqual(version_file.read_text(encoding="utf-8").strip(), APP_VERSION)
+
+        try:
+            import tkinter as tk
+        except Exception:
+            self.skipTest("Tkinter unavailable")
+
+        observed: dict[str, int] = {}
+
+        def inspect_widgets(root: object, widgets: dict[str, object]) -> None:
+            r = root
+            footer = widgets["footer"]
+            install_btn = widgets["install_btn"]
+            cancel_btn = widgets["cancel_btn"]
+            r.update()  # type: ignore[attr-defined]
+            observed["root_w"] = r.winfo_width()  # type: ignore[attr-defined]
+            observed["root_h"] = r.winfo_height()  # type: ignore[attr-defined]
+            observed["root_y"] = r.winfo_rooty()  # type: ignore[attr-defined]
+            observed["footer_h"] = footer.winfo_height()  # type: ignore[attr-defined]
+            observed["install_w"] = install_btn.winfo_width()  # type: ignore[attr-defined]
+            observed["install_h"] = install_btn.winfo_height()  # type: ignore[attr-defined]
+            observed["install_bottom"] = (install_btn.winfo_rooty() + install_btn.winfo_height()) - r.winfo_rooty()  # type: ignore[attr-defined]
+            observed["cancel_bottom"] = (cancel_btn.winfo_rooty() + cancel_btn.winfo_height()) - r.winfo_rooty()  # type: ignore[attr-defined]
+            r.destroy()  # type: ignore[attr-defined]
+
+        try:
+            installer_ui.run_gui_wizard(on_ready=inspect_widgets, run_mainloop=False)
+        except tk.TclError as exc:
+            self.skipTest(f"Tk display unavailable: {exc}")
+
+        self.assertGreater(observed["footer_h"], 20)
+        self.assertGreater(observed["install_w"], 40)
+        self.assertGreater(observed["install_h"], 20)
+        self.assertLessEqual(observed["install_bottom"], observed["root_h"])
+        self.assertLessEqual(observed["cancel_bottom"], observed["root_h"])
 
 
 if __name__ == "__main__":

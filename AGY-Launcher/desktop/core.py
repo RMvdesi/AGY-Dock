@@ -66,7 +66,7 @@ SOCKS_ONLY_PORTS = {1080, 2080, 7891, 10808}
 MIXED_PROXY_PORTS = {7897, 7890}
 ANTIGRAVITY_INSTALLER_SKIP_RE = re.compile(r"(?:agy-launcher|plugin[\s_-]*manager)", re.IGNORECASE)
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.1.1"
 DEFAULT_UPDATE_SITE_URL = "https://ahmustudyhelper.xyz"
 DEFAULT_PRODUCT_SLUG = "agy-plugin-manager"
 UPDATE_SEMVER_RE = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$")
@@ -1094,10 +1094,12 @@ class AgyProcessManager:
         gemini_config_path: str | Path | None = None,
         data_dir: str | Path | None = None,
         assets_dir: str | Path | None = None,
+        desktop_dir: str | Path | None = None,
     ) -> None:
         rt = resolve_runtime_dirs(base_dir)
         resolved_data = Path(data_dir).resolve() if data_dir is not None else rt.data_dir
         resolved_assets = Path(assets_dir).resolve() if assets_dir is not None else rt.assets_dir
+        self._desktop_dir = Path(desktop_dir).resolve() if desktop_dir is not None else None
         resolved_appdata = Path(app_data_dir) if app_data_dir else Path(
             os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")
         )
@@ -2077,6 +2079,14 @@ class AgyProcessManager:
             )
         return items
 
+    def _resolve_desktop_dir(self) -> Path:
+        if self._desktop_dir is not None:
+            self._desktop_dir.mkdir(parents=True, exist_ok=True)
+            return self._desktop_dir
+        if Path("D:/Desktop").exists():
+            return Path("D:/Desktop")
+        return Path.home() / "Desktop"
+
     def _create_shortcut(
         self,
         *,
@@ -2086,7 +2096,7 @@ class AgyProcessManager:
         icon_path: str,
         description: str,
     ) -> str:
-        desktop_dir = Path("D:/Desktop") if Path("D:/Desktop").exists() else Path.home() / "Desktop"
+        desktop_dir = self._resolve_desktop_dir()
         shortcut_path = desktop_dir / shortcut_name
 
         def ps_quote(val: str) -> str:
@@ -2149,6 +2159,33 @@ $sc.Save()
             "managerShortcut": manager_shortcut,
             "agyShortcut": agy_shortcut,
         }
+
+    def ensure_default_shortcuts_once(self) -> dict[str, Any]:
+        """Auto-creates Desktop shortcuts once when AGY-Launcher.lnk is missing and Antigravity is known."""
+        config = self.load_config()
+        ui = dict(config.get("ui") or {})
+        if ui.get("shortcutsInitialized") is True:
+            return {"created": False, "reason": "already_initialized"}
+
+        desktop_dir = self._resolve_desktop_dir()
+        agy_lnk = desktop_dir / "Antigravity (AGY-Launcher).lnk"
+        mgr_lnk = desktop_dir / "AGY Plugin Manager.lnk"
+        if agy_lnk.exists() and mgr_lnk.exists():
+            ui["shortcutsInitialized"] = True
+            config["ui"] = ui
+            self.save_config(config)
+            return {"created": False, "reason": "already_present"}
+
+        agy_exe = str(config.get("antigravityExe") or "").strip()
+        if not agy_exe or not Path(agy_exe).exists():
+            return {"created": False, "reason": "missing_antigravity_exe"}
+
+        created = self.create_all_shortcuts()
+        ui["shortcutsInitialized"] = True
+        config["ui"] = ui
+        self.save_config(config)
+        self.log("已首次自动补充生成 Antigravity (AGY-Launcher) 与控制中心桌面快捷方式")
+        return {"created": True, **created}
 
     def get_update_settings(self) -> dict[str, Any]:
         config = self.load_config()
