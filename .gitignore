@@ -1,0 +1,30 @@
+# Python / PyInstaller / Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.spec
+build/
+dist/
+AGY-Launcher/build/
+AGY-Launcher/dist/
+.pytest_cache/
+
+# Node / OS / Editor
+node_modules/
+.DS_Store
+Thumbs.db
+*.pid
+*.log
+
+# Decoupled runtime & personal user state (do not commit local plugins or personal config)
+AGY-Launcher/plugins/
+AGY-Launcher/plugins.json
+AGY-Launcher/logs/
+AGY-Launcher/.app-profile/
+
+# Explicitly track decoupled templates and packaged plugins
+!AGY-Launcher/plugins.example.json
+!AGY-Launcher/plugin-packages/
+!AGY-Launcher/plugin-packages/*.zip
