@@ -6,6 +6,22 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.1.2] - 2026-11-14 00:42
+
+### Summary
+- Fixed single-target artifact lookup in `scripts/publish.mjs` where `actions/download-artifact@v8` extracts single-artifact runs directly into `release-downloads/` rather than `release-downloads/<platform>-<arch>/`.
+- Bumped SemVer cleanly to `2.1.2` across `VERSION`, `AGY-Launcher/desktop/core.py`, `AGY-Launcher/server.mjs`, `AGY-Launcher/lib/process-manager.mjs`, and `CHANGELOG.md` for a clean CI OIDC tag release (`v2.1.2`).
+
+### Files Changed
+- `scripts/publish.mjs` — Added fallback to `release-downloads/target.json` when `<platform>-<arch>/target.json` is flattened by `actions/download-artifact@v8`.
+- `VERSION`, `AGY-Launcher/desktop/core.py`, `AGY-Launcher/server.mjs`, `AGY-Launcher/lib/process-manager.mjs`, `CHANGELOG.md`, `AGY-Launcher/MAINTENANCE_LOG.md` — Bumped version to `2.1.2`.
+
+### Verification
+- `v2.1.1` pre-bump suite passed `12/12` Python tests and `8/8` Node tests cleanly; CI `build (windows-latest)` on `v2.1.1` also passed all tests and packaged `AGY-Plugin-Manager-Setup-v2.1.1.exe`.
+- On `v2.1.2`, local test execution passed `11/12` Python tests and `7/8` Node tests; `antigravity-hans-windows-amd64.exe` extracted from `antigravity-hans.zip` into `%TEMP%` was removed post-extraction by local host security software (`HipsDaemon`), while all code under `AGY-Launcher/` is verified cleanly by GitHub Actions `windows-latest` CI on `v2.1.2`.
+
+---
+
 ## [v2.1.1] - 2026-11-14 00:35
 
 ### Summary

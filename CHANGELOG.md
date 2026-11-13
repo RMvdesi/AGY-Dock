@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.1.2] - 2026-11-14
+
+### Fixed
+- 修复 Windows 安装向导 (`AGY-Plugin-Manager-Setup`) 在高 DPI 缩放下底部“立即安装 / 取消”按钮被挤压裁剪不可见的问题，改为先固定底部操作栏并根据内容实际需求自适应窗口尺寸（支持手动缩放）。
+- 同步安装向导展示版本号至真实版本（不再硬编码 `v2.0.0`）。
+- 修复单目标 CI 发布流程中 `scripts/publish.mjs` 兼容 `actions/download-artifact@v8` 扁平解压路径的问题。
+
+### Added
+- 安装向导勾选创建桌面 / 开始菜单快捷方式时，自动同时生成 `AGY Plugin Manager` 与 `Antigravity (AGY-Launcher)`（`--quick-launch` 启动器）快捷方式，并在卸载脚本中同步清理。
+- 插件管理器首次启动若检测到已配置 `Antigravity.exe` 且尚未执行过默认快捷方式初始化，会自动补齐桌面上的 `AGY Plugin Manager.lnk` 与 `Antigravity (AGY-Launcher).lnk`（用户后续主动删除后不会强行重建）。
+
 ## [2.1.1] - 2026-11-14
 
 ### Fixed

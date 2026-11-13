@@ -9,7 +9,8 @@ const tag=`v${version}`,repo=config.releaseRepository;
 const sourceCommit=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
 function gh(args){return execFileSync('gh',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();}
 const targets=config.targets.map(target=>{
-  const folder=path.resolve('release-downloads',`${target.platform}-${target.arch}`);
+  const namedFolder=path.resolve('release-downloads',`${target.platform}-${target.arch}`);
+  const folder=fs.existsSync(path.join(namedFolder,'target.json'))?namedFolder:path.resolve('release-downloads');
   const metadata=JSON.parse(fs.readFileSync(path.join(folder,'target.json'),'utf8'));
   const asset=metadata.asset;
   if(metadata.version!==version||metadata.sourceCommit!==sourceCommit||asset.platform!==target.platform||asset.arch!==target.arch||path.basename(asset.name)!==asset.name)throw new Error('构建元数据与当前版本不一致');

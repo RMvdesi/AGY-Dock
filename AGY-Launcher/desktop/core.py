@@ -66,7 +66,7 @@ SOCKS_ONLY_PORTS = {1080, 2080, 7891, 10808}
 MIXED_PROXY_PORTS = {7897, 7890}
 ANTIGRAVITY_INSTALLER_SKIP_RE = re.compile(r"(?:agy-launcher|plugin[\s_-]*manager)", re.IGNORECASE)
 
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.1.2"
 DEFAULT_UPDATE_SITE_URL = "https://ahmustudyhelper.xyz"
 DEFAULT_PRODUCT_SLUG = "agy-plugin-manager"
 UPDATE_SEMVER_RE = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$")
