@@ -3,7 +3,12 @@ param(
   [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
-$releaseArguments = @((Join-Path $PSScriptRoot 'scripts\release.mjs'), $Version)
-if ($DryRun) { $releaseArguments += '--dry-run' }
-& node @releaseArguments
-exit $LASTEXITCODE
+Push-Location $PSScriptRoot
+try {
+  $releaseArguments = @((Join-Path $PSScriptRoot 'scripts\release.mjs'), $Version)
+  if ($DryRun) { $releaseArguments += '--dry-run' }
+  & node @releaseArguments
+  exit $LASTEXITCODE
+} finally {
+  Pop-Location
+}

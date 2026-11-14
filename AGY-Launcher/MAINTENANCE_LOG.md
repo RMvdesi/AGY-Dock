@@ -6,6 +6,17 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.3.0] - 2026-11-14 (Tauri v2 + React Architecture Refactor)
+
+### Summary
+- **Unified Tauri v2 Native Desktop App (`src-tauri/` + `src/`)**: Replaced the PySide6 desktop GUI (`desktop/` + `desktop_app.py`), legacy `ui/`, and Inno Setup / PyInstaller / `.bat` / `.vbs` / `.ps1` wrapper scripts with a single native Windows executable (`AGY Plugin Manager.exe`) powered by Rust + WebView2 + React + TypeScript + Tailwind CSS v4 + Motion (`motion/react`).
+- **Native Zero-Polling Backend (`src-tauri/src/`)**: Replaced periodic `PowerShell Get-CimInstance` / `netstat.exe` subprocess polling with native Rust (`sysinfo`, `winreg`, Win32 `GetExtendedTcpTable` / `IShellLinkW` / `EnumWindows` / `OpenProcess` / `DwmSetWindowAttribute`, `tokio`, `reqwest`, `zip`), delivering incremental `overview:updated`, `native:updated`, `log:updated`, `update:available`, and `toast:message` events alongside full CLI parity (`--quick-launch`, `--attach`, `--stop`, `--cleanup`, `--watch-exit`, `--shortcut`) and single-instance tray wakeup.
+- **Backward Compatibility Preserved**: Retained 100% compatibility with `%LOCALAPPDATA%\AGY-Plugin-Manager\plugins.json`, portable mode (`plugins.json` / `.portable` sibling), `AGY-Launcher/plugin-packages/` (`.zip` / `.agypkg` / `.agy-plugin`, Zip-Slip validation, `agy-plugin.json` `schemaVersion: 1`), `node-cdp` / `exe-cdp`, and HaoAn Lab (`https://ahmustudyhelper.xyz`) update checks (`slug: "agy-plugin-manager"`).
+- **NSIS Packaging & Local Hot-Sync**: Configured `x86_64-pc-windows-msvc` NSIS `currentUser` installer (`AGY-Plugin-Manager-Setup-v{version}.exe` with `embedBootstrapper` and custom hooks preserving user config/plugins), `npm run build:local` (`scripts/build-local.mjs`) for hot-syncing local builds directly into `%LOCALAPPDATA%\AGY-Plugin-Manager`, and updated `.release.json` / `scripts/` / `.github/workflows/release.yml`.
+- **Legacy Cleanup**: Removed deprecated Python desktop modules (`desktop/`, `desktop_app.py`, `tests/test_desktop.py`), legacy web UI (`ui/`), PyInstaller/Inno Setup scripts (`build_release.py`, `installer_ui.py`, `installer.iss`), and `.bat`/`.vbs`/`.ps1` launcher wrappers.
+
+---
+
 ## [v2.3.0] - 2026-11-14 13:47
 
 ### Summary

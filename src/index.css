@@ -2,16 +2,286 @@
 
 :root {
   color-scheme: light;
+  --bg-canvas: #F7F8FA;
+  --bg-surface: #FFFFFF;
+  --bg-surface-soft: #FAFBFD;
+  --bg-elevated: #FFFFFF;
+  --bg-row-hover: #F8F9FC;
+  --bg-subtle: #F1F3F6;
+  --bg-hover: #E8ECF1;
+  --border-hairline: #E8EAEF;
+  --border-strong: #D2D7E0;
+  --text-primary: #1B1E24;
+  --text-muted: #666D7A;
+  --text-faint: #8C93A0;
+  --primary-bg: #1B1E24;
+  --primary-hover: #2D323B;
+  --primary-text: #FFFFFF;
+  --accent: #10B981;
+  --accent-soft: #EBF5F0;
+  --link: #2B59C3;
+  --switch-off: #D5D9DF;
+  --ok: #059669;
+  --ok-bg: #ECFDF5;
+  --warn: #B45309;
+  --warn-bg: #FEF3C7;
+  --danger: #DC2626;
+  --danger-bg: #FEF2F2;
+  --info: #2563EB;
+  --info-bg: #EFF6FF;
+  --log-bg: #FAFBFD;
+  --log-text: #1F242D;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.03);
+  --shadow-floating: 0 12px 32px rgba(15, 23, 42, 0.12), 0 2px 8px rgba(15, 23, 42, 0.06);
 }
 
 .dark {
   color-scheme: dark;
+  --bg-canvas: #0F1218;
+  --bg-surface: #161A23;
+  --bg-surface-soft: #1B202B;
+  --bg-elevated: #1D222E;
+  --bg-row-hover: #1E2432;
+  --bg-subtle: #232938;
+  --bg-hover: #2B3244;
+  --border-hairline: #242A37;
+  --border-strong: #343D52;
+  --text-primary: #F1F4F9;
+  --text-muted: #9CA6B8;
+  --text-faint: #687387;
+  --primary-bg: #F1F4F9;
+  --primary-hover: #DCE2EC;
+  --primary-text: #0F1218;
+  --accent: #10B981;
+  --accent-soft: rgba(16, 185, 129, 0.14);
+  --link: #60A5FA;
+  --switch-off: #343D52;
+  --ok: #34D399;
+  --ok-bg: rgba(16, 185, 129, 0.14);
+  --warn: #FBBF24;
+  --warn-bg: rgba(245, 158, 11, 0.14);
+  --danger: #F87171;
+  --danger-bg: rgba(239, 68, 68, 0.12);
+  --info: #60A5FA;
+  --info-bg: rgba(59, 130, 246, 0.14);
+  --log-bg: #0A0D12;
+  --log-text: #DCE3EC;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.2);
+  --shadow-floating: 0 16px 36px rgba(0, 0, 0, 0.48), 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  margin: 0;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
   font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
   user-select: none;
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+.font-mono-code {
+  font-family: "Cascadia Code", "Consolas", ui-monospace, SFMono-Regular, monospace;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Subtle floating scrollbars matching AGY desktop aesthetic */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+}
+
+/* GPU-composited SVG flow animations for the Topology Diagram */
+@keyframes agyFlowDash {
+  from {
+    stroke-dashoffset: 28;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes agySoftPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.12);
+  }
+}
+
+.agy-flow-line {
+  stroke-dasharray: 6 8;
+  animation: agyFlowDash 1.15s linear infinite;
+  will-change: stroke-dashoffset;
+}
+
+.agy-node-glow {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: agySoftPulse 2.4s ease-in-out infinite;
+}
+
+/* Reusable editorial surface tokens */
+.agy-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-hairline);
+  border-radius: 16px;
+  box-shadow: var(--shadow-card);
+}
+
+.agy-inset {
+  background-color: var(--bg-surface-soft);
+  border: 1px solid var(--border-hairline);
+  border-radius: 12px;
+}
+
+.agy-input {
+  background-color: var(--bg-surface-soft);
+  color: var(--text-primary);
+  border: 1px solid var(--border-hairline);
+  border-radius: 9px;
+  padding: 7px 12px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.agy-input::placeholder {
+  color: var(--text-faint);
+}
+
+.agy-input:focus {
+  background-color: var(--bg-surface);
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12);
+}
+
+.agy-input:disabled,
+.agy-input[readonly] {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.agy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-hairline);
+  border-radius: 9px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, transform 120ms ease, opacity 140ms ease;
+  white-space: nowrap;
+}
+
+.agy-btn:hover:not(:disabled) {
+  background-color: var(--bg-surface-soft);
+  border-color: var(--border-strong);
+}
+
+.agy-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.agy-btn:disabled {
+  color: var(--text-faint);
+  background-color: var(--bg-surface-soft);
+  border-color: var(--border-hairline);
+  cursor: not-allowed;
+}
+
+.agy-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background-color: var(--primary-bg);
+  color: var(--primary-text);
+  border: 1px solid var(--primary-bg);
+  border-radius: 10px;
+  padding: 7px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, transform 120ms ease, opacity 140ms ease;
+  white-space: nowrap;
+}
+
+.agy-btn-primary:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.agy-btn-primary:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.agy-btn-primary:disabled {
+  background-color: var(--bg-subtle);
+  color: var(--text-faint);
+  border-color: var(--border-hairline);
+  cursor: not-allowed;
+}
+
+.agy-btn-danger-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background-color: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 140ms ease, transform 120ms ease, opacity 140ms ease;
+  white-space: nowrap;
+}
+
+.agy-btn-danger-ghost:hover:not(:disabled) {
+  border-color: var(--danger);
+}
+
+.agy-btn-danger-ghost:active:not(:disabled) {
+  transform: scale(0.98);
 }

@@ -330,26 +330,28 @@ test('createManagerServer enforces Host/Token security and serves UI + API endpo
     });
     assert.equal(badHostResp.status, 403);
 
-    // 2. HTML, CSS, JS, and health endpoints work
-    const htmlResp = await fetch(`${baseUrl}/`);
-    assert.equal(htmlResp.status, 200);
-    const htmlBody = await htmlResp.text();
-    assert.match(htmlBody, /<meta name="agy-manager-token" content="unit-test-secret-token">/);
+    // 2. Legacy vanilla HTML/CSS/JS UI assets (skipped after Tauri + React UI refactor)
+    if (existsSync(path.join(LAUNCHER_ROOT, 'ui', 'index.html'))) {
+      const htmlResp = await fetch(`${baseUrl}/`);
+      assert.equal(htmlResp.status, 200);
+      const htmlBody = await htmlResp.text();
+      assert.match(htmlBody, /<meta name="agy-manager-token" content="unit-test-secret-token">/);
 
-    const cssResp = await fetch(`${baseUrl}/styles.css`);
-    assert.equal(cssResp.status, 200);
-    assert.match(cssResp.headers.get('content-type') || '', /text\/css/);
+      const cssResp = await fetch(`${baseUrl}/styles.css`);
+      assert.equal(cssResp.status, 200);
+      assert.match(cssResp.headers.get('content-type') || '', /text\/css/);
 
-    const jsResp = await fetch(`${baseUrl}/app.js`);
-    assert.equal(jsResp.status, 200);
+      const jsResp = await fetch(`${baseUrl}/app.js`);
+      assert.equal(jsResp.status, 200);
 
-    const svgResp = await fetch(`${baseUrl}/favicon.svg`);
-    assert.equal(svgResp.status, 200);
-    assert.match(svgResp.headers.get('content-type') || '', /image\/svg\+xml/);
+      const svgResp = await fetch(`${baseUrl}/favicon.svg`);
+      assert.equal(svgResp.status, 200);
+      assert.match(svgResp.headers.get('content-type') || '', /image\/svg\+xml/);
 
-    const icoResp = await fetch(`${baseUrl}/favicon.ico`);
-    assert.equal(icoResp.status, 200);
-    assert.ok((await icoResp.arrayBuffer()).byteLength > 100);
+      const icoResp = await fetch(`${baseUrl}/favicon.ico`);
+      assert.equal(icoResp.status, 200);
+      assert.ok((await icoResp.arrayBuffer()).byteLength > 100);
+    }
 
     const browserExe = findAppBrowserExecutable();
     assert.ok(browserExe, 'Expected Edge or Chrome app runtime on Windows');
