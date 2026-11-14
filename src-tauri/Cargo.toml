@@ -1,0 +1,48 @@
+[package]
+name = "agy-plugin-manager"
+version = "2.3.0"
+description = "AGY Plugin Manager — Antigravity launcher, CDP process supervisor, and external plugin studio"
+authors = ["HaoAn"]
+edition = "2021"
+
+[lib]
+name = "agy_plugin_manager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+sysinfo = "0.33"
+winreg = "0.55"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+chrono = "0.4"
+regex = "1"
+semver = "1"
+url = "2"
+rfd = "0.15"
+open = "5"
+windows = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_Networking_WinSock",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
