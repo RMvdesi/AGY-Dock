@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>AGY Plugin Manager</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+            <path d="M12 12l8-4.5" />
+            <path d="M12 12v9" />
+            <path d="M12 12L4 7.5" />
+          </svg>
+        </span>
+        <div class="brand-text">
+          <div class="brand-title-row">
+            <h1>AGY Plugin Manager</h1>
+            <span id="runtime-mode-badge" class="pill pill-muted">检测中</span>
+          </div>
+          <p class="brand-subtitle">Antigravity 外部插件与扩展控制台</p>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <button id="theme-toggle-btn" type="button" class="btn btn-ghost btn-icon-text" title="切换外观模式">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+          </svg>
+          <span id="theme-label">自动</span>
+        </button>
+        <button id="create-shortcuts-btn" type="button" class="btn btn-secondary" title="在桌面生成程序快捷方式">
+          <span>生成桌面图标</span>
+        </button>
+        <button id="refresh-btn" type="button" class="btn btn-secondary">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+            <path d="M21 3v6h-6" />
+          </svg>
+          <span>刷新</span>
+        </button>
+      </div>
+    </header>
+
+    <div id="banner-alert" class="banner-alert" hidden role="status" aria-live="polite"></div>
+
+    <section class="quick-launch-card" aria-label="快捷启动中心">
+      <div class="quick-launch-info">
+        <div class="quick-launch-title-row">
+          <h2 class="quick-launch-title">快捷启动 Antigravity</h2>
+          <span id="quick-launch-state" class="pill pill-muted">检测中</span>
+        </div>
+        <p id="quick-launch-desc" class="quick-launch-desc">一键静默启动 Antigravity 客户端并按配置自动挂载外部插件与代理。</p>
+      </div>
+      <div class="quick-launch-actions">
+        <button id="dock-attach-btn" type="button" class="btn btn-secondary">仅热附着插件</button>
+        <button id="primary-launch-btn" type="button" class="btn btn-primary btn-launch">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polygon points="6 4 20 12 6 20 6 4" />
+          </svg>
+          <span id="primary-launch-label">快捷启动 Antigravity</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="metrics-grid" aria-label="系统运行概览">
+      <article class="metric-card">
+        <div class="metric-head">
+          <span class="metric-label">Antigravity 客户端</span>
+          <span id="metric-client-pill" class="pill pill-muted">检测中</span>
+        </div>
+        <div id="metric-client-value" class="metric-value">-</div>
+        <p id="metric-client-sub" class="metric-sub">正在检查主进程与后台 Sidecar...</p>
+      </article>
+
+      <article class="metric-card">
+        <div class="metric-head">
+          <span class="metric-label">CDP 调试通道</span>
+          <span id="metric-cdp-pill" class="pill pill-muted">待检测</span>
+        </div>
+        <div id="metric-cdp-value" class="metric-value mono">-</div>
+        <p id="metric-cdp-sub" class="metric-sub">DevToolsActivePort 状态</p>
+      </article>
+
+      <article class="metric-card">
+        <div class="metric-head">
+          <span class="metric-label">外部托管插件</span>
+          <span id="metric-external-pill" class="pill pill-muted">0 / 0</span>
+        </div>
+        <div id="metric-external-value" class="metric-value">-</div>
+        <p id="metric-external-sub" class="metric-sub">独立进程池状态</p>
+      </article>
+
+      <article class="metric-card">
+        <div class="metric-head">
+          <span class="metric-label">原生插件清点</span>
+          <span id="metric-integrity-pill" class="pill pill-ok">核心未修改</span>
+        </div>
+        <div id="metric-native-value" class="metric-value">-</div>
+        <p id="metric-native-sub" class="metric-sub">~/.gemini/config/plugins</p>
+      </article>
+    </section>
+
+    <nav class="tabs-bar" aria-label="功能分区">
+      <div class="tabs-group" role="tablist">
+        <button type="button" class="tab-btn is-active" role="tab" aria-selected="true" data-tab="external">
+          外部插件 <span id="tab-count-external" class="tab-count">0</span>
+        </button>
+        <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="native">
+          原生扩展 <span id="tab-count-native" class="tab-count">0</span>
+        </button>
+        <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="logs">
+          实时日志
+        </button>
+        <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="proxy">
+          网络代理
+        </button>
+      </div>
+    </nav>
+
+    <main class="main-content">
+      <!-- 外部托管插件面板 -->
+      <section id="panel-external" class="tab-panel" role="tabpanel">
+        <div class="panel-toolbar">
+          <div class="panel-toolbar-left">
+            <h2 class="section-title">外部托管插件</h2>
+            <p class="section-desc">随 Antigravity 启动并独立守护，不侵入主程序安装目录。</p>
+          </div>
+          <div class="panel-toolbar-actions">
+            <button id="attach-enabled-btn" type="button" class="btn btn-secondary">热附着已启用</button>
+            <button id="stop-all-btn" type="button" class="btn btn-secondary">全部停止</button>
+            <button id="add-plugin-btn" type="button" class="btn btn-primary">+ 添加插件</button>
+          </div>
+        </div>
+        <div id="external-plugins-grid" class="plugin-grid">
+          <div class="empty-state">正在加载托管插件列表...</div>
+        </div>
+      </section>
+
+      <!-- 原生插件只读清点面板 -->
+      <section id="panel-native" class="tab-panel" role="tabpanel" hidden>
+        <div class="panel-toolbar">
+          <div class="panel-toolbar-left">
+            <h2 class="section-title">Antigravity 原生插件清点</h2>
+            <p class="section-desc">只读扫描 <code>.gemini/config/plugins</code> 目录下的内置技能、MCP 与 Sidecar 扩展。</p>
+          </div>
+          <div class="panel-toolbar-actions">
+            <label class="search-field">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.3-4.3" />
+              </svg>
+              <input id="native-search-input" type="search" placeholder="搜索名称、技能或 ID..." autocomplete="off">
+            </label>
+          </div>
+        </div>
+        <div id="native-plugins-list" class="native-grid">
+          <div class="empty-state">正在读取原生插件目录...</div>
+        </div>
+      </section>
+
+      <!-- 实时日志面板 -->
+      <section id="panel-logs" class="tab-panel" role="tabpanel" hidden>
+        <div class="panel-toolbar">
+          <div class="panel-toolbar-left">
+            <h2 class="section-title">运行日志</h2>
+            <p id="log-path-label" class="section-desc mono">logs/launcher.log</p>
+          </div>
+          <div class="panel-toolbar-actions log-controls">
+            <select id="log-source-select" class="input-select" aria-label="选择日志来源">
+              <option value="launcher">launcher.log (主控日志)</option>
+            </select>
+            <select id="log-tail-select" class="input-select" aria-label="日志行数">
+              <option value="100">最近 100 行</option>
+              <option value="200" selected>最近 200 行</option>
+              <option value="500">最近 500 行</option>
+            </select>
+            <button id="log-stream-toggle-btn" type="button" class="btn btn-secondary">暂停跟踪</button>
+            <button id="log-clear-btn" type="button" class="btn btn-secondary">清空</button>
+          </div>
+        </div>
+        <div class="log-viewer-frame">
+          <div class="log-viewer-meta">
+            <span id="log-stream-status" class="pill pill-ok">实时同步中</span>
+            <span id="log-bytes-label" class="mono muted-text">0 B</span>
+          </div>
+          <pre id="log-output" class="log-output" tabindex="0">暂无日志输出。</pre>
+        </div>
+      </section>
+
+      <!-- 代理设置面板 -->
+      <section id="panel-proxy" class="tab-panel" role="tabpanel" hidden>
+        <div class="panel-toolbar">
+          <div class="panel-toolbar-left">
+            <h2 class="section-title">启动代理配置</h2>
+            <p class="section-desc">仅在通过 AGY-Launcher 拉起 Antigravity 时按需注入环境变量与代理参数。</p>
+          </div>
+        </div>
+
+        <form id="proxy-form" class="card-form">
+          <div class="form-switch-row">
+            <div>
+              <div class="form-label-strong">启用代理参数注入</div>
+              <div class="form-hint">开启后启动客户端时将写入 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY 与 --proxy-server。</div>
+            </div>
+            <label class="switch">
+              <input id="proxy-enabled" type="checkbox">
+              <span class="switch-track"></span>
+            </label>
+          </div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>HTTP Proxy</span>
+              <input id="proxy-http" type="text" class="input-text mono" placeholder="http://127.0.0.1:7890">
+            </label>
+            <label class="field">
+              <span>HTTPS Proxy</span>
+              <input id="proxy-https" type="text" class="input-text mono" placeholder="http://127.0.0.1:7890">
+            </label>
+            <label class="field">
+              <span>ALL Proxy</span>
+              <input id="proxy-all" type="text" class="input-text mono" placeholder="socks5://127.0.0.1:7890">
+            </label>
+            <label class="field">
+              <span>Electron --proxy-server</span>
+              <input id="proxy-electron" type="text" class="input-text mono" placeholder="http=127.0.0.1:7890;https=127.0.0.1:7890">
+            </label>
+          </div>
+
+          <div class="form-footer">
+            <span id="proxy-detect-status" class="form-hint" style="margin-right:auto;"></span>
+            <button id="proxy-detect-btn" type="button" class="btn btn-secondary">自动检测代理</button>
+            <button id="proxy-save-btn" type="submit" class="btn btn-primary">保存代理配置</button>
+          </div>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <!-- 添加/编辑托管插件模态框 (原生 dialog.showModal()) -->
+  <dialog id="plugin-dialog" class="modal-dialog" closedby="any" aria-labelledby="plugin-dialog-title">
+    <form id="plugin-form" class="dialog-surface" method="dialog">
+      <div class="dialog-header">
+        <div>
+          <h3 id="plugin-dialog-title">添加外部插件</h3>
+          <p class="dialog-subtitle">配置随 Antigravity 启动与热附着的外部插件进程。</p>
+        </div>
+        <button id="plugin-dialog-close" type="button" class="btn btn-ghost btn-icon" aria-label="关闭窗口">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="dialog-body">
+        <div class="form-grid">
+          <label class="field">
+            <span>插件 ID *</span>
+            <input id="field-plugin-id" name="id" type="text" class="input-text mono" required pattern="[A-Za-z0-9_-]+" placeholder="my-cdp-plugin" autofocus>
+          </label>
+          <label class="field">
+            <span>显示名称 *</span>
+            <input id="field-plugin-name" name="name" type="text" class="input-text" required placeholder="My CDP Plugin">
+          </label>
+        </div>
+
+        <label class="field">
+          <span>简介描述</span>
+          <input id="field-plugin-desc" name="description" type="text" class="input-text" placeholder="说明该插件的作用...">
+        </label>
+
+        <div class="form-grid">
+          <label class="field">
+            <span>插件类型</span>
+            <select id="field-plugin-type" name="type" class="input-select">
+              <option value="custom-cdp">custom-cdp (通用 CDP 插件)</option>
+              <option value="node-cdp">node-cdp (Node.js 脚本)</option>
+              <option value="exe-cdp">exe-cdp (独立可执行文件)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>启动命令 / 可执行路径 *</span>
+            <input id="field-plugin-command" name="command" type="text" class="input-text mono" required placeholder="node 或 plugins\demo\index.exe">
+          </label>
+        </div>
+
+        <label class="field">
+          <span>启动参数 launchArgs（支持空格分隔或每行一个，可用 {CDP_PORT} / {BASE_DIR}）</span>
+          <textarea id="field-plugin-launch-args" name="launchArgs" rows="2" class="input-textarea mono" placeholder="plugins\demo\main.js --port {CDP_PORT}"></textarea>
+        </label>
+
+        <label class="field">
+          <span>热附着参数 attachArgs（留空则复用 launchArgs）</span>
+          <textarea id="field-plugin-attach-args" name="attachArgs" rows="2" class="input-textarea mono" placeholder="--attach --port {CDP_PORT}"></textarea>
+        </label>
+
+        <div class="form-grid">
+          <label class="field">
+            <span>健康检查 URL (可选)</span>
+            <input id="field-plugin-health" name="healthUrl" type="url" class="input-text mono" placeholder="http://127.0.0.1:9999/health">
+          </label>
+          <label class="field">
+            <span>进程匹配关键字 (可选)</span>
+            <input id="field-plugin-match" name="processMatch" type="text" class="input-text mono" placeholder="demo.exe">
+          </label>
+        </div>
+
+        <div class="dialog-toggles">
+          <label class="check-item">
+            <input id="field-plugin-enabled" name="enabled" type="checkbox" checked>
+            <span>启用此插件</span>
+          </label>
+          <label class="check-item">
+            <input id="field-plugin-auto-attach" name="autoAttach" type="checkbox" checked>
+            <span>随启动自动附着</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="dialog-footer">
+        <button id="plugin-dialog-cancel" type="button" class="btn btn-secondary">取消</button>
+        <button id="plugin-dialog-submit" type="submit" class="btn btn-primary">保存插件</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 删除确认模态框 -->
+  <dialog id="delete-dialog" class="modal-dialog modal-dialog-sm" closedby="any" aria-labelledby="delete-dialog-title">
+    <form id="delete-form" class="dialog-surface" method="dialog">
+      <div class="dialog-header">
+        <h3 id="delete-dialog-title">确认移除托管插件</h3>
+        <button id="delete-dialog-close" type="button" class="btn btn-ghost btn-icon" aria-label="关闭窗口">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <p id="delete-dialog-message" class="delete-msg">确定要从 plugins.json 移除该插件配置并停止其进程吗？此操作不会删除磁盘上的源码或可执行文件。</p>
+      </div>
+      <div class="dialog-footer">
+        <button id="delete-dialog-cancel" type="button" class="btn btn-secondary" autofocus>取消</button>
+        <button id="delete-dialog-confirm" type="submit" class="btn btn-danger">确认移除</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast-region" class="toast-region" aria-live="polite"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

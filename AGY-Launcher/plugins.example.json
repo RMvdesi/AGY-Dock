@@ -1,0 +1,23 @@
+{
+  "managerPort": 12400,
+  "antigravityExe": "",
+  "antigravityArgs": [],
+  "cdpWaitTimeoutSec": 30,
+  "proxy": {
+    "enabled": false,
+    "httpProxy": "",
+    "httpsProxy": "",
+    "allProxy": "",
+    "noProxy": "127.0.0.1,localhost,::1",
+    "electronProxyServer": ""
+  },
+  "lifecycle": {
+    "autoCleanupOnExit": true,
+    "stopPluginsOnExit": true
+  },
+  "plugins": [],
+  "ui": {
+    "theme": "auto",
+    "minimizeToTray": true
+  }
+}
