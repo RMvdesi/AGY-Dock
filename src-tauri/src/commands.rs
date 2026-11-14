@@ -1,13 +1,14 @@
 use crate::config;
 use crate::detector;
 use crate::events;
+use crate::marketplace;
 use crate::models::{
     AntigravityDetectResult, AutoProxyResult, BundledPackageInfo, CleanupResult, ClearLogResult,
-    DeletePluginResult, FileFilterSpec, InstallPackageResult, LaunchResult, LifecycleConfig,
-    LocalPluginPackage, LogTailResult, NativePluginInfo, OverviewSnapshot, PluginActionResult,
-    PluginConfigEntry, PluginPayload, ProxyConfig, SaveExeResult, ShortcutResult,
-    StorageDeleteResult, StorageTreeResponse, SystemProxyDetection, UiPreferences,
-    UpdateCheckResult,
+    DeleteLocalDirResult, DeletePluginResult, FileFilterSpec, InstallPackageResult, LaunchResult,
+    LifecycleConfig, LocalPluginPackage, LogTailResult, NativePluginInfo, OverviewSnapshot,
+    PluginActionResult, PluginConfigEntry, PluginPayload, ProxyConfig, RemoteMarketplaceResult,
+    SaveExeResult, ShortcutResult, StorageDeleteResult, StorageTreeResponse, SystemProxyDetection,
+    UiPreferences, UpdateCheckResult,
 };
 use crate::paths::ManagerPaths;
 use crate::plugins;
@@ -26,11 +27,20 @@ pub struct AppState {
     pub paths: ManagerPaths,
     pub force_quit: AtomicBool,
     pub storage_cache: Mutex<Option<StorageScanSnapshot>>,
+    pub marketplace_cache: Mutex<Option<RemoteMarketplaceResult>>,
 }
 
 async fn emit_overview_bg(app: &AppHandle, paths: &ManagerPaths) {
     if let Ok(ov) = supervisor::get_overview(paths).await {
         let _ = app.emit(events::OVERVIEW_UPDATED, &ov);
+    }
+}
+
+async fn refresh_marketplace_cache_if_present(app: &AppHandle, state: &State<'_, AppState>) {
+    let mut guard = state.marketplace_cache.lock().await;
+    if let Some(cached) = guard.as_mut() {
+        marketplace::refresh_marketplace_snapshot_status(&state.paths, cached);
+        let _ = app.emit(events::MARKETPLACE_UPDATED, cached.clone());
     }
 }
 
@@ -195,18 +205,35 @@ pub async fn delete_plugin_entry(
     app: AppHandle,
     state: State<'_, AppState>,
     plugin_id: String,
+    delete_files: Option<bool>,
 ) -> Result<DeletePluginResult, String> {
     let paths = state.paths.clone();
-    let id_ret = plugin_id.clone();
-    let deleted =
-        tokio::task::spawn_blocking(move || supervisor::delete_plugin_entry(&paths, &plugin_id))
-            .await
-            .map_err(|e| format!("删除插件失败: {e}"))??;
-    emit_overview_bg(&app, &state.paths).await;
-    Ok(DeletePluginResult {
-        id: id_ret,
-        deleted,
+    let should_delete_files = delete_files.unwrap_or(false);
+    let res = tokio::task::spawn_blocking(move || {
+        supervisor::delete_plugin_entry(&paths, &plugin_id, should_delete_files)
     })
+    .await
+    .map_err(|e| format!("删除插件失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    refresh_marketplace_cache_if_present(&app, &state).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn delete_local_plugin_dir(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    dir_name: String,
+) -> Result<DeleteLocalDirResult, String> {
+    let paths = state.paths.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        plugins::delete_local_plugin_dir(&paths, &dir_name)
+    })
+    .await
+    .map_err(|e| format!("删除本地插件目录失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    refresh_marketplace_cache_if_present(&app, &state).await;
+    Ok(res)
 }
 
 #[tauri::command]
@@ -223,6 +250,7 @@ pub async fn install_plugin_package(
     .await
     .map_err(|e| format!("安装插件包失败: {e}"))??;
     emit_overview_bg(&app, &state.paths).await;
+    refresh_marketplace_cache_if_present(&app, &state).await;
     Ok(res)
 }
 
@@ -607,4 +635,55 @@ pub async fn is_antigravity_running_for_storage() -> Result<bool, String> {
     tokio::task::spawn_blocking(storage::is_antigravity_active_for_storage)
         .await
         .map_err(|e| format!("检测 Antigravity 运行状态失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn fetch_remote_marketplace(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    force: Option<bool>,
+) -> Result<RemoteMarketplaceResult, String> {
+    if !force.unwrap_or(false) {
+        let mut guard = state.marketplace_cache.lock().await;
+        if let Some(cached) = guard.as_mut() {
+            if cached.status == "ok" {
+                marketplace::refresh_marketplace_snapshot_status(&state.paths, cached);
+                return Ok(cached.clone());
+            }
+        }
+    }
+
+    let res = marketplace::fetch_remote_marketplace(&state.paths).await;
+    *state.marketplace_cache.lock().await = Some(res.clone());
+    let _ = app.emit(events::MARKETPLACE_UPDATED, &res);
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn install_remote_plugin(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_id: String,
+    download_url: String,
+    sha256: Option<String>,
+) -> Result<InstallPackageResult, String> {
+    let res =
+        marketplace::install_remote_plugin(&state.paths, plugin_id, download_url, sha256).await?;
+    emit_overview_bg(&app, &state.paths).await;
+    refresh_marketplace_cache_if_present(&app, &state).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn mark_marketplace_seen(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_ids: Vec<String>,
+) -> Result<(), String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || marketplace::mark_marketplace_seen(&paths, plugin_ids))
+        .await
+        .map_err(|e| format!("更新市场已读状态失败: {e}"))??;
+    refresh_marketplace_cache_if_present(&app, &state).await;
+    Ok(())
 }

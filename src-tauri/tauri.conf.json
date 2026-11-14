@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AGY Plugin Manager",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "identifier": "xyz.ahmustudyhelper.agy-plugin-manager",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -36,7 +36,6 @@
       "icons/icon.png"
     ],
     "resources": {
-      "../AGY-Launcher/plugin-packages/*": "plugin-packages/",
       "../AGY-Launcher/plugins.example.json": "plugins.example.json"
     },
     "windows": {

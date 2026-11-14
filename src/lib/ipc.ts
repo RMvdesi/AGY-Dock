@@ -8,6 +8,7 @@ import {
   type BundledPackageInfo,
   type CleanupResult,
   type ClearLogResult,
+  type DeleteLocalDirResult,
   type DeletePluginResult,
   type FileFilterSpec,
   type InstallPackageResult,
@@ -22,6 +23,7 @@ import {
   type PluginPayload,
   type PluginRuntimeStatus,
   type ProxyConfig,
+  type RemoteMarketplaceResult,
   type SaveExeResult,
   type ShortcutResult,
   type StorageDeleteResult,
@@ -79,11 +81,30 @@ export const ipc = {
   savePluginEntry: (mode: "create" | "edit", payload: PluginPayload) =>
     callCommand<PluginConfigEntry>(TAURI_COMMANDS.SAVE_PLUGIN_ENTRY, { mode, payload }),
 
-  deletePluginEntry: (pluginId: string) =>
-    callCommand<DeletePluginResult>(TAURI_COMMANDS.DELETE_PLUGIN_ENTRY, { pluginId }),
+  deletePluginEntry: (pluginId: string, deleteFiles = false) =>
+    callCommand<DeletePluginResult>(TAURI_COMMANDS.DELETE_PLUGIN_ENTRY, {
+      pluginId,
+      deleteFiles,
+    }),
+
+  deleteLocalPluginDir: (dirName: string) =>
+    callCommand<DeleteLocalDirResult>(TAURI_COMMANDS.DELETE_LOCAL_PLUGIN_DIR, { dirName }),
 
   installPluginPackage: (packagePath: string, overwrite = true) =>
     callCommand<InstallPackageResult>(TAURI_COMMANDS.INSTALL_PLUGIN_PACKAGE, { packagePath, overwrite }),
+
+  fetchRemoteMarketplace: (force = false) =>
+    callCommand<RemoteMarketplaceResult>(TAURI_COMMANDS.FETCH_REMOTE_MARKETPLACE, { force }),
+
+  installRemotePlugin: (pluginId: string, downloadUrl: string, sha256?: string) =>
+    callCommand<InstallPackageResult>(TAURI_COMMANDS.INSTALL_REMOTE_PLUGIN, {
+      pluginId,
+      downloadUrl,
+      sha256: sha256 || null,
+    }),
+
+  markMarketplaceSeen: (pluginIds: string[]) =>
+    callCommand<void>(TAURI_COMMANDS.MARK_MARKETPLACE_SEEN, { pluginIds }),
 
   detectAntigravity: () => callCommand<AntigravityDetectResult>(TAURI_COMMANDS.DETECT_ANTIGRAVITY),
 
@@ -181,6 +202,11 @@ export const events = {
   onUpdateAvailable: (cb: (payload: UpdateCheckResult) => void): Promise<UnlistenFn> =>
     isTauriRuntime()
       ? listen<UpdateCheckResult>(TAURI_EVENTS.UPDATE_AVAILABLE, (e) => cb(e.payload))
+      : Promise.resolve(() => {}),
+
+  onMarketplaceUpdated: (cb: (payload: RemoteMarketplaceResult) => void): Promise<UnlistenFn> =>
+    isTauriRuntime()
+      ? listen<RemoteMarketplaceResult>(TAURI_EVENTS.MARKETPLACE_UPDATED, (e) => cb(e.payload))
       : Promise.resolve(() => {}),
 
   onLogUpdated: (cb: (payload: { id?: string }) => void): Promise<UnlistenFn> =>

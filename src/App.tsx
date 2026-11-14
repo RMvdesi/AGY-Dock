@@ -18,12 +18,13 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { StatusPage } from "./pages/StatusPage";
 import { StoragePage } from "./pages/StoragePage";
 import type {
-  BundledPackageInfo,
   LocalPluginPackage,
   NativePluginInfo,
   OverviewSnapshot,
   PluginPayload,
   PluginRuntimeStatus,
+  RemoteMarketplaceResult,
+  RemotePluginInfo,
   StorageScanProgress,
   ThemeMode,
   UpdateCheckResult,
@@ -79,7 +80,6 @@ export default function App() {
 
   const [overview, setOverview] = useState<OverviewSnapshot | null>(null);
   const [nativePlugins, setNativePlugins] = useState<NativePluginInfo[]>([]);
-  const [bundledPackages, setBundledPackages] = useState<BundledPackageInfo[]>([]);
   const [localPackages, setLocalPackages] = useState<LocalPluginPackage[]>([]);
 
   const [themeMode, setThemeMode] = useState<ThemeMode>("auto");
@@ -97,6 +97,11 @@ export default function App() {
   const [updateBannerVisible, setUpdateBannerVisible] = useState<boolean>(false);
   const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
 
+  const [remoteMarketplace, setRemoteMarketplace] = useState<RemoteMarketplaceResult | null>(null);
+  const [loadingMarketplace, setLoadingMarketplace] = useState<boolean>(false);
+  const [installingRemoteId, setInstallingRemoteId] = useState<string | null>(null);
+  const [updatingAllRemote, setUpdatingAllRemote] = useState<boolean>(false);
+
   const [editorState, setEditorState] = useState<{
     open: boolean;
     initial: PluginEditorInitial | null;
@@ -106,6 +111,12 @@ export default function App() {
   const [deleteTarget, setDeleteTarget] = useState<{
     pluginId: string;
     returnToList: boolean;
+    deleteFiles: boolean;
+    busy: boolean;
+  } | null>(null);
+
+  const [deleteLocalDirTarget, setDeleteLocalDirTarget] = useState<{
+    item: LocalPluginPackage;
     busy: boolean;
   } | null>(null);
 
@@ -113,11 +124,11 @@ export default function App() {
   const [busyAttach, setBusyAttach] = useState(false);
   const [busyRefreshing, setBusyRefreshing] = useState(false);
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
-  const [installingPkgPath, setInstallingPkgPath] = useState<string | null>(null);
   const [tauriDragActive, setTauriDragActive] = useState(false);
 
   const toastTimersRef = useRef<Map<string, number>>(new Map());
   const themeInitializedRef = useRef(false);
+  const seenIdsInFlightRef = useRef<Set<string>>(new Set());
 
   const resolvedDark = useMemo(() => {
     if (themeMode === "dark") return true;
@@ -188,16 +199,29 @@ export default function App() {
   const refreshMarketplace = useCallback(async (plugins?: PluginRuntimeStatus[]) => {
     if (!isTauriRuntime()) return;
     try {
-      const [bundled, local] = await Promise.all([
-        ipc.listBundledPackages().catch(() => [] as BundledPackageInfo[]),
-        ipc.discoverLocalPlugins(plugins).catch(() => [] as LocalPluginPackage[]),
-      ]);
-      setBundledPackages(bundled);
+      const local = await ipc
+        .discoverLocalPlugins(plugins)
+        .catch(() => [] as LocalPluginPackage[]);
       setLocalPackages(local);
     } catch {
       // non-fatal
     }
   }, []);
+
+  const refreshRemoteMarketplace = useCallback(async (force = false) => {
+    if (!isTauriRuntime()) return;
+    setLoadingMarketplace(true);
+    try {
+      const res = await ipc.fetchRemoteMarketplace(force);
+      setRemoteMarketplace(res);
+    } catch (err) {
+      if (force) {
+        pushToast(`远程市场刷新失败：${formatErrorMessage(err)}`, "warn");
+      }
+    } finally {
+      setLoadingMarketplace(false);
+    }
+  }, [pushToast]);
 
   const refreshAll = useCallback(
     async (notify = false) => {
@@ -234,6 +258,7 @@ export default function App() {
   // Initial load & Tauri event subscriptions
   useEffect(() => {
     refreshAll(false);
+    refreshRemoteMarketplace(false);
 
     if (!isTauriRuntime()) return;
     const unlisteners: Array<() => void> = [];
@@ -268,6 +293,13 @@ export default function App() {
       .catch(() => {});
 
     events
+      .onMarketplaceUpdated((res) => {
+        setRemoteMarketplace(res);
+      })
+      .then((fn) => unlisteners.push(fn))
+      .catch(() => {});
+
+    events
       .onToastMessage((payload) => {
         if (payload?.message) {
           pushToast(payload.message, payload.tone ?? "info");
@@ -292,7 +324,44 @@ export default function App() {
       window.clearInterval(poll);
       for (const fn of unlisteners) fn();
     };
-  }, [pushToast, refreshAll, refreshMarketplace]);
+  }, [pushToast, refreshAll, refreshMarketplace, refreshRemoteMarketplace]);
+
+  // Acknowledge newly discovered remote plugins once user visits the Marketplace tab
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (view.kind !== "tab" || view.tab !== "market") return;
+    if (!remoteMarketplace || remoteMarketplace.newPluginCount <= 0) return;
+
+    const newIds = remoteMarketplace.plugins
+      .filter((p) => p.isNew && !seenIdsInFlightRef.current.has(p.id))
+      .map((p) => p.id);
+    if (newIds.length === 0) return;
+
+    for (const id of newIds) seenIdsInFlightRef.current.add(id);
+
+    ipc
+      .markMarketplaceSeen(newIds)
+      .then(() => {
+        setRemoteMarketplace((prev) => {
+          if (!prev) return prev;
+          const marked = new Set(newIds);
+          const plugins = prev.plugins.map((p) =>
+            marked.has(p.id) && p.isNew
+              ? {
+                  ...p,
+                  isNew: false,
+                  status: p.status === "new" ? ("available" as const) : p.status,
+                }
+              : p,
+          );
+          const newPluginCount = plugins.filter((p) => p.isNew).length;
+          return { ...prev, plugins, newPluginCount };
+        });
+      })
+      .catch(() => {
+        for (const id of newIds) seenIdsInFlightRef.current.delete(id);
+      });
+  }, [remoteMarketplace, view]);
 
   const activeNav: NavTabId =
     view.kind === "ext-detail"
@@ -474,6 +543,7 @@ export default function App() {
       setEditorState({ open: false, initial: null, saving: false });
       pushToast(mode === "edit" ? "配置已更新" : "已保存新插件", "ok");
       await refreshAll(false);
+      await refreshRemoteMarketplace(false);
     } catch (err) {
       setEditorState((prev) => ({ ...prev, saving: false }));
       pushToast(`保存失败：${formatErrorMessage(err)}`, "error");
@@ -482,26 +552,56 @@ export default function App() {
 
   const handleConfirmDeletePlugin = async () => {
     if (!deleteTarget) return;
-    const { pluginId, returnToList } = deleteTarget;
-    setDeleteTarget({ pluginId, returnToList, busy: true });
+    const { pluginId, returnToList, deleteFiles } = deleteTarget;
+    setDeleteTarget({ pluginId, returnToList, deleteFiles, busy: true });
     try {
-      await ipc.deletePluginEntry(pluginId);
+      const res = await ipc.deletePluginEntry(pluginId, deleteFiles);
       setDeleteTarget(null);
-      pushToast(`已移除 ${pluginId}`, "ok");
+      if (deleteFiles && res.fileDeleteError) {
+        pushToast(`已移除 ${pluginId} 配置，但目录删除失败：${res.fileDeleteError}`, "warn");
+      } else if (res.filesDeleted) {
+        pushToast(`已移除 ${pluginId} 并删除本地目录`, "ok");
+      } else {
+        pushToast(`已移除 ${pluginId}`, "ok");
+      }
       if (returnToList) {
         backToExternalList();
       }
       await refreshAll(false);
+      await refreshRemoteMarketplace(false);
     } catch (err) {
       setDeleteTarget(null);
       pushToast(`移除失败：${formatErrorMessage(err)}`, "error");
     }
   };
 
+  const handleConfirmDeleteLocalDir = async () => {
+    if (!deleteLocalDirTarget) return;
+    const { item } = deleteLocalDirTarget;
+    setDeleteLocalDirTarget({ item, busy: true });
+    try {
+      const res = await ipc.deleteLocalPluginDir(item.dir);
+      setDeleteLocalDirTarget(null);
+      const unreg = res.unregisteredIds?.length ?? 0;
+      if (unreg > 0) {
+        pushToast(
+          `已删除本地目录 ${item.dir}，并同步移除配置（${res.unregisteredIds.join(", ")}）`,
+          "ok",
+        );
+      } else {
+        pushToast(`已删除本地目录 ${item.dir}`, "ok");
+      }
+      await refreshAll(false);
+      await refreshRemoteMarketplace(false);
+    } catch (err) {
+      setDeleteLocalDirTarget(null);
+      pushToast(`删除目录失败：${formatErrorMessage(err)}`, "error");
+    }
+  };
+
   const installPackagePath = useCallback(
     async (packagePath: string) => {
       if (!packagePath) return;
-      setInstallingPkgPath(packagePath);
       pushToast(`正在安装插件包 ${basename(packagePath)}...`, "info");
       try {
         const res = await ipc.installPluginPackage(packagePath, true);
@@ -532,14 +632,101 @@ export default function App() {
           pushToast(`已安装插件: ${label}`, "ok");
         }
         await refreshAll(false);
+        await refreshRemoteMarketplace(false);
       } catch (err) {
         pushToast(`安装失败：${formatErrorMessage(err)}`, "error");
-      } finally {
-        setInstallingPkgPath(null);
       }
     },
-    [overview?.cdp?.ready, pushToast, refreshAll],
+    [overview?.cdp?.ready, pushToast, refreshAll, refreshRemoteMarketplace],
   );
+
+  const handleInstallRemotePlugin = useCallback(
+    async (pkg: RemotePluginInfo) => {
+      if (!pkg?.id || !pkg?.downloadUrl) return;
+      setInstallingRemoteId(pkg.id);
+      const label = pkg.name || pkg.id;
+      pushToast(`正在从 GitHub 下载并安装 ${label}...`, "info");
+      try {
+        const res = await ipc.installRemotePlugin(
+          pkg.id,
+          pkg.downloadUrl,
+          pkg.sha256 || undefined,
+        );
+        const plugin = res.plugin;
+        let activated = false;
+        let attachErr = "";
+
+        if (
+          plugin?.id &&
+          plugin.enabled !== false &&
+          plugin.autoAttach !== false &&
+          overview?.cdp?.ready
+        ) {
+          try {
+            await ipc.startPlugin(plugin.id, "attach");
+            activated = true;
+          } catch (err) {
+            attachErr = formatErrorMessage(err);
+          }
+        }
+
+        if (activated) {
+          pushToast(`已安装并激活插件: ${label}`, "ok");
+        } else if (attachErr) {
+          pushToast(`已安装插件: ${label}（自动激活失败: ${attachErr}）`, "warn");
+        } else {
+          pushToast(`已${pkg.hasUpdate ? "更新" : "安装"}插件: ${label}`, "ok");
+        }
+        await Promise.all([refreshAll(false), refreshRemoteMarketplace(false)]);
+      } catch (err) {
+        pushToast(`远程安装失败：${formatErrorMessage(err)}`, "error");
+      } finally {
+        setInstallingRemoteId(null);
+      }
+    },
+    [overview?.cdp?.ready, pushToast, refreshAll, refreshRemoteMarketplace],
+  );
+
+  const handleUpdateAllRemotePlugins = useCallback(async () => {
+    const updates = (remoteMarketplace?.plugins ?? []).filter((p) => p.hasUpdate);
+    if (updates.length === 0) return;
+    setUpdatingAllRemote(true);
+    pushToast(`正在一键更新 ${updates.length} 个插件...`, "info");
+
+    let okCount = 0;
+    let failCount = 0;
+    for (const pkg of updates) {
+      setInstallingRemoteId(pkg.id);
+      try {
+        const res = await ipc.installRemotePlugin(
+          pkg.id,
+          pkg.downloadUrl,
+          pkg.sha256 || undefined,
+        );
+        const plugin = res.plugin;
+        if (
+          plugin?.id &&
+          plugin.enabled !== false &&
+          plugin.autoAttach !== false &&
+          overview?.cdp?.ready
+        ) {
+          await ipc.startPlugin(plugin.id, "attach").catch(() => {});
+        }
+        okCount += 1;
+      } catch {
+        failCount += 1;
+      }
+    }
+    setInstallingRemoteId(null);
+    setUpdatingAllRemote(false);
+
+    await Promise.all([refreshAll(false), refreshRemoteMarketplace(false)]);
+    if (failCount === 0) {
+      pushToast(`已全部更新 ${okCount} 个插件`, "ok");
+    } else {
+      pushToast(`更新完成：成功 ${okCount} 个，失败 ${failCount} 个`, "warn");
+    }
+  }, [overview?.cdp?.ready, pushToast, refreshAll, refreshRemoteMarketplace, remoteMarketplace]);
 
   const handlePickPackageFile = async () => {
     try {
@@ -627,9 +814,19 @@ export default function App() {
   };
 
   const plugins = overview?.plugins ?? [];
+  const marketBadgeCount =
+    (remoteMarketplace?.updateCount ?? 0) + (remoteMarketplace?.newPluginCount ?? 0);
   const selectedExternalPlugin =
     view.kind === "ext-detail"
       ? plugins.find((p) => p.id === view.pluginId) ?? null
+      : null;
+  const selectedExternalRemoteUpdate =
+    selectedExternalPlugin && remoteMarketplace
+      ? remoteMarketplace.plugins.find(
+          (item) =>
+            item.id.toLowerCase() === selectedExternalPlugin.id.toLowerCase() &&
+            item.hasUpdate,
+        ) ?? null
       : null;
   const selectedNativePlugin =
     view.kind === "nat-detail"
@@ -652,6 +849,7 @@ export default function App() {
           onSelectTab={selectTab}
           externalCount={plugins.length}
           nativeCount={nativePlugins.length}
+          marketBadgeCount={marketBadgeCount}
           isStatusPage={view.kind === "tab" && view.tab === "status"}
           isBusyAction={
             view.kind === "tab" && view.tab === "status" ? busyRefreshing : busyLaunch
@@ -699,6 +897,7 @@ export default function App() {
             {view.kind === "tab" && view.tab === "external" && (
               <MyPluginsPage
                 plugins={plugins}
+                remoteMarketplace={remoteMarketplace}
                 isDark={resolvedDark}
                 externalDragActive={tauriDragActive}
                 busyPluginId={busyPluginId}
@@ -724,11 +923,19 @@ export default function App() {
 
             {view.kind === "tab" && view.tab === "market" && (
               <MarketplacePage
-                bundledPackages={bundledPackages}
+                remoteMarketplace={remoteMarketplace}
+                loadingRemote={loadingMarketplace}
+                installingRemoteId={installingRemoteId}
+                updatingAllRemote={updatingAllRemote}
                 localPackages={localPackages}
+                deletingLocalDir={
+                  deleteLocalDirTarget?.busy ? deleteLocalDirTarget.item.dir : null
+                }
                 isDark={resolvedDark}
-                installingPath={installingPkgPath}
-                onInstallBundled={(pkg) => installPackagePath(pkg.path)}
+                onInstallRemote={handleInstallRemotePlugin}
+                onUpdateAllRemote={handleUpdateAllRemotePlugins}
+                onRefreshRemote={() => refreshRemoteMarketplace(true)}
+                onOpenExternalUrl={(url) => handleOpenUpdateUrl(url)}
                 onManageInstalled={openExternalDetail}
                 onImportLocal={(item) =>
                   setEditorState({
@@ -739,6 +946,7 @@ export default function App() {
                         id: item.dir,
                         name: item.displayName,
                         version: item.version || "",
+                        author: item.author || "",
                         description:
                           item.desc && item.desc !== "发现未注册本地插件目录"
                             ? item.desc
@@ -747,6 +955,9 @@ export default function App() {
                     },
                     saving: false,
                   })
+                }
+                onDeleteLocalDir={(item) =>
+                  setDeleteLocalDirTarget({ item, busy: false })
                 }
                 onOpenManualCreate={() =>
                   setEditorState({
@@ -804,6 +1015,10 @@ export default function App() {
               (selectedExternalPlugin ? (
                 <ExternalPluginDetailPage
                   plugin={selectedExternalPlugin}
+                  remoteUpdate={selectedExternalRemoteUpdate}
+                  updatingRemote={
+                    updatingAllRemote || installingRemoteId === selectedExternalPlugin.id
+                  }
                   isDark={resolvedDark}
                   busy={busyPluginId === selectedExternalPlugin.id}
                   onBack={backToExternalList}
@@ -816,6 +1031,8 @@ export default function App() {
                           id: plugin.id,
                           name: plugin.name,
                           version: plugin.version,
+                          author: plugin.author ?? "",
+                          homepage: plugin.homepage ?? "",
                           description: plugin.description,
                           type: plugin.type,
                           command: plugin.command,
@@ -832,13 +1049,20 @@ export default function App() {
                     })
                   }
                   onDelete={(pluginId) =>
-                    setDeleteTarget({ pluginId, returnToList: true, busy: false })
+                    setDeleteTarget({
+                      pluginId,
+                      returnToList: true,
+                      deleteFiles: false,
+                      busy: false,
+                    })
                   }
                   onAction={handlePluginAction}
                   onOpenLog={(pluginId) => {
                     setSelectedLogId(pluginId);
                     selectTab("logs");
                   }}
+                  onUpdateRemote={handleInstallRemotePlugin}
+                  onOpenUrl={(url) => handleOpenUpdateUrl(url)}
                 />
               ) : (
                 <div className="agy-card flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
@@ -887,8 +1111,35 @@ export default function App() {
         }
         confirmLabel="确认移除"
         busy={deleteTarget?.busy ?? false}
+        checkboxLabel={
+          deleteTarget
+            ? `同时删除本地插件目录文件 (plugins/${deleteTarget.pluginId})`
+            : undefined
+        }
+        checkboxHint="勾选后将永久删除该插件在本地 plugins 目录下的所有文件"
+        checkboxChecked={deleteTarget?.deleteFiles ?? false}
+        onCheckboxChange={(checked) =>
+          setDeleteTarget((prev) => (prev ? { ...prev, deleteFiles: checked } : null))
+        }
         onCancel={() => setDeleteTarget(null)}
         onConfirm={handleConfirmDeletePlugin}
+      />
+
+      <ConfirmModal
+        open={Boolean(deleteLocalDirTarget)}
+        title="确认删除本地插件目录"
+        description={
+          deleteLocalDirTarget
+            ? deleteLocalDirTarget.item.installedId
+              ? `确定删除本地目录「plugins/${deleteLocalDirTarget.item.dir}」吗？\n\n该目录当前已接入插件「${deleteLocalDirTarget.item.installedId}」，删除后将同时停止并移除该插件配置，且目录内的所有文件将被永久删除。`
+              : `确定删除本地目录「plugins/${deleteLocalDirTarget.item.dir}」及其中的所有文件吗？此操作不可撤销。`
+            : ""
+        }
+        confirmLabel="确认删除"
+        tone="danger"
+        busy={deleteLocalDirTarget?.busy ?? false}
+        onCancel={() => setDeleteLocalDirTarget(null)}
+        onConfirm={handleConfirmDeleteLocalDir}
       />
 
       <FloatingUpdateBanner

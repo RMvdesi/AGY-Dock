@@ -162,6 +162,9 @@ pub fn classify_antigravity_processes(
     processes: &[ProcessSnapshotItem],
 ) -> ClassifiedAntigravity {
     let mut out = ClassifiedAntigravity::default();
+    let by_pid: HashMap<u32, &ProcessSnapshotItem> =
+        processes.iter().map(|p| (p.pid, p)).collect();
+
     for proc_item in processes {
         if !proc_item.name.eq_ignore_ascii_case("antigravity.exe") {
             continue;
@@ -170,6 +173,17 @@ pub fn classify_antigravity_processes(
             continue;
         }
         out.all.push(proc_item.clone());
+        let parent_is_sidecar_host = proc_item
+            .ppid
+            .and_then(|ppid| by_pid.get(&ppid))
+            .map(|parent| {
+                let p_name = parent.name.to_ascii_lowercase();
+                let p_cmd = parent.command_line.to_ascii_lowercase();
+                p_name == "language_server.exe"
+                    || (p_name == "cmd.exe" && p_cmd.contains("agy-node.cmd"))
+            })
+            .unwrap_or(false);
+
         let lower = proc_item.command_line.to_lowercase();
         if lower.contains("sidecar_sdk")
             || lower.contains("register_loader")
@@ -178,9 +192,15 @@ pub fn classify_antigravity_processes(
             || lower.contains("mcp_entry")
             || lower.contains("sidecars\\")
             || lower.contains("sidecars/")
+            || lower.contains("--ms-enable-electron-run-as-node")
+            || lower.contains("dist/server.")
+            || lower.contains("dist\\server.")
+            || lower.contains("main.mjs")
+            || lower.contains("launch.mjs")
+            || parent_is_sidecar_host
         {
             out.sidecar.push(proc_item.clone());
-        } else if lower.contains("--type=") {
+        } else if lower.contains("--type=") || proc_item.command_line.trim().is_empty() {
             out.child.push(proc_item.clone());
         } else {
             out.main.push(proc_item.clone());
@@ -204,6 +224,12 @@ pub fn find_antigravity_cleanup_targets(
     } else {
         String::new()
     };
+    let install_norm = install_dir.trim_end_matches(['\\', '/']).replace('/', "\\");
+    let resources_bin_prefix = if !install_norm.is_empty() {
+        format!("{install_norm}\\resources\\bin\\")
+    } else {
+        String::new()
+    };
 
     let main_pids: Vec<u32> = summary
         .main
@@ -212,7 +238,7 @@ pub fn find_antigravity_cleanup_targets(
         .map(|p| p.pid)
         .collect();
 
-    let sidecar_child_pids: Vec<u32> = summary
+    let mut sidecar_child_pids: Vec<u32> = summary
         .sidecar
         .iter()
         .chain(summary.child.iter())
@@ -230,6 +256,7 @@ pub fn find_antigravity_cleanup_targets(
         let name_lower = proc_item.name.to_lowercase();
         let cmd_lower = proc_item.command_line.to_lowercase();
         let exe_lower = proc_item.exe_path.to_lowercase();
+        let exe_norm = exe_lower.replace('/', "\\");
 
         if cmd_lower.contains("desktop_app.py")
             || (cmd_lower.contains("agy-launcher")
@@ -248,13 +275,14 @@ pub fn find_antigravity_cleanup_targets(
             if is_agy_ls {
                 language_server_pids.push(proc_item.pid);
             }
-        } else if name_lower == "cmd.exe"
-            && cmd_lower.contains("agy-node.cmd")
-            && (cmd_lower.contains("sidecars")
-                || cmd_lower.contains("sidecar_sdk")
-                || cmd_lower.contains("antigravity"))
-        {
+        } else if name_lower == "cmd.exe" && cmd_lower.contains("agy-node.cmd") {
             agy_node_cmd_pids.push(proc_item.pid);
+        } else if !resources_bin_prefix.is_empty()
+            && exe_norm.starts_with(&resources_bin_prefix)
+            && name_lower != "antigravity.exe"
+            && !sidecar_child_pids.contains(&proc_item.pid)
+        {
+            sidecar_child_pids.push(proc_item.pid);
         }
     }
 
@@ -1310,6 +1338,8 @@ mod tests {
             id: id.to_string(),
             name: id.to_string(),
             version: None,
+            author: None,
+            homepage: None,
             description: String::new(),
             enabled: true,
             auto_attach: true,
@@ -1393,5 +1423,75 @@ mod tests {
         assert_eq!(cls.child.len(), 1);
         assert_eq!(cls.sidecar.len(), 1);
         assert_eq!(cls.all.len(), 3);
+    }
+
+    #[test]
+    fn classify_and_targets_catch_sidecar_parents_empty_cmdline_and_resources_bin() {
+        let mut ls_proc = make_proc(
+            300,
+            None,
+            "language_server.exe",
+            r#""C:\Program Files\Antigravity\resources\bin\language_server.exe" --app_data_dir antigravity"#,
+            90,
+        );
+        ls_proc.exe_path = r"C:\Program Files\Antigravity\resources\bin\language_server.exe".to_string();
+
+        let cmd_agy_node = make_proc(
+            301,
+            Some(300),
+            "cmd.exe",
+            r#"cmd.exe /c agy-node.cmd foo.js"#,
+            10,
+        );
+        let child_under_agy_node = make_proc(
+            302,
+            Some(301),
+            "Antigravity.exe",
+            r#""C:\Program Files\Antigravity\Antigravity.exe" foo.js"#,
+            40,
+        );
+        let child_under_ls = make_proc(
+            303,
+            Some(300),
+            "Antigravity.exe",
+            r#""C:\Program Files\Antigravity\Antigravity.exe" worker.js"#,
+            40,
+        );
+        let empty_cmdline_agy = make_proc(304, None, "Antigravity.exe", "", 20);
+        let mut webm_proc = make_proc(
+            305,
+            Some(300),
+            "webm_encoder.exe",
+            r#""C:\Program Files\Antigravity\resources\bin\webm_encoder.exe""#,
+            30,
+        );
+        webm_proc.exe_path = r"C:\Program Files\Antigravity\resources\bin\webm_encoder.exe".to_string();
+
+        let procs = vec![
+            ls_proc,
+            cmd_agy_node,
+            child_under_agy_node,
+            child_under_ls,
+            empty_cmdline_agy,
+            webm_proc,
+        ];
+        let cls = classify_antigravity_processes(&procs);
+        assert!(cls.main.is_empty(), "none of these should be classified as main");
+        assert_eq!(cls.sidecar.len(), 2);
+        assert_eq!(cls.child.len(), 1);
+        assert_eq!(cls.child[0].pid, 304);
+
+        let targets = find_antigravity_cleanup_targets(
+            &procs,
+            r"C:\Program Files\Antigravity\Antigravity.exe",
+            Some(999999),
+        );
+        assert!(targets.main_pids.is_empty());
+        assert_eq!(targets.agy_node_cmd_pids, vec![301]);
+        assert_eq!(targets.language_server_pids, vec![300]);
+        assert!(targets.sidecar_child_pids.contains(&302));
+        assert!(targets.sidecar_child_pids.contains(&303));
+        assert!(targets.sidecar_child_pids.contains(&304));
+        assert!(targets.sidecar_child_pids.contains(&305));
     }
 }

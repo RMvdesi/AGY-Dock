@@ -109,7 +109,8 @@ pub fn maybe_run_cli() -> Option<i32> {
     }
 
     if is_watch_exit {
-        return Some(supervisor::run_watch_exit(&paths));
+        let after_gui_exit = has_flag("--after-gui-exit");
+        return Some(supervisor::run_watch_exit(&paths, after_gui_exit));
     }
 
     if is_shortcut {

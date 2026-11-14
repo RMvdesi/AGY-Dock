@@ -169,6 +169,29 @@ test('classifyAntigravityProcesses distinguishes main, sidecar, and child proces
   assert.deepEqual(classified.sidecar.map((p) => p.ProcessId), [103, 104]);
 });
 
+test('classifyAntigravityProcesses and findAntigravityCleanupTargets handle parent sidecars, empty cmdline, and resources/bin binaries', () => {
+  const processes = [
+    { ProcessId: 300, ParentProcessId: 1, Name: 'language_server.exe', ExecutablePath: 'C:\\App\\resources\\bin\\language_server.exe', CommandLine: 'language_server.exe --app_data_dir antigravity' },
+    { ProcessId: 301, ParentProcessId: 300, Name: 'Antigravity.exe', CommandLine: '"C:\\App\\Antigravity.exe" helper-worker.js' },
+    { ProcessId: 302, ParentProcessId: 1, Name: 'cmd.exe', CommandLine: 'cmd.exe /c agy-node.cmd foo.js' },
+    { ProcessId: 303, ParentProcessId: 302, Name: 'Antigravity.exe', CommandLine: '"C:\\App\\Antigravity.exe" foo.js' },
+    { ProcessId: 304, ParentProcessId: 1, Name: 'Antigravity.exe', CommandLine: '   ' },
+    { ProcessId: 305, ParentProcessId: 1, Name: 'Antigravity.exe', CommandLine: '"C:\\App\\Antigravity.exe" --ms-enable-electron-run-as-node dist/server.js' },
+    { ProcessId: 306, ParentProcessId: 1, Name: 'webm_encoder.exe', ExecutablePath: 'C:\\App\\resources\\bin\\webm_encoder.exe', CommandLine: 'webm_encoder.exe --stdin' },
+  ];
+
+  const classified = classifyAntigravityProcesses(processes);
+  assert.deepEqual(classified.main.map((p) => p.ProcessId), []);
+  assert.deepEqual(classified.sidecar.map((p) => p.ProcessId), [301, 303, 305]);
+  assert.deepEqual(classified.child.map((p) => p.ProcessId), [304]);
+
+  const targets = findAntigravityCleanupTargets(processes, 'C:\\App\\Antigravity.exe', 999);
+  assert.deepEqual(targets.mainPids, []);
+  assert.deepEqual(targets.agyNodeCmdPids, [302]);
+  assert.deepEqual(targets.languageServerPids, [300]);
+  assert.deepEqual(targets.sidecarChildPids, [301, 303, 305, 304, 306]);
+});
+
 test('parseDevToolsActivePort and parseListeningPidsForPort parse valid inputs', () => {
   const parsed = parseDevToolsActivePort('52198\n/devtools/browser/abc-123\n');
   assert.deepEqual(parsed, { port: 52198, wsPath: '/devtools/browser/abc-123' });

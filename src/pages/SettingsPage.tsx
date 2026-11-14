@@ -305,7 +305,7 @@ export function SettingsPage({
             <div className="flex flex-wrap items-center gap-2.5">
               <h3 className="text-[13.5px] font-semibold text-[var(--text-primary)]">版本与更新</h3>
               <span className="rounded-md bg-[var(--bg-subtle)] px-2 py-0.5 font-mono-code text-[11.5px] font-medium text-[var(--text-muted)]">
-                v{overview?.version || "2.3.1"}
+                v{overview?.version || "2.4.0"}
               </span>
               <StatusDot tone={updateStatusTone} text={updateStatusText} />
             </div>

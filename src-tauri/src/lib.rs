@@ -2,6 +2,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod detector;
+pub mod marketplace;
 pub mod models;
 pub mod paths;
 pub mod plugins;
@@ -15,6 +16,7 @@ pub mod events {
     pub const OVERVIEW_UPDATED: &str = "overview:updated";
     pub const NATIVE_UPDATED: &str = "native:updated";
     pub const UPDATE_AVAILABLE: &str = "update:available";
+    pub const MARKETPLACE_UPDATED: &str = "marketplace:updated";
     pub const LOG_UPDATED: &str = "log:updated";
     pub const TOAST_MESSAGE: &str = "toast:message";
     pub const STORAGE_SCAN_PROGRESS: &str = "storage:scan-progress";
@@ -31,7 +33,6 @@ use tokio::sync::Mutex;
 fn spawn_background_monitor(app: tauri::AppHandle, paths: ManagerPaths) {
     tauri::async_runtime::spawn(async move {
         let mut saw_antigravity_main = false;
-        let mut exit_zero_streak: u8 = 0;
         let mut last_native_hash: String = String::new();
         let mut last_log_sig: Option<(u64, SystemTime)> = None;
         let mut tick_count: u64 = 0;
@@ -42,7 +43,6 @@ fn spawn_background_monitor(app: tauri::AppHandle, paths: ManagerPaths) {
 
             if let Ok(ov) = supervisor::get_overview(&paths).await {
                 let main_cnt = ov.cdp.main_process_count;
-                let sidecar_cnt = ov.cdp.sidecar_process_count;
                 let running_plugins = ov.plugins.iter().filter(|p| p.running).count();
                 let auto_cleanup = ov.lifecycle.auto_cleanup_on_exit;
 
@@ -50,17 +50,31 @@ fn spawn_background_monitor(app: tauri::AppHandle, paths: ManagerPaths) {
 
                 if main_cnt > 0 {
                     saw_antigravity_main = true;
-                    exit_zero_streak = 0;
                 } else if saw_antigravity_main {
                     if !auto_cleanup {
                         saw_antigravity_main = false;
-                        exit_zero_streak = 0;
                     } else {
-                        exit_zero_streak += 1;
-                        if exit_zero_streak >= 2 {
+                        tokio::time::sleep(Duration::from_millis(1200)).await;
+                        let p_chk = paths.clone();
+                        let confirm = tokio::task::spawn_blocking(move || {
+                            detector::get_active_cdp_info(&p_chk, None)
+                        })
+                        .await
+                        .unwrap_or_default();
+
+                        if confirm.main_process_count == 0 {
                             saw_antigravity_main = false;
-                            exit_zero_streak = 0;
-                            if sidecar_cnt > 0 || running_plugins > 0 {
+                            let p_has = paths.clone();
+                            let has_targets = confirm.child_process_count > 0
+                                || confirm.sidecar_process_count > 0
+                                || running_plugins > 0
+                                || tokio::task::spawn_blocking(move || {
+                                    supervisor::has_antigravity_cleanup_targets(&p_has)
+                                })
+                                .await
+                                .unwrap_or(false);
+
+                            if has_targets {
                                 let p_clean = paths.clone();
                                 let app_c = app.clone();
                                 let res = tokio::task::spawn_blocking(move || {
@@ -68,20 +82,35 @@ fn spawn_background_monitor(app: tauri::AppHandle, paths: ManagerPaths) {
                                 })
                                 .await;
                                 if let Ok(Ok(cleanup)) = res {
-                                    if !cleanup.skipped {
+                                    let stopped_plugins = cleanup
+                                        .plugin_results
+                                        .iter()
+                                        .filter(|r| r.stopped == Some(true))
+                                        .count();
+                                    if !cleanup.skipped
+                                        && (!cleanup.killed_pids.is_empty() || stopped_plugins > 0)
+                                    {
+                                        let msg = match (cleanup.killed_pids.len(), stopped_plugins) {
+                                            (k, s) if k > 0 && s > 0 => format!(
+                                                "Antigravity 已退出，已清理 {k} 个残留进程并停止 {s} 个插件"
+                                            ),
+                                            (k, _) if k > 0 => format!(
+                                                "Antigravity 已退出，已清理 {k} 个残留进程"
+                                            ),
+                                            (_, s) => format!(
+                                                "Antigravity 已退出，已停止 {s} 个托管插件"
+                                            ),
+                                        };
                                         let _ = app_c.emit(
                                             events::TOAST_MESSAGE,
                                             ToastEventPayload {
-                                                message: format!(
-                                                    "Antigravity 已退出，已清理 {} 个残留进程并停止插件",
-                                                    cleanup.killed_pids.len()
-                                                ),
+                                                message: msg,
                                                 tone: "ok".to_string(),
                                             },
                                         );
-                                        if let Ok(ov2) = supervisor::get_overview(&paths).await {
-                                            let _ = app_c.emit(events::OVERVIEW_UPDATED, &ov2);
-                                        }
+                                    }
+                                    if let Ok(ov2) = supervisor::get_overview(&paths).await {
+                                        let _ = app_c.emit(events::OVERVIEW_UPDATED, &ov2);
                                     }
                                 }
                             }
@@ -137,6 +166,7 @@ pub fn run() {
                 paths: paths.clone(),
                 force_quit: AtomicBool::new(false),
                 storage_cache: Mutex::new(None),
+                marketplace_cache: Mutex::new(None),
             });
 
             if let Some(win) = app.get_webview_window("main") {
@@ -176,6 +206,26 @@ pub fn run() {
                 });
             }
 
+            // Startup: non-blocking GitHub Marketplace check
+            let auto_check_marketplace = initial_cfg
+                .marketplace
+                .as_ref()
+                .and_then(|m| m.auto_check_on_startup)
+                .unwrap_or(true);
+            if auto_check_marketplace {
+                let app_mkt = app.handle().clone();
+                let p_mkt = paths.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(900)).await;
+                    let res = marketplace::fetch_remote_marketplace(&p_mkt).await;
+                    {
+                        let state = app_mkt.state::<AppState>();
+                        *state.marketplace_cache.lock().await = Some(res.clone());
+                    }
+                    let _ = app_mkt.emit(events::MARKETPLACE_UPDATED, &res);
+                });
+            }
+
             spawn_background_monitor(app.handle().clone(), paths);
             Ok(())
         })
@@ -189,6 +239,8 @@ pub fn run() {
                     if minimize_to_tray {
                         api.prevent_close();
                         let _ = window.hide();
+                    } else {
+                        supervisor::handoff_exit_watcher_if_needed(&state.paths);
                     }
                 }
             }
@@ -207,6 +259,7 @@ pub fn run() {
             commands::toggle_plugin,
             commands::save_plugin_entry,
             commands::delete_plugin_entry,
+            commands::delete_local_plugin_dir,
             commands::install_plugin_package,
             commands::detect_antigravity,
             commands::save_antigravity_exe,
@@ -231,6 +284,9 @@ pub fn run() {
             commands::delete_storage_sessions,
             commands::delete_storage_items,
             commands::is_antigravity_running_for_storage,
+            commands::fetch_remote_marketplace,
+            commands::install_remote_plugin,
+            commands::mark_marketplace_seen,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AGY Plugin Manager");

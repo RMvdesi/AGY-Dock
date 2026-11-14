@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -123,19 +123,12 @@ try {
   throw error;
 }
 
-// Sync bundled plugin packages and example template without ever overwriting user plugins.json or plugins/
-const srcPackagesDir = resolve(root, 'AGY-Launcher', 'plugin-packages');
+// Remove legacy bundled plugin-packages/ and sync example template without ever overwriting user plugins.json or plugins/
 const dstPackagesDir = join(installDir, 'plugin-packages');
-let syncedPackages = 0;
-if (existsSync(srcPackagesDir)) {
-  mkdirSync(dstPackagesDir, { recursive: true });
-  for (const entry of readdirSync(srcPackagesDir)) {
-    const srcFile = join(srcPackagesDir, entry);
-    if (statSync(srcFile).isFile()) {
-      copyFileSync(srcFile, join(dstPackagesDir, entry));
-      syncedPackages += 1;
-    }
-  }
+let removedLegacyPackages = false;
+if (existsSync(dstPackagesDir)) {
+  rmSync(dstPackagesDir, { recursive: true, force: true });
+  removedLegacyPackages = true;
 }
 
 const srcExampleCfg = resolve(root, 'AGY-Launcher', 'plugins.example.json');
@@ -146,4 +139,6 @@ if (existsSync(srcExampleCfg) && statSync(srcExampleCfg).isFile()) {
 
 const sizeMb = (statSync(targetExe).size / (1024 * 1024)).toFixed(2);
 console.log(`[build:local] 热更新完成：${targetExe} (${sizeMb} MB)`);
-console.log(`[build:local] 已同步 ${syncedPackages} 个内置插件包与 plugins.example.json（未修改 plugins.json 与 plugins/）。`);
+console.log(
+  `[build:local] 已同步 plugins.example.json${removedLegacyPackages ? ' 并清理旧版 plugin-packages 目录' : ''}（未修改 plugins.json 与 plugins/）。`,
+);

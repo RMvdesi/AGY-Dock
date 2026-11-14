@@ -225,6 +225,7 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
                     });
                 }
                 "tray_quit" => {
+                    supervisor::handoff_exit_watcher_if_needed(&paths);
                     state.force_quit.store(true, Ordering::SeqCst);
                     app.exit(0);
                 }

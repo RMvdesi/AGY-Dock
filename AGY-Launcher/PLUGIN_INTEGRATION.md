@@ -19,7 +19,8 @@ AGY-Launcher/
 ```
 
 - Directory name `<plugin-id>` is scanned automatically by the **Plugin Marketplace** view (`AGY-Launcher/plugins/*`).
-- Any directory under `AGY-Launcher/plugins/` becomes discoverable as a local package and can be linked or imported into `plugins.json`.
+- Any directory under `AGY-Launcher/plugins/` becomes discoverable as a local package and can be linked/imported into `plugins.json`, or cleanly deleted from disk directly in **Plugin Marketplace** (`本地目录` — automatically stopping and unregistering linked entries before removing `plugins/<plugin-id>/`).
+- **Distribution separation**: Starting from `v2.4.0`, AGY Plugin Manager no longer bundles built-in plugin archives inside the desktop installer; plugins are distributed independently via GitHub Releases (`plugins-catalog.json`) or local `.zip` / `.agypkg` / `.agy-plugin` packages.
 
 ---
 
@@ -34,6 +35,8 @@ Managed external plugins are registered inside the top-level `"plugins"` array o
 | `id` | `string` | **Yes** | Unique identifier matching `^[a-z0-9][a-z0-9-_]{1,63}$` (2–64 chars, letters, digits, `-`, `_`). Also determines log filenames. |
 | `name` | `string` | No (defaults to `id`) | Human-readable display name shown in lists, active spotlight, and detail views. |
 | `version` | `string` | No | Optional semantic version fallback (e.g. `1.0.0`). Auto-detected from `healthUrl` or `plugins/<id>/package.json` (`plugin.json` / `manifest.json`) when omitted. |
+| `author` | `string` | Recommended | Plugin author or packager attribution displayed in **My Plugins**, **Plugin Marketplace**, and detail views (auto-read from `package.json`/`plugin.json`/`manifest.json` `author` when omitted, supporting both `"Name"` and `{"name": "Name"}`). |
+| `homepage` | `string` | No | Optional project homepage or upstream GitHub repository URL (`https://...`), shown in plugin detail views and marketplace links. Also falls back to `repository` in directory manifests. |
 | `description` | `string` | No | Concise one-line functional summary (kept short to fit single/two-line catalog rows cleanly). |
 | `enabled` | `boolean` | No (default `true`) | Whether the plugin participates in launch and attach batches. |
 | `autoAttach` | `boolean` | No (default `true`) | Whether the plugin attaches automatically after Antigravity CDP becomes ready. |
@@ -44,6 +47,11 @@ Managed external plugins are registered inside the top-level `"plugins"` array o
 | `stopArgs` | `string[]` | No | Graceful shutdown arguments invoked before process-matching fallback termination. |
 | `healthUrl` | `string` | No | Optional localhost HTTP JSON health check URL (e.g., `http://127.0.0.1:12399/health`). |
 | `processMatch` | `string` | Recommended | Case-insensitive substring matched against `Win32_Process.CommandLine` to detect running PIDs and clean up residuals on stop. |
+
+### Author & Upstream Attribution Convention
+Clear `author` and `homepage` metadata is required across `plugins.json`, `package.json`, and `agy-plugin.json` so users can immediately verify plugin provenance in **My Plugins** and **Plugin Marketplace**:
+- **First-party / maintained plugins**: Use the maintainer name (e.g., `"author": "HaoAn"`) and point `homepage` to `https://github.com/haoan33/AGY-Plugin-Manager`.
+- **Encapsulated third-party GitHub plugins**: Always preserve original upstream credit when wrapping an open-source GitHub plugin into a one-click AGY package—for example `"author": "原作者名 (封装: HaoAn)"` (or `"原作者名"`), accompanied by `"homepage"` (or `"repository"`) linking directly to the upstream GitHub repository.
 
 ### Supported Argument Placeholders
 Strings inside `launchArgs` and `attachArgs` support runtime token substitution:
@@ -57,6 +65,8 @@ Strings inside `launchArgs` and `attachArgs` support runtime token substitution:
 {
   "id": "office-viewer",
   "name": "Antigravity Office Viewer",
+  "author": "HaoAn",
+  "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
   "description": "Real-time Office preview panel via Antigravity CDP.",
   "enabled": true,
   "autoAttach": true,
@@ -75,6 +85,8 @@ Strings inside `launchArgs` and `attachArgs` support runtime token substitution:
 {
   "id": "antigravity-hans",
   "name": "Antigravity Hans (Dynamic Localization)",
+  "author": "HaoAn",
+  "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
   "description": "Pure Node.js CDP localization daemon with zero .exe binaries.",
   "enabled": true,
   "autoAttach": true,
@@ -188,8 +200,10 @@ my-plugin-v1.0.0.zip
 | `schemaVersion` | `number` | **Yes** | Package manifest schema version. Must be `1`. |
 | `id` | `string` | **Yes** | Plugin identifier matching `VALID_PLUGIN_ID_RE` (`^[a-z0-9][a-z0-9-_]{1,63}$`). |
 | `name` | `string` | No (defaults to `id`) | Human-readable display name. |
-| `version` | `string` | No | Semantic version string (e.g. `"1.0.1"`). |
+| `version` | `string` | No | Semantic version string (e.g. `"1.0.2"`). |
+| `author` | `string` | Recommended | Author or packager name (e.g. `"HaoAn"`, or `"原作者名 (封装: HaoAn)"` for third-party wrapped plugins). Displayed in Marketplace, My Plugins, and detail views. |
 | `description` | `string` | No | Concise one-line description for manager cards. |
+| `homepage` | `string` | No | Project homepage or upstream GitHub repository URL (`https://...`). Also accepts `repository` when normalized by the manager or `package_plugins.py`. |
 | `type` | `string` | No (default `"custom-cdp"`) | Runtime category: `"node-cdp"`, `"exe-cdp"`, or `"custom-cdp"`. |
 | `command` | `string` | **Yes** | Runtime command or relative path (e.g. `"node"` or `"plugins\\<id>\\app.exe"`). |
 | `launchArgs` | `string[]` | No | Arguments for initial launch (`plugins\\<id>\\...` relative to manager data dir). |
@@ -207,8 +221,10 @@ Example `agy-plugin.json`:
   "schemaVersion": 1,
   "id": "office-viewer",
   "name": "Antigravity Office Viewer",
-  "version": "1.0.1",
+  "version": "1.0.2",
+  "author": "HaoAn",
   "description": "通过 CDP 为 Antigravity 右侧栏提供 Word / Excel / PPT 高清实时预览。",
+  "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
   "type": "node-cdp",
   "command": "node",
   "launchArgs": ["plugins\\office-viewer\\index.js", "--daemon"],
@@ -223,16 +239,75 @@ Example `agy-plugin.json`:
 
 ### Security & Extraction Behavior
 
-When installing a package via `install_plugin_package()` (Python) or `installPluginPackage()` (Node):
+When installing or removing a package via `install_plugin_package()` / `delete_local_plugin_dir()` (Rust) or `installPluginPackage()` (Node):
 1. **Zip-Slip Protection**: Archives containing `..` traversal segments, leading `/` or `\`, or Windows drive letters (`C:`) are rejected before any extraction occurs.
 2. **Safe Process Validation**: `processMatch` / `command` are validated against `GENERIC_RUNTIMES` before registration.
 3. **Graceful Upgrade / Overwrite**: If a plugin with the same `id` is already installed and `overwrite=True`, the manager stops the running plugin instance first, replaces `plugins/<id>/` cleanly, and upserts its configuration entry in `plugins.json`.
-4. **Drag-and-Drop & One-Click Install**: Users can drop any `.zip`, `.agypkg`, or `.agy-plugin` file directly onto **我的插件** or click **`安装插件包`** to install and immediately start using the plugin without editing JSON manually.
+4. **Safe Local Deletion**: Deleting a plugin entry in **My Plugins** offers an optional `deleteFiles` checkbox to remove `plugins/<id>/`, and **Plugin Marketplace** (`本地目录`) supports deleting local plugin directories directly (jailed strictly to direct subdirectories of `plugins/`, stopping and unregistering any linked config entries first).
+5. **Drag-and-Drop & One-Click Install**: Users can drop any `.zip`, `.agypkg`, or `.agy-plugin` file directly onto **我的插件** or click **`安装插件包`** (or install/update directly from the GitHub Remote Marketplace) without editing JSON manually.
 
-### Building Official Packages
+### Building Release Packages
 
-Run the repository package builder from `AGY-Launcher/` to regenerate clean, verified packages into `AGY-Launcher/plugin-packages/`:
+Run the standalone repository package builder from `AGY-Launcher/` (or repo root) to generate clean, verified `.zip` packages into `AGY-Launcher/plugin-packages/` for GitHub Releases upload (these archives are no longer embedded inside the app installer):
 
 ```powershell
-python scripts/package_plugins.py
+python AGY-Launcher/scripts/package_plugins.py
 ```
+
+`package_plugins.py` automatically reads `author` (both `"Name"` and `{"name": "Name"}`) and `homepage`/`repository` from `plugins.json` and `package.json`/`plugin.json`/`manifest.json`, writes them into `agy-plugin.json`, and validates ZIP integrity + Zip-Slip safety.
+
+---
+
+## 8. GitHub 远程插件市场规范 (`plugins-catalog.json` & 第三方插件封装指南)
+
+AGY Plugin Manager 通过仓库根目录的 `plugins-catalog.json`（优先）与 GitHub Releases API（自动兜底）接入远程插件市场（默认仓库：`haoan33/AGY-Plugin-Manager`），支持启动自动检查新插件与 SemVer 版本更新，以及一键下载安装/升级。
+
+### 1. `plugins-catalog.json` 格式规范 (`schemaVersion: 1`)
+
+主目录索引文件位于仓库根目录 `plugins-catalog.json`（对应远程 URL：`https://raw.githubusercontent.com/haoan33/AGY-Plugin-Manager/main/plugins-catalog.json`）。
+
+#### 顶层字段
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `schemaVersion` | `number` | **Yes** | 目录索引格式版本，必须为 `1`。 |
+| `repository` | `string` | **Yes** | 托管 Release 资产的 GitHub 仓库（如 `"haoan33/AGY-Plugin-Manager"`）。 |
+| `updatedAt` | `string` | No | UTC ISO-8601 生成时间（如 `"2026-11-14T12:45:54Z"`）。 |
+| `plugins` | `object[]` | **Yes** | 远程可安装插件列表。 |
+
+#### `plugins[]` 条目字段
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `string` | **Yes** | 插件 ID，必须符合 `VALID_PLUGIN_ID_RE` (`^[a-z0-9][a-z0-9-_]{1,63}$`)。 |
+| `name` | `string` | **Yes** | 展示名称。 |
+| `version` | `string` | **Yes** | 语义化版本号（如 `"1.0.2"`，用于与本地安装版本比较是否可更新）。 |
+| `author` | `string` | **Yes** | 作者或封装署名（第三方封装须保留原作者名，如 `"原作者名 (封装: HaoAn)"`）。 |
+| `description` | `string` | No | 一句话功能描述（纯文本，严禁包含 HTML/脚本标签）。 |
+| `type` | `string` | No | 运行类型：`node-cdp`、`exe-cdp` 或 `custom-cdp`。 |
+| `downloadUrl` | `string` | **Yes** | HTTPS 下载地址（仅允许 `github.com` / `objects.githubusercontent.com` / `raw.githubusercontent.com` / `codeload.github.com`）。 |
+| `homepage` | `string` | No | 项目主页或上游开源仓库地址。 |
+| `changelog` | `string` | No | 当前版本更新说明（纯文本）。 |
+| `sha256` | `string` | Recommended | 对应 Release `.zip` 的小写 SHA-256 校验值；非空时安装器会强制校验摘要，未匹配新包上传前可留空 `""`。 |
+| `size` | `number` | No | 压缩包字节大小（用于 UI 展示）。 |
+| `releaseTag` | `string` | No | 资产所属的 GitHub Release Tag（如 `"v2.2.1"`）。 |
+
+### 2. Release 资产命名与发布工作流
+
+1. **标准资产命名**：插件安装包必须严格命名为 `<id>-v<version>.zip`（例如 `office-viewer-v1.0.2.zip`、`antigravity-hans-v0.5.1.zip`、`agy-telemetry-v1.0.4.zip`）。即使 `plugins-catalog.json` 暂未就绪或返回 404，管理器仍可回退扫描 GitHub Releases API 中符合 `<id>-v<version>.zip` 命名的资产并自动按最高 SemVer 去重。
+2. **打包并更新目录索引**：
+   ```powershell
+   # 1) 重新打包并生成指向目标 Release Tag 的 plugins-catalog.json（含精确 sha256）
+   python AGY-Launcher/scripts/package_plugins.py --catalog plugins-catalog.json --release-tag v2.3.2
+   ```
+   > 若目录暂时指向历史 Release Tag（资产尚未重新上传），请附加 `--omit-sha256` 以留空 `sha256`，避免与历史 Release 资产产生虚假校验冲突。
+3. **发布步骤**：将 `AGY-Launcher/plugin-packages/*.zip` 上传至 `haoan33/AGY-Plugin-Manager` 对应 GitHub Release，同时将更新后的 `plugins-catalog.json` 提交推送至仓库 `main` 分支，客户端即可自动发现新插件与新版本。
+
+### 3. 第三方 GitHub 插件一键封装检查清单 (Encapsulation Checklist)
+
+将社区开源的 GitHub Antigravity 插件封装为 AGY 标准插件包并上架市场前，请逐项核对：
+
+- [ ] **完整保留原作者署名与开源协议**：在 `package.json`、`plugins.json` 与 `agy-plugin.json` 中显式填写 `author`（如 `"原作者名 (封装: HaoAn)"` 或 `"原作者名"`），保留上游 `LICENSE` 文件，并将 `homepage` / `repository` 指向原 GitHub 仓库。
+- [ ] **无交互静默启动与单实例保护**：确认入口脚本支持 `--daemon` 无窗口后台运行（不弹出交互提示或阻塞窗口），且重复触发 `--daemon` / Attach 时能幂等退出或复用已有实例。
+- [ ] **优雅退出契约 (`stopArgs`)**：实现 `--stop` 逻辑，仅终止自身插件守护进程并清理临时 PID 文件，严禁影响 `Antigravity.exe` 或其他无关进程。
+- [ ] **`processMatch` 安全校验**：绝不使用裸通用运行时（`node`、`python`、`powershell`、`cmd` 等）作为 `processMatch`，必须指定唯一脚本子串（如 `"my-plugin\\index.js"`）或独立可执行文件名。
+- [ ] **根目录 `agy-plugin.json` (`schemaVersion: 1`)**：确认压缩包根目录包含合法的 `agy-plugin.json`（含 `id`、`version`、`author`、`command`、`launchArgs`、`attachArgs`、`stopArgs`、`processMatch`）。
+- [ ] **Zip-Slip 与本地安装回归验证**：通过 `python AGY-Launcher/scripts/package_plugins.py` 完成压缩包完整性与路径穿越检查，并在 **我的插件** 中实际拖入安装，验证 `Attach`、`Health`、`Logs` 与 `Stop` 全链路正常。

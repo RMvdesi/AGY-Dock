@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.4.0] - 2026-11-14
+
+### Added
+- **GitHub 远程插件市场（Scheme A）**：新增 `plugins-catalog.json` 索引（优先拉取）与 `haoan33/AGY-Plugin-Manager` GitHub Releases API 自动兜底扫描，支持启动自动检查新插件与 SemVer 版本更新、顶部导航未读/可更新徽标提示、「全部 / GitHub 仓库 / 可更新 / 本地目录」分段筛选、一键下载安装/升级与「一键全部更新」，以及 `seen_plugin_ids` 已读状态持久化。
+- **本地插件文件清理与目录删除**：在「我的插件」删除插件时新增可选「同时删除本地插件目录文件」复选框（`deleteFiles`），并在「插件市场 → 本地目录」支持直接安全删除磁盘上的本地插件目录（自动停止并取消关联配置，严格限制在 `plugins/` 直接子目录内防路径穿越）。
+- **插件作者与项目主页元数据支持**：全链路打通 `author` 与 `homepage`/`repository` 元数据解析（兼容字符串及 `{"name": "..."}` 对象）、配置持久化、UI 展示/编辑（我的插件、插件市场、详情页、插件编辑弹窗）及 `agy-plugin.json` (`schemaVersion: 1`) 打包输出；统一将 `office-viewer`、`antigravity-hans`、`agy-telemetry` 作者署名更新为 `HaoAn`。
+- **打包器与集成规范升级**：修复 `AGY-Launcher/scripts/package_plugins.py` 移除对已废弃 `desktop/` 模块的依赖，新增 `--catalog` / `--repo` / `--release-tag` / `--omit-sha256` 目录生成能力；完善 `AGY-Launcher/PLUGIN_INTEGRATION.md` 的作者署名、远程目录格式、本地目录安全删除与第三方 GitHub 插件一键封装检查清单。
+
+### Changed
+- **移除安装包内置插件包**：主程序与 NSIS 安装包不再随包内置 `plugin-packages/`（同步清理 `tauri.conf.json`、`nsis/hooks.nsh` 与 `scripts/build-local.mjs` 旧版遗留目录并移除市场「官方内置插件包」区块），统一改为通过 GitHub Releases 远程市场或本地 `.zip` 插件包按需安装。
+
+### Fixed
+- **Antigravity 退出后后台残留清理失效修复**：修正 `Antigravity.exe` 进程分类逻辑（基于父进程 `language_server.exe`/`agy-node.cmd`、Electron-as-Node 脚本特征与空命令行识别子/Sidecar 进程，防止误判为主窗口），补齐 `resources\bin\` 辅助进程与 `agy-node.cmd` 识别并优先清理残留进程树；移除后台监控与 `--watch-exit` 的过严触发限制，并在托盘退出及非托盘关闭窗口时自动移交 `--watch-exit --after-gui-exit` 守护进程接管退出后清理。
+
 ## [2.3.1] - 2026-11-14
 
 ### Fixed

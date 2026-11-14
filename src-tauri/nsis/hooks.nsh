@@ -20,13 +20,16 @@ InstallDir "$LOCALAPPDATA\AGY-Plugin-Manager"
   Pop $1
   Sleep 400
 
-  ; Clean up legacy Inno Setup / PyInstaller _internal leftovers when upgrading in-place
+  ; Clean up legacy Inno Setup / PyInstaller _internal and removed bundled plugin-packages leftovers
   ; Never touch user configuration (plugins.json) or installed plugins (plugins\)
   ${If} ${FileExists} "$INSTDIR\_internal\*.*"
     RMDir /r "$INSTDIR\_internal"
   ${EndIf}
   ${If} ${FileExists} "$INSTDIR\assets\*.*"
     RMDir /r "$INSTDIR\assets"
+  ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\plugin-packages\*.*"
+    RMDir /r "$INSTDIR\plugin-packages"
   ${EndIf}
   Delete "$INSTDIR\unins000.exe"
   Delete "$INSTDIR\unins000.dat"

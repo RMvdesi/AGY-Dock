@@ -19,12 +19,17 @@ import {
   StatusPill,
 } from "../components/MotionPrimitives";
 import { formatBytes, formatVersionText, isSupportedPackagePath } from "../lib/format";
-import type { PluginRuntimeStatus } from "../types/ipc";
+import type {
+  PluginRuntimeStatus,
+  RemoteMarketplaceResult,
+  RemotePluginInfo,
+} from "../types/ipc";
 
 type FilterKey = "all" | "running" | "idle";
 
 interface MyPluginsPageProps {
   plugins: PluginRuntimeStatus[];
+  remoteMarketplace?: RemoteMarketplaceResult | null;
   isDark: boolean;
   externalDragActive: boolean;
   busyPluginId: string | null;
@@ -39,6 +44,7 @@ interface MyPluginsPageProps {
 
 export function MyPluginsPage({
   plugins,
+  remoteMarketplace,
   isDark,
   externalDragActive,
   busyPluginId,
@@ -56,13 +62,23 @@ export function MyPluginsPage({
 
   const dragActive = externalDragActive || htmlDragOver;
 
+  const remoteUpdatesById = useMemo(() => {
+    const map: Record<string, RemotePluginInfo> = {};
+    for (const item of remoteMarketplace?.plugins ?? []) {
+      if (item.hasUpdate) {
+        map[item.id.toLowerCase()] = item;
+      }
+    }
+    return map;
+  }, [remoteMarketplace]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return plugins.filter((p) => {
       if (filter === "running" && !p.running) return false;
       if (filter === "idle" && p.running) return false;
       if (q) {
-        const hay = `${p.id} ${p.name} ${p.version} ${p.description}`.toLowerCase();
+        const hay = `${p.id} ${p.name} ${p.author ?? ""} ${p.version} ${p.description}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -191,6 +207,7 @@ export function MyPluginsPage({
                     const enabled = p.enabled !== false;
                     const pids = p.pids ?? [];
                     const mem = p.memoryBytes || 0;
+                    const remoteUpdate = remoteUpdatesById[p.id.toLowerCase()];
 
                     let statusTone: "ok" | "muted" | "warn" = "muted";
                     let statusText = "○ 待命";
@@ -235,6 +252,28 @@ export function MyPluginsPage({
                             <span className="shrink-0 rounded-md bg-[var(--bg-subtle)] px-1.5 py-[1px] font-mono-code text-[11px] font-medium text-[var(--text-muted)]">
                               {formatVersionText(p.version)}
                             </span>
+                            {p.author?.trim() && (
+                              <span
+                                title={p.author.trim()}
+                                className="hidden max-w-[130px] shrink-0 truncate text-[11.5px] text-[var(--text-faint)] sm:inline"
+                              >
+                                by {p.author.trim()}
+                              </span>
+                            )}
+                            {remoteUpdate && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenMarketplace();
+                                }}
+                                title={`发现 GitHub 新版本 ${formatVersionText(remoteUpdate.version)}，点击前往市场更新`}
+                                className="shrink-0 cursor-pointer rounded-[10px] px-2 py-[1.5px] text-[11px] font-semibold whitespace-nowrap transition-opacity hover:opacity-85"
+                                style={{ backgroundColor: "var(--warn-bg)", color: "var(--warn)" }}
+                              >
+                                有更新 {formatVersionText(remoteUpdate.version)}
+                              </button>
+                            )}
                           </div>
                           <p className="mt-0.5 truncate text-[12.5px] text-[var(--text-muted)]">
                             {p.description || "外部扩展"}

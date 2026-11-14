@@ -17,6 +17,7 @@ export interface NavTabItem {
   id: NavTabId;
   label: string;
   count?: number;
+  badge?: number;
 }
 
 const THEME_LABELS: Record<ThemeMode, string> = {
@@ -30,6 +31,7 @@ interface TopBarProps {
   onSelectTab: (tab: NavTabId) => void;
   externalCount: number;
   nativeCount: number;
+  marketBadgeCount?: number;
   isStatusPage: boolean;
   isBusyAction?: boolean;
   onQuickAction: () => void;
@@ -42,6 +44,7 @@ export function TopBar({
   onSelectTab,
   externalCount,
   nativeCount,
+  marketBadgeCount = 0,
   isStatusPage,
   isBusyAction = false,
   onQuickAction,
@@ -51,7 +54,7 @@ export function TopBar({
   const tabs: NavTabItem[] = [
     { id: "status", label: "运行状态" },
     { id: "external", label: "我的插件", count: externalCount },
-    { id: "market", label: "插件市场" },
+    { id: "market", label: "插件市场", badge: marketBadgeCount },
     { id: "native", label: "原生扩展", count: nativeCount },
     { id: "storage", label: "存储管理" },
     { id: "logs", label: "日志" },
@@ -61,7 +64,7 @@ export function TopBar({
   const ThemeIcon = themeMode === "dark" ? Moon : themeMode === "light" ? Sun : Monitor;
 
   return (
-    <header className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
+    <header className="grid grid-cols-[minmax(220px,1fr)_auto_minmax(220px,1fr)] items-center gap-2.5">
       {/* Left Brand Mark (bare icon for symmetric dock centering) */}
       <div className="flex min-w-0 items-center" title="AGY Plugin Manager">
         <BrandMark size={26} className="shrink-0" />
@@ -81,7 +84,7 @@ export function TopBar({
                 type="button"
                 whileTap={{ scale: 0.97 }}
                 onClick={() => onSelectTab(tab.id)}
-                className={`relative flex cursor-pointer items-center gap-1.5 rounded-[15px] px-3.5 py-1.5 text-[12.5px] transition-colors duration-150 ${
+                className={`relative flex cursor-pointer items-center gap-1.5 rounded-[15px] px-2.5 py-1.5 text-[12.5px] transition-colors duration-150 ${
                   isActive
                     ? "font-semibold text-[var(--text-primary)]"
                     : "font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -107,6 +110,15 @@ export function TopBar({
                     {tab.count}
                   </span>
                 )}
+                {typeof tab.badge === "number" && tab.badge > 0 && (
+                  <span
+                    title={`${tab.badge} 项新插件或版本更新`}
+                    className="relative z-10 rounded-full px-1.5 py-[1px] text-[10px] leading-tight font-bold tabular-nums text-white"
+                    style={{ backgroundColor: "var(--accent)" }}
+                  >
+                    {tab.badge > 99 ? "99+" : tab.badge}
+                  </span>
+                )}
               </motion.button>
             );
           })}
@@ -120,7 +132,7 @@ export function TopBar({
           whileTap={{ scale: 0.97 }}
           onClick={onCycleTheme}
           title={`当前外观：${THEME_LABELS[themeMode]}（点击切换 自动 / 浅色 / 深色）`}
-          className="inline-flex h-[32px] min-w-[74px] cursor-pointer items-center justify-center gap-1.5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3 text-[12px] font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+          className="inline-flex h-[32px] min-w-[70px] shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2.5 text-[12px] font-medium whitespace-nowrap text-[var(--text-muted)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
         >
           <AnimatePresence mode="wait" initial={false}>
             <motion.span
@@ -129,7 +141,7 @@ export function TopBar({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -3 }}
               transition={{ duration: 0.12, ease: MOTION_EASE }}
-              className="inline-flex items-center gap-1.5"
+              className="inline-flex items-center gap-1.5 whitespace-nowrap"
             >
               <ThemeIcon className="h-3.5 w-3.5 shrink-0" />
               <span className="whitespace-nowrap">{THEME_LABELS[themeMode]}</span>
@@ -142,7 +154,7 @@ export function TopBar({
           whileTap={{ scale: 0.97 }}
           disabled={isBusyAction}
           onClick={onQuickAction}
-          className="inline-flex h-[32px] min-w-[126px] cursor-pointer items-center justify-center gap-1.5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3.5 text-[12.5px] font-medium text-[var(--text-muted)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex h-[32px] min-w-[132px] shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3 text-[12.5px] font-medium whitespace-nowrap text-[var(--text-muted)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
         >
           <AnimatePresence mode="wait" initial={false}>
             {isStatusPage ? (
@@ -152,10 +164,10 @@ export function TopBar({
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -3 }}
                 transition={{ duration: 0.12, ease: MOTION_EASE }}
-                className="inline-flex items-center gap-1.5"
+                className="inline-flex items-center gap-1.5 whitespace-nowrap"
               >
                 <RefreshCw className={`h-3.5 w-3.5 shrink-0 ${isBusyAction ? "animate-spin" : ""}`} />
-                <span>刷新状态</span>
+                <span className="whitespace-nowrap">刷新状态</span>
               </motion.span>
             ) : (
               <motion.span
@@ -164,10 +176,10 @@ export function TopBar({
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -3 }}
                 transition={{ duration: 0.12, ease: MOTION_EASE }}
-                className="inline-flex items-center gap-1.5"
+                className="inline-flex items-center gap-1.5 whitespace-nowrap"
               >
                 <Rocket className="h-3.5 w-3.5 shrink-0" />
-                <span>唤醒 Antigravity</span>
+                <span className="whitespace-nowrap">唤醒 Antigravity</span>
               </motion.span>
             )}
           </AnimatePresence>

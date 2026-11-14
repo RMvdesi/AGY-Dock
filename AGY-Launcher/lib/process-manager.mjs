@@ -24,7 +24,7 @@ const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_BASE_DIR = path.resolve(__dirname, '..');
 export const DEFAULT_NO_PROXY = '127.0.0.1,localhost,::1';
-export const APP_VERSION = '2.3.1';
+export const APP_VERSION = '2.4.0';
 export const DEFAULT_UPDATE_SITE_URL = 'https://ahmustudyhelper.xyz';
 export const DEFAULT_PRODUCT_SLUG = 'agy-plugin-manager';
 const UPDATE_SEMVER_RE = /^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$/;
@@ -124,17 +124,51 @@ export function classifyAntigravityProcesses(processes) {
   const main = [];
   const sidecar = [];
   const child = [];
+  const list = Array.isArray(processes) ? processes : [];
+  const byPid = new Map();
+  for (const proc of list) {
+    const pid = Number(proc?.ProcessId);
+    if (Number.isInteger(pid)) {
+      byPid.set(pid, proc);
+    }
+  }
 
-  for (const proc of processes || []) {
-    const name = String(proc.Name || '');
+  for (const proc of list) {
+    const name = String(proc?.Name || '');
     if (name.toLowerCase() !== 'antigravity.exe') continue;
     if (isManagedPluginRuntimeProcess(proc)) continue;
     all.push(proc);
-    const cmd = String(proc.CommandLine || '');
-    if (/--type=/i.test(cmd)) {
-      child.push(proc);
-    } else if (/sidecar_sdk|sidecars[\\/]|--import=|mcp_entry/i.test(cmd)) {
+    const cmd = String(proc?.CommandLine || '');
+    const lower = cmd.toLowerCase();
+    const ppid = Number(proc?.ParentProcessId);
+    const parent = Number.isInteger(ppid) ? byPid.get(ppid) : null;
+    const parentName = String(parent?.Name || '').toLowerCase();
+    const parentCmd = String(parent?.CommandLine || '').toLowerCase();
+    const parentIsSidecarHost =
+      parentName === 'language_server.exe' ||
+      (parentName === 'cmd.exe' && parentCmd.includes('agy-node.cmd'));
+
+    const isSidecar =
+      parentIsSidecarHost ||
+      lower.includes('sidecar_sdk') ||
+      lower.includes('register_loader') ||
+      lower.includes('--inspect-port=') ||
+      lower.includes('--import=') ||
+      lower.includes('mcp_entry') ||
+      lower.includes('sidecars\\') ||
+      lower.includes('sidecars/') ||
+      lower.includes('--ms-enable-electron-run-as-node') ||
+      lower.includes('dist/server.') ||
+      lower.includes('dist\\server.') ||
+      lower.includes('main.mjs') ||
+      lower.includes('launch.mjs');
+
+    const isChild = lower.includes('--type=') || !cmd.trim();
+
+    if (isSidecar) {
       sidecar.push(proc);
+    } else if (isChild) {
+      child.push(proc);
     } else {
       main.push(proc);
     }
@@ -144,13 +178,16 @@ export function classifyAntigravityProcesses(processes) {
 }
 
 /**
- * Identifies orphaned Antigravity processes (sidecar/child, language_server, agy-node.cmd wrappers).
+ * Identifies orphaned Antigravity processes (sidecar/child, language_server, agy-node.cmd wrappers, resources/bin helpers).
  */
 export function findAntigravityCleanupTargets(processes, antigravityExe = '', ownPid = process.pid) {
   const allList = Array.isArray(processes) ? processes : [];
   const summary = classifyAntigravityProcesses(allList);
   const installDir = String(antigravityExe || '').trim()
     ? path.dirname(String(antigravityExe).trim()).toLowerCase()
+    : '';
+  const installBinDir = installDir
+    ? `${installDir.replace(/\//g, '\\').replace(/\\+$/, '')}\\resources\\bin\\`
     : '';
 
   const mainPids = summary.main
@@ -159,6 +196,7 @@ export function findAntigravityCleanupTargets(processes, antigravityExe = '', ow
   const sidecarChildPids = [...summary.sidecar, ...summary.child]
     .map((p) => Number(p.ProcessId))
     .filter((pid) => Number.isInteger(pid) && pid !== ownPid);
+  const sidecarChildSet = new Set(sidecarChildPids);
 
   const lsPids = [];
   const cmdWrapperPids = [];
@@ -172,7 +210,9 @@ export function findAntigravityCleanupTargets(processes, antigravityExe = '', ow
     if (
       cmdLower.includes('desktop_app.py') ||
       (cmdLower.includes('agy-launcher') &&
-        (cmdLower.includes('server.mjs') || cmdLower.includes('cli.mjs')))
+        (cmdLower.includes('server.mjs') || cmdLower.includes('cli.mjs'))) ||
+      nameLower.includes('agy plugin manager') ||
+      nameLower.includes('agy-plugin-manager')
     ) {
       continue;
     }
@@ -184,12 +224,18 @@ export function findAntigravityCleanupTargets(processes, antigravityExe = '', ow
         cmdLower.includes('/antigravity/resources/bin/language_server.exe') ||
         cmdLower.includes('--app_data_dir antigravity');
       if (isAgyLs) lsPids.push(pid);
-    } else if (
-      nameLower === 'cmd.exe' &&
-      cmdLower.includes('agy-node.cmd') &&
-      (cmdLower.includes('sidecars') || cmdLower.includes('sidecar_sdk') || cmdLower.includes('antigravity'))
-    ) {
+    } else if (nameLower === 'cmd.exe' && cmdLower.includes('agy-node.cmd')) {
       cmdWrapperPids.push(pid);
+    } else if (installBinDir && nameLower !== 'antigravity.exe') {
+      const normExe = exeLower.replace(/\//g, '\\');
+      const normCmd = cmdLower.replace(/\//g, '\\');
+      if (
+        (normExe.startsWith(installBinDir) || normCmd.includes(installBinDir)) &&
+        !sidecarChildSet.has(pid)
+      ) {
+        sidecarChildSet.add(pid);
+        sidecarChildPids.push(pid);
+      }
     }
   }
 
@@ -1762,11 +1808,10 @@ foreach ($proc in (Get-Process -Id ${pidList} -ErrorAction SilentlyContinue)) {
       };
     }
 
-    const pluginResults = shouldStopPlugins ? await this.stopAllPlugins() : [];
     const killedPids = [];
     const seen = new Set();
 
-    for (let pass = 0; pass < 2; pass += 1) {
+    for (let pass = 0; pass < 3; pass += 1) {
       const procs = await this.listProcesses();
       const targets = findAntigravityCleanupTargets(procs, agyExe);
       if (targets.mainPids.length > 0 && !force) break;
@@ -1789,8 +1834,10 @@ foreach ($proc in (Get-Process -Id ${pidList} -ErrorAction SilentlyContinue)) {
           this.log(`清理残留进程 PID=${pid} 失败: ${err.message}`, 'WARN');
         }
       }
-      await sleep(150);
+      await sleep(200);
     }
+
+    const pluginResults = shouldStopPlugins ? await this.stopAllPlugins() : [];
 
     if (killedPids.length > 0 || pluginResults.length > 0) {
       this.log(`已完成退出清理: 终止残留 AGY 进程 ${killedPids.length} 个`);

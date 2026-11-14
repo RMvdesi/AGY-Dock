@@ -1,16 +1,17 @@
 use crate::config::{get_cached_detected_exe, load_config};
 use crate::detector::{
-    calculate_plugin_memory_bytes, detect_antigravity_exe, find_antigravity_cleanup_targets,
-    get_active_cdp_info, is_managed_plugin_runtime_process, match_plugin_processes,
+    calculate_plugin_memory_bytes, classify_antigravity_processes, detect_antigravity_exe,
+    find_antigravity_cleanup_targets, get_active_cdp_info, match_plugin_processes,
     resolve_process_match_needle, snapshot_processes, ProcessSnapshotItem,
 };
 use crate::models::{
-    AppConfig, CleanupResult, LaunchResult, OverviewSnapshot, PluginActionResult,
-    PluginConfigEntry, PluginRuntimeStatus, APP_VERSION, DEFAULT_NO_PROXY,
+    AppConfig, CleanupResult, DeletePluginResult, LaunchResult, OverviewSnapshot,
+    PluginActionResult, PluginConfigEntry, PluginRuntimeStatus, APP_VERSION, DEFAULT_NO_PROXY,
 };
 use crate::paths::ManagerPaths;
 use crate::plugins::{
-    fetch_health, get_plugin_log_info, resolve_plugin_version,
+    fetch_health, get_plugin_log_info, read_plugin_dir_manifest, resolve_plugin_dir,
+    resolve_plugin_version,
 };
 use chrono::Local;
 use reqwest::Client;
@@ -153,10 +154,18 @@ fn collect_descendant_pids(
     root_pids: &[u32],
     allow_antigravity_main: bool,
 ) -> Vec<u32> {
-    let mut by_pid: HashMap<u32, &ProcessSnapshotItem> = HashMap::with_capacity(processes.len());
+    let main_agy_pids: HashSet<u32> = if allow_antigravity_main {
+        HashSet::new()
+    } else {
+        classify_antigravity_processes(processes)
+            .main
+            .into_iter()
+            .map(|p| p.pid)
+            .collect()
+    };
+
     let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
     for p in processes {
-        by_pid.insert(p.pid, p);
         if let Some(ppid) = p.ppid {
             children_map.entry(ppid).or_default().push(p.pid);
         }
@@ -176,13 +185,8 @@ fn collect_descendant_pids(
         if let Some(children) = children_map.get(&cur) {
             for &child in children {
                 if !seen.contains(&child) {
-                    if let Some(cp) = by_pid.get(&child) {
-                        if cp.name.eq_ignore_ascii_case("antigravity.exe")
-                            && !is_managed_plugin_runtime_process(cp)
-                            && !allow_antigravity_main
-                        {
-                            continue;
-                        }
+                    if !allow_antigravity_main && main_agy_pids.contains(&child) {
+                        continue;
                     }
                     seen.insert(child);
                     queue.push_back(child);
@@ -582,17 +586,42 @@ pub async fn get_overview(paths: &ManagerPaths) -> Result<OverviewSnapshot, Stri
             Err(_) => false,
         };
         let running = !pids.is_empty() || health.is_some();
+        let plugin_dir = resolve_plugin_dir(&paths.base_dir, Some(plugin));
+        let dir_manifest = read_plugin_dir_manifest(plugin_dir.as_deref());
         let version = resolve_plugin_version(
             &paths.base_dir,
             Some(plugin),
             health.as_ref(),
-            None,
+            plugin_dir.as_deref(),
         );
+        let author = plugin
+            .author
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| dir_manifest.author.clone());
+        let homepage = plugin
+            .homepage
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                let h = dir_manifest.homepage.trim();
+                if h.is_empty() {
+                    None
+                } else {
+                    Some(h.to_string())
+                }
+            });
 
         plugins.push(PluginRuntimeStatus {
             id: plugin.id.clone(),
             name: plugin.name.clone(),
             version,
+            author,
+            homepage,
             description: plugin.description.clone(),
             enabled: plugin.enabled,
             auto_attach: plugin.auto_attach,
@@ -927,18 +956,72 @@ pub fn restart_plugin(paths: &ManagerPaths, plugin_id: &str) -> Result<PluginAct
     start_plugin(paths, plugin_id, "attach")
 }
 
-pub fn delete_plugin_entry(paths: &ManagerPaths, plugin_id: &str) -> Result<bool, String> {
+pub fn delete_plugin_entry(
+    paths: &ManagerPaths,
+    plugin_id: &str,
+    delete_files: bool,
+) -> Result<DeletePluginResult, String> {
     let mut cfg = load_config(paths)?;
     let idx = cfg
         .plugins
         .iter()
         .position(|p| p.id == plugin_id)
         .ok_or_else(|| format!("未找到插件: {plugin_id}"))?;
+    let plugin_entry = cfg.plugins[idx].clone();
+    let candidate_dir = crate::plugins::resolve_plugin_dir(&paths.base_dir, Some(&plugin_entry))
+        .or_else(|| {
+            let direct = paths.plugins_dir.join(&plugin_entry.id);
+            if direct.is_dir() {
+                Some(direct)
+            } else {
+                None
+            }
+        });
+
     let _ = stop_plugin(paths, plugin_id);
     cfg.plugins.remove(idx);
     crate::config::save_config(paths, &cfg)?;
     paths.log_info(&format!("已移除托管插件配置: {plugin_id}"));
-    Ok(true)
+
+    let mut files_deleted = false;
+    let mut deleted_dir = None;
+    let mut file_delete_error = None;
+
+    if delete_files {
+        if let Some(dir) = candidate_dir.filter(|d| d.is_dir()) {
+            match crate::plugins::delete_local_plugin_dir_safely(paths, &dir) {
+                Ok(removed) => {
+                    files_deleted = true;
+                    deleted_dir = Some(removed.clone());
+                    paths.log_info(&format!("已同步删除插件本地目录: {removed}"));
+                }
+                Err(err) => {
+                    paths.log_warn(&format!("移除配置成功，但删除插件目录失败 ({plugin_id}): {err}"));
+                    file_delete_error = Some(err);
+                }
+            }
+        }
+    }
+
+    Ok(DeletePluginResult {
+        id: plugin_id.to_string(),
+        deleted: true,
+        files_deleted,
+        deleted_dir,
+        file_delete_error,
+    })
+}
+
+pub fn has_antigravity_cleanup_targets(paths: &ManagerPaths) -> bool {
+    let agy_exe = load_config(paths)
+        .map(|c| c.antigravity_exe)
+        .unwrap_or_default();
+    let procs = snapshot_processes();
+    let targets = find_antigravity_cleanup_targets(&procs, &agy_exe, None);
+    targets.main_pids.is_empty()
+        && (!targets.agy_node_cmd_pids.is_empty()
+            || !targets.language_server_pids.is_empty()
+            || !targets.sidecar_child_pids.is_empty())
 }
 
 pub fn cleanup_antigravity_residuals(
@@ -962,16 +1045,10 @@ pub fn cleanup_antigravity_residuals(
         });
     }
 
-    let plugin_results = if should_stop_plugins {
-        stop_all_plugins(paths)?
-    } else {
-        Vec::new()
-    };
-
     let mut killed_pids: Vec<u32> = Vec::new();
     let mut seen_pids: HashSet<u32> = HashSet::new();
 
-    for _pass in 0..2 {
+    for pass in 0..3 {
         let procs = snapshot_processes();
         let targets = find_antigravity_cleanup_targets(&procs, agy_exe, None);
         if !targets.main_pids.is_empty() && !force {
@@ -991,15 +1068,24 @@ pub fn cleanup_antigravity_residuals(
             seen_pids.insert(pid);
         }
         let pass_killed = terminate_process_tree(&procs, &ordered, force);
-        for pid in pass_killed {
-            if !killed_pids.contains(&pid) {
-                killed_pids.push(pid);
+        for pid in &pass_killed {
+            if !killed_pids.contains(pid) {
+                killed_pids.push(*pid);
             }
         }
-        std::thread::sleep(Duration::from_millis(150));
+        if pass_killed.is_empty() || pass == 2 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
     }
 
-    if !killed_pids.is_empty() || !plugin_results.is_empty() {
+    let plugin_results = if should_stop_plugins {
+        stop_all_plugins(paths)?
+    } else {
+        Vec::new()
+    };
+
+    if !killed_pids.is_empty() || plugin_results.iter().any(|r| r.stopped == Some(true)) {
         paths.log_info(&format!(
             "已完成退出清理: 终止残留 AGY 进程 {} 个 {:?}",
             killed_pids.len(),
@@ -1140,12 +1226,19 @@ pub async fn launch_antigravity_and_attach(
 }
 
 pub fn spawn_detached_exit_watcher(paths: &ManagerPaths) {
+    spawn_detached_exit_watcher_ex(paths, false);
+}
+
+pub fn spawn_detached_exit_watcher_ex(paths: &ManagerPaths, after_gui_exit: bool) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
     let mut cmd = Command::new(exe);
-    cmd.arg("--watch-exit")
-        .current_dir(&paths.data_dir)
+    cmd.arg("--watch-exit");
+    if after_gui_exit {
+        cmd.arg("--after-gui-exit");
+    }
+    cmd.current_dir(&paths.data_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1153,7 +1246,21 @@ pub fn spawn_detached_exit_watcher(paths: &ManagerPaths) {
     let _ = cmd.spawn();
 }
 
-pub fn run_watch_exit(paths: &ManagerPaths) -> i32 {
+pub fn handoff_exit_watcher_if_needed(paths: &ManagerPaths) {
+    let Ok(cfg) = load_config(paths) else {
+        return;
+    };
+    if !cfg.lifecycle.auto_cleanup_on_exit {
+        return;
+    }
+    let info = get_active_cdp_info(paths, None);
+    if info.main_process_count > 0 || has_antigravity_cleanup_targets(paths) {
+        paths.log_info("管理器退出时检测到 Antigravity 仍在运行或存在残留，已移交后台退出监听");
+        spawn_detached_exit_watcher_ex(paths, true);
+    }
+}
+
+pub fn run_watch_exit(paths: &ManagerPaths, after_gui_exit: bool) -> i32 {
     let _ = fs::create_dir_all(&paths.logs_dir);
     let pid_file = &paths.watch_exit_pid;
     if pid_file.is_file() {
@@ -1180,16 +1287,33 @@ pub fn run_watch_exit(paths: &ManagerPaths) -> i32 {
     }
     let _guard = PidFileGuard(pid_file, my_pid);
 
+    let start = Instant::now();
+    let gui_check_allowed =
+        |started: Instant| !after_gui_exit || started.elapsed() >= Duration::from_millis(3500);
+
     let mut saw_main = false;
-    let appear_deadline = Instant::now() + Duration::from_secs(30);
+    let appear_deadline = Instant::now() + Duration::from_secs(45);
     while Instant::now() < appear_deadline {
-        if is_gui_active() {
+        if gui_check_allowed(start) && is_gui_active() {
             return 0;
         }
         let info = get_active_cdp_info(paths, None);
         if info.main_process_count > 0 {
             saw_main = true;
             break;
+        }
+        if after_gui_exit && has_antigravity_cleanup_targets(paths) {
+            std::thread::sleep(Duration::from_millis(1200));
+            let confirm = get_active_cdp_info(paths, None);
+            if confirm.main_process_count == 0 {
+                if let Ok(cfg) = load_config(paths) {
+                    if cfg.lifecycle.auto_cleanup_on_exit {
+                        paths.log_info("后台退出监听检测到 Antigravity 已退出并存在残留，执行自动清理");
+                        let _ = cleanup_antigravity_residuals(paths, None, false);
+                    }
+                }
+                return 0;
+            }
         }
         std::thread::sleep(Duration::from_millis(1500));
     }
@@ -1199,17 +1323,18 @@ pub fn run_watch_exit(paths: &ManagerPaths) -> i32 {
     }
 
     loop {
-        std::thread::sleep(Duration::from_secs(3));
-        if is_gui_active() {
+        std::thread::sleep(Duration::from_millis(2000));
+        if gui_check_allowed(start) && is_gui_active() {
             return 0;
         }
         let info = get_active_cdp_info(paths, None);
         if info.main_process_count == 0 {
-            std::thread::sleep(Duration::from_millis(2500));
+            std::thread::sleep(Duration::from_millis(1200));
             let confirm = get_active_cdp_info(paths, None);
             if confirm.main_process_count == 0 {
                 if let Ok(cfg) = load_config(paths) {
                     if cfg.lifecycle.auto_cleanup_on_exit {
+                        paths.log_info("后台退出监听检测到 Antigravity 已退出，开始自动清理残留进程");
                         let _ = cleanup_antigravity_residuals(paths, None, false);
                     }
                 }

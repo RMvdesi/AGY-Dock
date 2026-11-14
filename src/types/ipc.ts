@@ -26,6 +26,8 @@ export interface PluginConfigEntry {
   id: string;
   name: string;
   version?: string;
+  author?: string;
+  homepage?: string;
   description: string;
   enabled: boolean;
   autoAttach: boolean;
@@ -63,6 +65,8 @@ export interface PluginRuntimeStatus {
   id: string;
   name: string;
   version: string;
+  author: string;
+  homepage?: string | null;
   description: string;
   enabled: boolean;
   autoAttach: boolean;
@@ -126,6 +130,7 @@ export interface LocalPluginPackage {
   displayName: string;
   desc: string;
   version: string;
+  author?: string;
 }
 
 export interface BundledPackageInfo {
@@ -134,16 +139,56 @@ export interface BundledPackageInfo {
   id: string;
   name: string;
   version: string;
+  author?: string;
   description: string;
   type: PluginType;
   installed: boolean;
   installedVersion: string;
 }
 
+export type RemotePluginStatus = "new" | "available" | "update-available" | "installed";
+
+export interface RemotePluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  author: string;
+  description: string;
+  type: PluginType;
+  downloadUrl: string;
+  homepage: string;
+  changelog: string;
+  sha256: string;
+  size: number;
+  publishedAt: string;
+  releaseTag: string;
+  source: "catalog" | "github-release" | string;
+  installed: boolean;
+  installedVersion: string;
+  hasUpdate: boolean;
+  isNew: boolean;
+  status: RemotePluginStatus;
+}
+
+export interface RemoteMarketplaceResult {
+  status: "ok" | "error";
+  source: "catalog" | "github-release" | "none" | string;
+  repository: string;
+  catalogUrl: string;
+  plugins: RemotePluginInfo[];
+  updateCount: number;
+  newPluginCount: number;
+  uninstalledCount: number;
+  message: string;
+  checkedAt: string;
+}
+
 export interface PluginPayload {
   id: string;
   name: string;
   version: string;
+  author?: string;
+  homepage?: string;
   description: string;
   type: PluginType;
   command: string;
@@ -231,6 +276,16 @@ export interface ClearLogResult {
 export interface DeletePluginResult {
   id: string;
   deleted: boolean;
+  filesDeleted?: boolean;
+  deletedDir?: string;
+  fileDeleteError?: string;
+}
+
+export interface DeleteLocalDirResult {
+  dir: string;
+  path: string;
+  deleted: boolean;
+  unregisteredIds: string[];
 }
 
 export interface ShortcutResult {
@@ -348,7 +403,11 @@ export const TAURI_COMMANDS = {
   TOGGLE_PLUGIN: "toggle_plugin",
   SAVE_PLUGIN_ENTRY: "save_plugin_entry",
   DELETE_PLUGIN_ENTRY: "delete_plugin_entry",
+  DELETE_LOCAL_PLUGIN_DIR: "delete_local_plugin_dir",
   INSTALL_PLUGIN_PACKAGE: "install_plugin_package",
+  FETCH_REMOTE_MARKETPLACE: "fetch_remote_marketplace",
+  INSTALL_REMOTE_PLUGIN: "install_remote_plugin",
+  MARK_MARKETPLACE_SEEN: "mark_marketplace_seen",
   DETECT_ANTIGRAVITY: "detect_antigravity",
   SAVE_ANTIGRAVITY_EXE: "save_antigravity_exe",
   DETECT_SYSTEM_PROXY: "detect_system_proxy",
@@ -378,6 +437,7 @@ export const TAURI_EVENTS = {
   OVERVIEW_UPDATED: "overview:updated",
   NATIVE_UPDATED: "native:updated",
   UPDATE_AVAILABLE: "update:available",
+  MARKETPLACE_UPDATED: "marketplace:updated",
   LOG_UPDATED: "log:updated",
   TOAST_MESSAGE: "toast:message",
   STORAGE_SCAN_PROGRESS: "storage:scan-progress",

@@ -282,6 +282,8 @@ pub fn save_plugin_entry(
     };
 
     let version = Some(payload.version.trim().to_string()).filter(|s| !s.is_empty());
+    let author = Some(payload.author.trim().to_string()).filter(|s| !s.is_empty());
+    let homepage = Some(payload.homepage.trim().to_string()).filter(|s| !s.is_empty());
     let health_url = Some(payload.health_url.trim().to_string()).filter(|s| !s.is_empty());
     let process_match = Some(payload.process_match.trim().to_string()).filter(|s| !s.is_empty());
 
@@ -294,6 +296,8 @@ pub fn save_plugin_entry(
             id: plugin_id.clone(),
             name,
             version,
+            author,
+            homepage,
             description: payload.description.trim().to_string(),
             enabled: payload.enabled,
             auto_attach: payload.auto_attach,
@@ -317,6 +321,8 @@ pub fn save_plugin_entry(
             id: plugin_id.clone(),
             name,
             version,
+            author,
+            homepage,
             description: payload.description.trim().to_string(),
             enabled: payload.enabled,
             auto_attach: payload.auto_attach,

@@ -1,11 +1,12 @@
 use crate::config::{
-    load_config, read_text_strip_bom, save_plugin_entry, strip_utf8_bom, valid_log_id_re,
-    valid_plugin_id_re,
+    load_config, read_text_strip_bom, save_config, save_plugin_entry, strip_utf8_bom,
+    valid_log_id_re, valid_plugin_id_re,
 };
 use crate::detector::resolve_process_match_needle;
 use crate::models::{
-    BundledPackageInfo, ClearLogResult, InstallPackageResult, LocalPluginPackage, LogTailResult,
-    NativePluginInfo, NativeSidecar, PluginConfigEntry, PluginLogInfo, PluginPayload,
+    BundledPackageInfo, ClearLogResult, DeleteLocalDirResult, InstallPackageResult,
+    LocalPluginPackage, LogTailResult, NativePluginInfo, NativeSidecar, PluginConfigEntry,
+    PluginLogInfo, PluginPayload,
 };
 use crate::paths::ManagerPaths;
 use crate::supervisor;
@@ -48,6 +49,54 @@ pub fn validate_zip_member_name(raw_name: &str) -> Result<String, String> {
         return Err(format!("检测到路径穿越 (Zip-Slip): {raw_name}"));
     }
     Ok(parts.join("/"))
+}
+
+fn extract_author_value(val: Option<&Value>) -> Option<String> {
+    match val? {
+        Value::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Value::Object(map) => map
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        _ => None,
+    }
+}
+
+fn extract_homepage_value(obj: &serde_json::Map<String, Value>) -> Option<String> {
+    if let Some(hp) = obj
+        .get("homepage")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Some(hp.to_string());
+    }
+    match obj.get("repository")? {
+        Value::String(s) => {
+            let trimmed = s.trim().trim_start_matches("git+").trim_end_matches(".git");
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Value::Object(map) => map
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().trim_start_matches("git+").trim_end_matches(".git"))
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        _ => None,
+    }
 }
 
 pub fn normalize_plugin_package_manifest(manifest: &Value) -> Result<PluginConfigEntry, String> {
@@ -143,6 +192,8 @@ pub fn normalize_plugin_package_manifest(manifest: &Value) -> Result<PluginConfi
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+    let author = extract_author_value(obj.get("author"));
+    let homepage = extract_homepage_value(obj);
     let health_url = obj
         .get("healthUrl")
         .and_then(|v| v.as_str())
@@ -160,6 +211,8 @@ pub fn normalize_plugin_package_manifest(manifest: &Value) -> Result<PluginConfi
         id: plugin_id,
         name,
         version,
+        author,
+        homepage,
         description,
         enabled,
         auto_attach,
@@ -186,6 +239,8 @@ pub struct PluginDirManifest {
     pub name: String,
     pub version: String,
     pub description: String,
+    pub author: String,
+    pub homepage: String,
 }
 
 pub fn read_plugin_dir_manifest(plugin_dir: Option<&Path>) -> PluginDirManifest {
@@ -217,6 +272,16 @@ pub fn read_plugin_dir_manifest(plugin_dir: Option<&Path>) -> PluginDirManifest 
         if out.description.is_empty() {
             if let Some(d) = obj.get("description").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
                 out.description = d.to_string();
+            }
+        }
+        if out.author.is_empty() {
+            if let Some(a) = extract_author_value(obj.get("author")) {
+                out.author = a;
+            }
+        }
+        if out.homepage.is_empty() {
+            if let Some(h) = extract_homepage_value(&obj) {
+                out.homepage = h;
             }
         }
     }
@@ -508,10 +573,21 @@ pub fn install_plugin_package(
     }
     extract_res?;
 
+    let dir_manifest = read_plugin_dir_manifest(Some(&dest_dir));
     let payload = PluginPayload {
         id: entry.id.clone(),
         name: entry.name.clone(),
         version: entry.version.clone().unwrap_or_default(),
+        author: entry
+            .author
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| dir_manifest.author.clone()),
+        homepage: entry
+            .homepage
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| dir_manifest.homepage.clone()),
         description: entry.description.clone(),
         plugin_type: entry.plugin_type.clone(),
         command: entry.command.clone(),
@@ -595,6 +671,7 @@ pub fn list_bundled_packages(paths: &ManagerPaths) -> Vec<BundledPackageInfo> {
             id: manifest.id,
             name: manifest.name,
             version: manifest.version.unwrap_or_default(),
+            author: manifest.author.unwrap_or_default(),
             description: manifest.description,
             plugin_type: manifest.plugin_type,
             installed,
@@ -656,6 +733,17 @@ pub fn discover_local_plugins(
         });
 
         let version = resolve_plugin_version(&paths.base_dir, linked, None, Some(&entry));
+        let manifest_author = manifest.author.clone();
+        let author = if let Some(lnk) = linked {
+            lnk.author
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .unwrap_or(manifest_author)
+        } else {
+            manifest_author
+        };
         let (installed_id, display_name, desc) = if let Some(lnk) = linked {
             let dname = if !lnk.name.trim().is_empty() {
                 lnk.name.clone()
@@ -693,6 +781,7 @@ pub fn discover_local_plugins(
             display_name,
             desc,
             version,
+            author,
         });
     }
     items
@@ -893,6 +982,110 @@ pub fn clear_log(paths: &ManagerPaths, log_id: &str) -> Result<ClearLogResult, S
     })
 }
 
+fn clean_canonical_display(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+        if !stripped.starts_with(r"UNC\") {
+            return stripped.to_string();
+        }
+    }
+    raw.into_owned()
+}
+
+pub fn delete_local_plugin_dir_safely(
+    paths: &ManagerPaths,
+    target_dir: &Path,
+) -> Result<String, String> {
+    if !paths.plugins_dir.is_dir() {
+        return Err("plugins 目录不存在".to_string());
+    }
+    let root = fs::canonicalize(&paths.plugins_dir)
+        .map_err(|e| format!("解析 plugins 目录失败: {e}"))?;
+    if !target_dir.exists() || !target_dir.is_dir() {
+        return Err(format!("目标插件目录不存在: {}", target_dir.display()));
+    }
+    let cand = fs::canonicalize(target_dir)
+        .map_err(|e| format!("解析目标插件目录失败: {e}"))?;
+    if cand == root || cand.parent() != Some(root.as_path()) {
+        return Err("安全限制：仅允许删除 plugins 目录下的直接子目录".to_string());
+    }
+    fs::remove_dir_all(&cand).map_err(|e| format!("删除插件目录失败（文件可能正被占用）: {e}"))?;
+    Ok(clean_canonical_display(&cand))
+}
+
+pub fn delete_local_plugin_dir(
+    paths: &ManagerPaths,
+    dir_name: &str,
+) -> Result<DeleteLocalDirResult, String> {
+    let clean_name = dir_name.trim();
+    if clean_name.is_empty()
+        || clean_name == "."
+        || clean_name == ".."
+        || clean_name.starts_with('.')
+        || clean_name.contains('/')
+        || clean_name.contains('\\')
+        || clean_name.contains("..")
+        || clean_name.contains(':')
+        || clean_name.contains('\0')
+    {
+        return Err("非法的本地插件目录名".to_string());
+    }
+
+    if !paths.plugins_dir.is_dir() {
+        return Err("plugins 目录不存在".to_string());
+    }
+    let root = fs::canonicalize(&paths.plugins_dir)
+        .map_err(|e| format!("解析 plugins 目录失败: {e}"))?;
+    let target_dir = paths.plugins_dir.join(clean_name);
+    if !target_dir.exists() || !target_dir.is_dir() {
+        return Err(format!("本地插件目录不存在: {clean_name}"));
+    }
+    let target_canon = fs::canonicalize(&target_dir)
+        .map_err(|e| format!("解析本地插件目录失败: {e}"))?;
+    if target_canon == root || target_canon.parent() != Some(root.as_path()) {
+        return Err("安全限制：仅允许删除 plugins 目录下的直接子目录".to_string());
+    }
+
+    let mut cfg = load_config(paths)?;
+    let mut unregistered_ids = Vec::new();
+    let mut keep_plugins = Vec::with_capacity(cfg.plugins.len());
+
+    for p in cfg.plugins {
+        let dir_matches = resolve_plugin_dir(&paths.base_dir, Some(&p))
+            .and_then(|d| fs::canonicalize(d).ok())
+            .map(|c| c == target_canon)
+            .unwrap_or(false);
+        let id_matches = p.id.eq_ignore_ascii_case(clean_name);
+        if dir_matches || id_matches {
+            unregistered_ids.push(p.id.clone());
+        } else {
+            keep_plugins.push(p);
+        }
+    }
+
+    for pid in &unregistered_ids {
+        let _ = supervisor::stop_plugin(paths, pid);
+    }
+
+    if !unregistered_ids.is_empty() {
+        cfg.plugins = keep_plugins;
+        save_config(paths, &cfg)?;
+    }
+
+    let deleted_path = delete_local_plugin_dir_safely(paths, &target_dir)?;
+    paths.log_info(&format!(
+        "已删除本地插件目录: {deleted_path} (注销插件: {:?})",
+        unregistered_ids
+    ));
+
+    Ok(DeleteLocalDirResult {
+        dir: clean_name.to_string(),
+        path: deleted_path,
+        deleted: true,
+        unregistered_ids,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -943,5 +1136,106 @@ mod tests {
             "launchArgs": ["--daemon"]
         });
         assert!(normalize_plugin_package_manifest(&unsafe_runtime).is_err());
+    }
+
+    #[test]
+    fn manifest_and_dir_parse_author_and_homepage() {
+        let pkg = json!({
+            "schemaVersion": 1,
+            "id": "demo-author",
+            "name": "Demo Author",
+            "version": "1.2.3",
+            "author": { "name": "HaoAn" },
+            "repository": { "url": "git+https://github.com/haoan33/demo.git" },
+            "command": "node",
+            "launchArgs": ["plugins\\demo-author\\index.js"]
+        });
+        let entry = normalize_plugin_package_manifest(&pkg).unwrap();
+        assert_eq!(entry.author.as_deref(), Some("HaoAn"));
+        assert_eq!(entry.homepage.as_deref(), Some("https://github.com/haoan33/demo"));
+
+        let tmp = std::env::temp_dir().join(format!("agy-dir-manifest-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        fs::write(
+            tmp.join("package.json"),
+            r#"{"name":"Demo","version":"2.0.0","author":{"name":"HaoAn"},"homepage":"https://example.com"}"#,
+        )
+        .unwrap();
+        let dm = read_plugin_dir_manifest(Some(&tmp));
+        assert_eq!(dm.author, "HaoAn");
+        assert_eq!(dm.homepage, "https://example.com");
+
+        fs::write(
+            tmp.join("package.json"),
+            r#"{"name":"Demo","version":"2.0.0","author":"StringAuthor"}"#,
+        )
+        .unwrap();
+        let dm2 = read_plugin_dir_manifest(Some(&tmp));
+        assert_eq!(dm2.author, "StringAuthor");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn delete_local_plugin_dir_rejects_traversal_and_cleans_linked_config() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("agy-del-dir-test-{}-{nanos}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("plugins").join("demo-local")).unwrap();
+        fs::create_dir_all(root.join("plugins").join("keep-other")).unwrap();
+        fs::create_dir_all(root.join("plugins").join(".hidden-dir")).unwrap();
+        fs::create_dir_all(root.join("logs")).unwrap();
+        fs::write(root.join("plugins").join("demo-local").join("index.js"), b"console.log(1);").unwrap();
+
+        let paths = ManagerPaths::from_runtime_dirs(crate::paths::RuntimeDirs {
+            data_dir: root.clone(),
+            assets_dir: root.clone(),
+            is_portable: true,
+        });
+        let mut cfg = crate::models::AppConfig::default();
+        cfg.antigravity_exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        cfg.plugins.push(PluginConfigEntry {
+            id: "demo-local".to_string(),
+            name: "Demo Local".to_string(),
+            version: Some("1.0.0".to_string()),
+            author: Some("HaoAn".to_string()),
+            homepage: None,
+            description: String::new(),
+            enabled: true,
+            auto_attach: true,
+            plugin_type: "node-cdp".to_string(),
+            command: "node".to_string(),
+            launch_args: vec![r"plugins\demo-local\index.js".to_string()],
+            attach_args: vec![],
+            stop_args: vec![],
+            health_url: None,
+            process_match: None,
+            env: None,
+            extra: HashMap::new(),
+        });
+        save_config(&paths, &cfg).unwrap();
+
+        for bad in ["", ".", "..", "../escape", "a/b", r"a\b", "C:foo", ".hidden-dir", "nonexistent"] {
+            assert!(delete_local_plugin_dir(&paths, bad).is_err(), "should reject {bad:?}");
+        }
+        assert!(delete_local_plugin_dir_safely(&paths, &paths.plugins_dir).is_err());
+        assert!(delete_local_plugin_dir_safely(&paths, &root).is_err());
+
+        let res = delete_local_plugin_dir(&paths, "demo-local").unwrap();
+        assert!(res.deleted);
+        assert_eq!(res.dir, "demo-local");
+        assert_eq!(res.unregistered_ids, vec!["demo-local".to_string()]);
+        assert!(!root.join("plugins").join("demo-local").exists());
+        assert!(root.join("plugins").join("keep-other").is_dir());
+
+        let reloaded = load_config(&paths).unwrap();
+        assert!(reloaded.plugins.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

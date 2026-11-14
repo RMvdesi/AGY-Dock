@@ -1,10 +1,22 @@
-import { ArrowLeft, Pencil, Play, RotateCw, ScrollText, Square, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Download,
+  ExternalLink,
+  Pencil,
+  Play,
+  RotateCw,
+  ScrollText,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { PluginMonogram } from "../components/BrandMark";
 import { formatBytes, formatVersionText } from "../lib/format";
-import type { PluginRuntimeStatus } from "../types/ipc";
+import type { PluginRuntimeStatus, RemotePluginInfo } from "../types/ipc";
 
 interface ExternalPluginDetailPageProps {
   plugin: PluginRuntimeStatus;
+  remoteUpdate?: RemotePluginInfo | null;
+  updatingRemote?: boolean;
   isDark: boolean;
   busy?: boolean;
   onBack: () => void;
@@ -12,10 +24,14 @@ interface ExternalPluginDetailPageProps {
   onDelete: (pluginId: string) => void;
   onAction: (pluginId: string, action: "start" | "stop" | "restart") => void;
   onOpenLog: (pluginId: string) => void;
+  onUpdateRemote?: (pkg: RemotePluginInfo) => void;
+  onOpenUrl?: (url: string) => void;
 }
 
 export function ExternalPluginDetailPage({
   plugin,
+  remoteUpdate = null,
+  updatingRemote = false,
   isDark,
   busy = false,
   onBack,
@@ -23,6 +39,8 @@ export function ExternalPluginDetailPage({
   onDelete,
   onAction,
   onOpenLog,
+  onUpdateRemote,
+  onOpenUrl,
 }: ExternalPluginDetailPageProps) {
   const pids = plugin.pids ?? [];
   const memBytes = plugin.memoryBytes || 0;
@@ -144,13 +162,37 @@ export function ExternalPluginDetailPage({
             <ScrollText className="h-3.5 w-3.5" />
             <span>实时日志</span>
           </button>
+          {remoteUpdate && onUpdateRemote && (
+            <button
+              type="button"
+              disabled={busy || updatingRemote}
+              onClick={() => onUpdateRemote(remoteUpdate)}
+              className="agy-btn-primary"
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span>
+                {updatingRemote
+                  ? "更新中..."
+                  : `更新到 ${formatVersionText(remoteUpdate.version)}`}
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Spec Grid */}
         <div className="agy-inset space-y-3 p-5">
           <SpecRow label="插件 ID" value={plugin.id} mono />
+          <SpecRow label="作者" value={plugin.author?.trim() || "未填写"} />
           <SpecRow label="当前版本" value={formatVersionText(plugin.version)} mono />
           <SpecRow label="运行类型" value={plugin.type || "custom-cdp"} mono />
+          {plugin.homepage?.trim() && (
+            <SpecRow
+              label="项目主页"
+              value={plugin.homepage.trim()}
+              mono
+              onClick={onOpenUrl ? () => onOpenUrl(plugin.homepage!.trim()) : undefined}
+            />
+          )}
           <SpecRow
             label="命令状态"
             value={plugin.executableExists !== false ? "可执行" : "未找到可执行文件"}
@@ -168,24 +210,39 @@ function SpecRow({
   value,
   mono = false,
   selectAll = false,
+  onClick,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   selectAll?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <div className="grid grid-cols-[96px_1fr] items-start gap-4 text-[13px]">
       <span className="font-medium text-[var(--text-muted)]">{label}</span>
-      <span
-        className={`min-w-0 break-all ${
-          mono
-            ? "font-mono-code text-[12px] text-[var(--text-primary)]"
-            : "text-[var(--text-muted)]"
-        } ${selectAll ? "select-text" : ""}`}
-      >
-        {value}
-      </span>
+      {onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          className={`inline-flex min-w-0 cursor-pointer items-center gap-1.5 text-left break-all text-[var(--link)] hover:underline ${
+            mono ? "font-mono-code text-[12px]" : ""
+          }`}
+        >
+          <span className="min-w-0 break-all">{value}</span>
+          <ExternalLink className="h-3 w-3 shrink-0" />
+        </button>
+      ) : (
+        <span
+          className={`min-w-0 break-all ${
+            mono
+              ? "font-mono-code text-[12px] text-[var(--text-primary)]"
+              : "text-[var(--text-muted)]"
+          } ${selectAll ? "select-text" : ""}`}
+        >
+          {value}
+        </span>
+      )}
     </div>
   );
 }

@@ -6,6 +6,7 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_NO_PROXY: &str = "127.0.0.1,localhost,::1";
 pub const DEFAULT_UPDATE_SITE_URL: &str = "https://ahmustudyhelper.xyz";
 pub const DEFAULT_PRODUCT_SLUG: &str = "agy-plugin-manager";
+pub const DEFAULT_MARKETPLACE_REPO: &str = "haoan33/AGY-Plugin-Manager";
 
 fn default_manager_port() -> u16 {
     12400
@@ -114,6 +115,19 @@ pub struct UpdateConfig {
     pub auto_check_on_startup: Option<bool>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketplaceConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_check_on_startup: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seen_plugin_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginConfigEntry {
@@ -122,6 +136,10 @@ pub struct PluginConfigEntry {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
     #[serde(default)]
     pub description: String,
     #[serde(default = "default_true")]
@@ -170,6 +188,8 @@ pub struct AppConfig {
     pub ui: UiPreferences,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update: Option<UpdateConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marketplace: Option<MarketplaceConfig>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
 }
@@ -187,6 +207,7 @@ impl Default for AppConfig {
             plugins: Vec::new(),
             ui: UiPreferences::default(),
             update: None,
+            marketplace: None,
             extra: HashMap::new(),
         }
     }
@@ -222,6 +243,9 @@ pub struct PluginRuntimeStatus {
     pub id: String,
     pub name: String,
     pub version: String,
+    pub author: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
     pub description: String,
     pub enabled: bool,
     pub auto_attach: bool,
@@ -294,6 +318,7 @@ pub struct LocalPluginPackage {
     pub display_name: String,
     pub desc: String,
     pub version: String,
+    pub author: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -304,6 +329,7 @@ pub struct BundledPackageInfo {
     pub id: String,
     pub name: String,
     pub version: String,
+    pub author: String,
     pub description: String,
     #[serde(rename = "type")]
     pub plugin_type: String,
@@ -319,6 +345,10 @@ pub struct PluginPayload {
     pub name: String,
     #[serde(default)]
     pub version: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub homepage: String,
     #[serde(default)]
     pub description: String,
     #[serde(rename = "type", default = "default_plugin_type")]
@@ -346,6 +376,46 @@ pub struct InstallPackageResult {
     pub plugin: PluginConfigEntry,
     pub installed_dir: String,
     pub replaced: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePluginInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub author: String,
+    pub description: String,
+    #[serde(rename = "type")]
+    pub plugin_type: String,
+    pub download_url: String,
+    pub homepage: String,
+    pub changelog: String,
+    pub sha256: String,
+    pub size: u64,
+    pub published_at: String,
+    pub release_tag: String,
+    pub source: String,
+    pub installed: bool,
+    pub installed_version: String,
+    pub has_update: bool,
+    pub is_new: bool,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteMarketplaceResult {
+    pub status: String,
+    pub source: String,
+    pub repository: String,
+    pub catalog_url: String,
+    pub plugins: Vec<RemotePluginInfo>,
+    pub update_count: usize,
+    pub new_plugin_count: usize,
+    pub uninstalled_count: usize,
+    pub message: String,
+    pub checked_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -449,6 +519,21 @@ pub struct ClearLogResult {
 pub struct DeletePluginResult {
     pub id: String,
     pub deleted: bool,
+    #[serde(default)]
+    pub files_deleted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_delete_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteLocalDirResult {
+    pub dir: String,
+    pub path: String,
+    pub deleted: bool,
+    pub unregistered_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

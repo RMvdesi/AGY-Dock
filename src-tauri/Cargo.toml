@@ -1,6 +1,6 @@
 [package]
 name = "agy-plugin-manager"
-version = "2.3.1"
+version = "2.4.0"
 description = "AGY Plugin Manager — Antigravity launcher, CDP process supervisor, and external plugin studio"
 authors = ["HaoAn"]
 edition = "2021"
@@ -25,6 +25,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 chrono = "0.4"
 regex = "1"
 semver = "1"
+sha2 = "0.10"
 url = "2"
 rfd = "0.15"
 open = "5"

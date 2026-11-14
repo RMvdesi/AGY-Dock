@@ -30,6 +30,7 @@ export function PluginEditorModal({
   const [id, setId] = useState("");
   const [name, setName] = useState("");
   const [version, setVersion] = useState("");
+  const [author, setAuthor] = useState("");
   const [description, setDescription] = useState("");
   const [type, setType] = useState<PluginType>("custom-cdp");
   const [command, setCommand] = useState("");
@@ -47,6 +48,7 @@ export function PluginEditorModal({
     setId(plugin?.id ?? "");
     setName(plugin?.name ?? "");
     setVersion(plugin?.version ?? "");
+    setAuthor(plugin?.author ?? "");
     setDescription(plugin?.description ?? "");
     setType(plugin?.type || "custom-cdp");
     setCommand(plugin?.command ?? "");
@@ -86,6 +88,8 @@ export function PluginEditorModal({
       id: cleanId,
       name: name.trim() || cleanId,
       version: version.trim(),
+      author: author.trim(),
+      homepage: (plugin?.homepage ?? "").trim(),
       description: description.trim(),
       type,
       command: cleanCmd,
@@ -163,7 +167,7 @@ export function PluginEditorModal({
                   />
                 </FormRow>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   <FormRow label="版本号" compact>
                     <input
                       type="text"
@@ -171,6 +175,15 @@ export function PluginEditorModal({
                       onChange={(e) => setVersion(e.target.value)}
                       placeholder="可选，如 1.0.1"
                       className="agy-input w-full font-mono-code"
+                    />
+                  </FormRow>
+                  <FormRow label="作者" compact>
+                    <input
+                      type="text"
+                      value={author}
+                      onChange={(e) => setAuthor(e.target.value)}
+                      placeholder="可选，如 HaoAn"
+                      className="agy-input w-full"
                     />
                   </FormRow>
                   <FormRow label="运行类型" compact>
