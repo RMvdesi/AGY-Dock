@@ -1,0 +1,610 @@
+use crate::config;
+use crate::detector;
+use crate::events;
+use crate::models::{
+    AntigravityDetectResult, AutoProxyResult, BundledPackageInfo, CleanupResult, ClearLogResult,
+    DeletePluginResult, FileFilterSpec, InstallPackageResult, LaunchResult, LifecycleConfig,
+    LocalPluginPackage, LogTailResult, NativePluginInfo, OverviewSnapshot, PluginActionResult,
+    PluginConfigEntry, PluginPayload, ProxyConfig, SaveExeResult, ShortcutResult,
+    StorageDeleteResult, StorageTreeResponse, SystemProxyDetection, UiPreferences,
+    UpdateCheckResult,
+};
+use crate::paths::ManagerPaths;
+use crate::plugins;
+use crate::shortcuts;
+use crate::storage::{self, StorageScanSnapshot};
+use crate::supervisor;
+use crate::tray::{apply_dwm_titlebar_theme, resolve_theme_is_dark};
+use crate::updater;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tokio::sync::Mutex;
+use url::Url;
+
+pub struct AppState {
+    pub paths: ManagerPaths,
+    pub force_quit: AtomicBool,
+    pub storage_cache: Mutex<Option<StorageScanSnapshot>>,
+}
+
+async fn emit_overview_bg(app: &AppHandle, paths: &ManagerPaths) {
+    if let Ok(ov) = supervisor::get_overview(paths).await {
+        let _ = app.emit(events::OVERVIEW_UPDATED, &ov);
+    }
+}
+
+#[tauri::command]
+pub async fn get_overview(state: State<'_, AppState>) -> Result<OverviewSnapshot, String> {
+    supervisor::get_overview(&state.paths).await
+}
+
+#[tauri::command]
+pub async fn list_native_plugins(
+    state: State<'_, AppState>,
+) -> Result<Vec<NativePluginInfo>, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || plugins::list_native_plugins(&paths))
+        .await
+        .map_err(|e| format!("读取原生扩展失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn discover_local_plugins(
+    state: State<'_, AppState>,
+) -> Result<Vec<LocalPluginPackage>, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || plugins::discover_local_plugins(&paths, None))
+        .await
+        .map_err(|e| format!("扫描本地插件目录失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn list_bundled_packages(
+    state: State<'_, AppState>,
+) -> Result<Vec<BundledPackageInfo>, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || plugins::list_bundled_packages(&paths))
+        .await
+        .map_err(|e| format!("扫描内置插件包失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn launch_antigravity_and_attach(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    focus_if_running: Option<bool>,
+) -> Result<LaunchResult, String> {
+    let res = supervisor::launch_antigravity_and_attach(
+        &state.paths,
+        focus_if_running.unwrap_or(false),
+    )
+    .await?;
+    let _ = app.emit(events::OVERVIEW_UPDATED, &res.overview);
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn attach_enabled_plugins(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mode: Option<String>,
+) -> Result<Vec<PluginActionResult>, String> {
+    let paths = state.paths.clone();
+    let mode_str = mode.unwrap_or_else(|| "attach".to_string());
+    let res = tokio::task::spawn_blocking(move || {
+        supervisor::attach_enabled_plugins(&paths, &mode_str)
+    })
+    .await
+    .map_err(|e| format!("附着插件任务失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn start_plugin(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_id: String,
+    mode: Option<String>,
+) -> Result<PluginActionResult, String> {
+    let paths = state.paths.clone();
+    let mode_str = mode.unwrap_or_else(|| "attach".to_string());
+    let res =
+        tokio::task::spawn_blocking(move || supervisor::start_plugin(&paths, &plugin_id, &mode_str))
+            .await
+            .map_err(|e| format!("启动插件任务失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn stop_plugin(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_id: String,
+) -> Result<PluginActionResult, String> {
+    let paths = state.paths.clone();
+    let res = tokio::task::spawn_blocking(move || supervisor::stop_plugin(&paths, &plugin_id))
+        .await
+        .map_err(|e| format!("停止插件任务失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn restart_plugin(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_id: String,
+) -> Result<PluginActionResult, String> {
+    let paths = state.paths.clone();
+    let res = tokio::task::spawn_blocking(move || supervisor::restart_plugin(&paths, &plugin_id))
+        .await
+        .map_err(|e| format!("重启插件任务失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn stop_all_plugins(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<PluginActionResult>, String> {
+    let paths = state.paths.clone();
+    let res = tokio::task::spawn_blocking(move || supervisor::stop_all_plugins(&paths))
+        .await
+        .map_err(|e| format!("停止全部插件失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn toggle_plugin(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_id: String,
+    enabled: Option<bool>,
+) -> Result<PluginConfigEntry, String> {
+    let paths = state.paths.clone();
+    let res = tokio::task::spawn_blocking(move || config::toggle_plugin(&paths, &plugin_id, enabled))
+        .await
+        .map_err(|e| format!("切换插件开关失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn save_plugin_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mode: String,
+    payload: PluginPayload,
+) -> Result<PluginConfigEntry, String> {
+    let paths = state.paths.clone();
+    let res =
+        tokio::task::spawn_blocking(move || config::save_plugin_entry(&paths, &mode, payload))
+            .await
+            .map_err(|e| format!("保存插件配置失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn delete_plugin_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_id: String,
+) -> Result<DeletePluginResult, String> {
+    let paths = state.paths.clone();
+    let id_ret = plugin_id.clone();
+    let deleted =
+        tokio::task::spawn_blocking(move || supervisor::delete_plugin_entry(&paths, &plugin_id))
+            .await
+            .map_err(|e| format!("删除插件失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(DeletePluginResult {
+        id: id_ret,
+        deleted,
+    })
+}
+
+#[tauri::command]
+pub async fn install_plugin_package(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    package_path: String,
+    overwrite: Option<bool>,
+) -> Result<InstallPackageResult, String> {
+    let paths = state.paths.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        plugins::install_plugin_package(&paths, &package_path, overwrite.unwrap_or(true))
+    })
+    .await
+    .map_err(|e| format!("安装插件包失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn detect_antigravity() -> Result<AntigravityDetectResult, String> {
+    tokio::task::spawn_blocking(|| detector::detect_antigravity_exe(None))
+        .await
+        .map_err(|e| format!("检测 Antigravity 失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn save_antigravity_exe(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    exe_path: String,
+) -> Result<SaveExeResult, String> {
+    let paths = state.paths.clone();
+    let (saved_path, exists) =
+        tokio::task::spawn_blocking(move || config::save_antigravity_exe(&paths, &exe_path))
+            .await
+            .map_err(|e| format!("保存客户端路径失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(SaveExeResult {
+        antigravity_exe: saved_path,
+        exists,
+    })
+}
+
+#[tauri::command]
+pub async fn detect_system_proxy() -> Result<SystemProxyDetection, String> {
+    Ok(detector::detect_system_proxy().await)
+}
+
+#[tauri::command]
+pub async fn auto_detect_and_save_proxy(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AutoProxyResult, String> {
+    let detection = detector::detect_system_proxy().await;
+    if detection.detected {
+        let proxy_input = ProxyConfig {
+            enabled: true,
+            http_proxy: detection.http_proxy.clone(),
+            https_proxy: detection.https_proxy.clone(),
+            all_proxy: detection.all_proxy.clone(),
+            no_proxy: if detection.no_proxy.trim().is_empty() {
+                crate::models::DEFAULT_NO_PROXY.to_string()
+            } else {
+                detection.no_proxy.clone()
+            },
+            electron_proxy_server: detection.electron_proxy_server.clone(),
+        };
+        let paths = state.paths.clone();
+        let saved_proxy =
+            tokio::task::spawn_blocking(move || config::save_proxy_config(&paths, proxy_input))
+                .await
+                .map_err(|e| format!("保存代理配置失败: {e}"))??;
+        emit_overview_bg(&app, &state.paths).await;
+        return Ok(AutoProxyResult {
+            detected: true,
+            saved: true,
+            detection,
+            proxy: saved_proxy,
+        });
+    }
+
+    let cfg = config::load_config(&state.paths).unwrap_or_default();
+    Ok(AutoProxyResult {
+        detected: false,
+        saved: false,
+        detection,
+        proxy: cfg.proxy,
+    })
+}
+
+#[tauri::command]
+pub async fn save_proxy_config(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    proxy: ProxyConfig,
+) -> Result<ProxyConfig, String> {
+    let paths = state.paths.clone();
+    let saved = tokio::task::spawn_blocking(move || config::save_proxy_config(&paths, proxy))
+        .await
+        .map_err(|e| format!("保存代理配置失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn save_lifecycle_config(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    lifecycle: LifecycleConfig,
+) -> Result<LifecycleConfig, String> {
+    let paths = state.paths.clone();
+    let saved =
+        tokio::task::spawn_blocking(move || config::save_lifecycle_config(&paths, lifecycle))
+            .await
+            .map_err(|e| format!("保存生命周期配置失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn save_ui_preferences(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    theme: Option<String>,
+    minimize_to_tray: Option<bool>,
+) -> Result<UiPreferences, String> {
+    let paths = state.paths.clone();
+    let saved = tokio::task::spawn_blocking(move || {
+        config::save_ui_preferences(&paths, theme, minimize_to_tray)
+    })
+    .await
+    .map_err(|e| format!("保存界面偏好失败: {e}"))??;
+    let is_dark = resolve_theme_is_dark(&saved.theme);
+    apply_dwm_titlebar_theme(&window, is_dark);
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn read_log_tail(
+    state: State<'_, AppState>,
+    log_id: String,
+    tail_lines: Option<usize>,
+) -> Result<LogTailResult, String> {
+    let paths = state.paths.clone();
+    let lines = tail_lines.unwrap_or(200);
+    tokio::task::spawn_blocking(move || plugins::read_log_tail(&paths, &log_id, lines))
+        .await
+        .map_err(|e| format!("读取日志失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn clear_log(
+    state: State<'_, AppState>,
+    log_id: String,
+) -> Result<ClearLogResult, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || plugins::clear_log(&paths, &log_id))
+        .await
+        .map_err(|e| format!("清空日志失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn cleanup_antigravity_residuals(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CleanupResult, String> {
+    let paths = state.paths.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        supervisor::cleanup_antigravity_residuals(&paths, None, false)
+    })
+    .await
+    .map_err(|e| format!("清理残留进程失败: {e}"))??;
+    emit_overview_bg(&app, &state.paths).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn create_all_shortcuts(state: State<'_, AppState>) -> Result<ShortcutResult, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || shortcuts::create_all_shortcuts(&paths))
+        .await
+        .map_err(|e| format!("创建桌面快捷方式失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn check_for_updates(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    manual: Option<bool>,
+) -> Result<UpdateCheckResult, String> {
+    let _is_manual = manual.unwrap_or(true);
+    let res = updater::check_for_updates(&state.paths, 6.0).await;
+    if res.status == "ok" && res.has_update {
+        let _ = app.emit(events::UPDATE_AVAILABLE, &res);
+    }
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = Url::parse(url.trim()).map_err(|_| "无效的 URL 地址".to_string())?;
+    let scheme = parsed.scheme();
+    if scheme != "https" && scheme != "http" {
+        return Err("仅允许打开 HTTP / HTTPS 外部链接".to_string());
+    }
+    open::that_detached(parsed.as_str()).map_err(|e| format!("打开浏览器失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn open_path_in_explorer(path: String) -> Result<(), String> {
+    let target = PathBuf::from(path.trim());
+    if !target.exists() {
+        return Err(format!("路径不存在: {}", target.display()));
+    }
+    if target.is_file() {
+        #[cfg(windows)]
+        {
+            std::process::Command::new("explorer.exe")
+                .arg(format!("/select,{}", target.display()))
+                .spawn()
+                .map_err(|e| format!("打开资源管理器失败: {e}"))?;
+            return Ok(());
+        }
+    }
+    open::that_detached(&target).map_err(|e| format!("打开目录失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn pick_file(
+    title: Option<String>,
+    default_path: Option<String>,
+    filters: Option<Vec<FileFilterSpec>>,
+) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut dialog = rfd::FileDialog::new();
+        if let Some(t) = title.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            dialog = dialog.set_title(t);
+        }
+        if let Some(dp) = default_path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let p = PathBuf::from(dp);
+            if p.is_dir() {
+                dialog = dialog.set_directory(&p);
+            } else if let Some(parent) = p.parent().filter(|d| d.is_dir()) {
+                dialog = dialog.set_directory(parent);
+            }
+        }
+        if let Some(specs) = filters {
+            for spec in specs {
+                let ext_refs: Vec<&str> = spec.extensions.iter().map(String::as_str).collect();
+                if !ext_refs.is_empty() {
+                    dialog = dialog.add_filter(&spec.name, &ext_refs);
+                }
+            }
+        }
+        dialog
+            .pick_file()
+            .map(|p| p.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| format!("打开文件选择对话框失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn get_system_dark_mode() -> Result<bool, String> {
+    Ok(detector::get_system_dark_mode())
+}
+
+async fn get_or_scan_storage_snapshot(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+) -> Result<StorageScanSnapshot, String> {
+    if let Some(cached) = state.storage_cache.lock().await.clone() {
+        return Ok(cached);
+    }
+    let paths = state.paths.clone();
+    let app_handle = app.clone();
+    let snap = tokio::task::spawn_blocking(move || {
+        storage::scan_agy_storage_with_progress(&paths, |prog| {
+            let _ = app_handle.emit(events::STORAGE_SCAN_PROGRESS, &prog);
+        })
+    })
+    .await
+    .map_err(|e| format!("存储扫描任务失败: {e}"))?;
+    *state.storage_cache.lock().await = Some(snap.clone());
+    Ok(snap)
+}
+
+#[tauri::command]
+pub async fn scan_agy_storage(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    view_mode: String,
+    include_appdata: bool,
+    query: Option<String>,
+) -> Result<StorageTreeResponse, String> {
+    let paths = state.paths.clone();
+    let app_handle = app.clone();
+    let (snap, agy_running) = tokio::task::spawn_blocking(move || {
+        let s = storage::scan_agy_storage_with_progress(&paths, |prog| {
+            let _ = app_handle.emit(events::STORAGE_SCAN_PROGRESS, &prog);
+        });
+        let running = storage::is_antigravity_active_for_storage();
+        (s, running)
+    })
+    .await
+    .map_err(|e| format!("扫描本地存储失败: {e}"))?;
+
+    *state.storage_cache.lock().await = Some(snap.clone());
+    Ok(storage::build_storage_tree_response(
+        &snap,
+        &view_mode,
+        include_appdata,
+        query.as_deref(),
+        agy_running,
+    ))
+}
+
+#[tauri::command]
+pub async fn get_storage_tree(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    view_mode: String,
+    include_appdata: bool,
+    query: Option<String>,
+) -> Result<StorageTreeResponse, String> {
+    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    let agy_running = tokio::task::spawn_blocking(storage::is_antigravity_active_for_storage)
+        .await
+        .unwrap_or(false);
+    Ok(storage::build_storage_tree_response(
+        &snap,
+        &view_mode,
+        include_appdata,
+        query.as_deref(),
+        agy_running,
+    ))
+}
+
+#[tauri::command]
+pub async fn clean_orphan_storage_summaries(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<StorageDeleteResult, String> {
+    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    tokio::task::spawn_blocking(move || storage::clean_orphan_summaries(&snap))
+        .await
+        .map_err(|e| format!("清理失效记录失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn delete_storage_session_files(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_ids: Vec<String>,
+    recycle_bin: bool,
+) -> Result<StorageDeleteResult, String> {
+    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    tokio::task::spawn_blocking(move || {
+        storage::delete_session_files(&snap, &session_ids, recycle_bin)
+    })
+    .await
+    .map_err(|e| format!("清理会话产物失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn delete_storage_sessions(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_ids: Vec<String>,
+    recycle_bin: bool,
+) -> Result<StorageDeleteResult, String> {
+    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    tokio::task::spawn_blocking(move || {
+        storage::delete_sessions(&snap, &session_ids, recycle_bin)
+    })
+    .await
+    .map_err(|e| format!("删除会话失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn delete_storage_items(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    targets: Vec<String>,
+    recycle_bin: bool,
+) -> Result<StorageDeleteResult, String> {
+    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    tokio::task::spawn_blocking(move || {
+        storage::delete_storage_items(&snap, &targets, recycle_bin)
+    })
+    .await
+    .map_err(|e| format!("删除存储条目失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn is_antigravity_running_for_storage() -> Result<bool, String> {
+    tokio::task::spawn_blocking(storage::is_antigravity_active_for_storage)
+        .await
+        .map_err(|e| format!("检测 Antigravity 运行状态失败: {e}"))
+}

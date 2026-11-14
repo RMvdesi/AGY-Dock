@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AGY Plugin Manager",
+  "version": "2.3.1",
+  "identifier": "xyz.ahmustudyhelper.agy-plugin-manager",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AGY Plugin Manager",
+        "width": 1120,
+        "height": 730,
+        "minWidth": 880,
+        "minHeight": 580,
+        "resizable": true,
+        "fullscreen": false,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "resources": {
+      "../AGY-Launcher/plugin-packages/*": "plugin-packages/",
+      "../AGY-Launcher/plugins.example.json": "plugins.example.json"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false,
+        "installerHooks": "nsis/hooks.nsh"
+      }
+    }
+  }
+}

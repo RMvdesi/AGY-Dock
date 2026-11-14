@@ -24,7 +24,7 @@ const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_BASE_DIR = path.resolve(__dirname, '..');
 export const DEFAULT_NO_PROXY = '127.0.0.1,localhost,::1';
-export const APP_VERSION = '2.2.1';
+export const APP_VERSION = '2.3.1';
 export const DEFAULT_UPDATE_SITE_URL = 'https://ahmustudyhelper.xyz';
 export const DEFAULT_PRODUCT_SLUG = 'agy-plugin-manager';
 const UPDATE_SEMVER_RE = /^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$/;
@@ -1324,11 +1324,63 @@ export class AgyProcessManager {
     const installDir = config.antigravityExe ? path.dirname(config.antigravityExe) : '';
     const versionDllExists = installDir ? existsSync(path.join(installDir, 'version.dll')) : false;
 
+    const procByPid = new Map();
+    const childrenMap = new Map();
+    for (const proc of processes || []) {
+      const pid = Number(proc?.ProcessId);
+      if (!Number.isFinite(pid) || pid <= 0) continue;
+      procByPid.set(pid, proc);
+      const ppid = Number(proc?.ParentProcessId);
+      if (Number.isFinite(ppid) && ppid > 0) {
+        if (!childrenMap.has(ppid)) childrenMap.set(ppid, []);
+        childrenMap.get(ppid).push(pid);
+      }
+    }
+
+    const sumTreeMemory = (matchedProcs) => {
+      const treePids = new Set();
+      const queue = [];
+      for (const proc of matchedProcs || []) {
+        const pid = Number(proc?.ProcessId);
+        if (!Number.isFinite(pid) || pid <= 0) continue;
+        if (!procByPid.has(pid)) procByPid.set(pid, proc);
+        if (!treePids.has(pid)) {
+          treePids.add(pid);
+          queue.push(pid);
+        }
+      }
+      while (queue.length > 0) {
+        const cur = queue.shift();
+        for (const childPid of childrenMap.get(cur) || []) {
+          if (treePids.has(childPid)) continue;
+          const childProc = procByPid.get(childPid);
+          if (
+            childProc &&
+            String(childProc.Name || '').toLowerCase() === 'antigravity.exe' &&
+            !isManagedPluginRuntimeProcess(childProc)
+          ) {
+            continue;
+          }
+          treePids.add(childPid);
+          queue.push(childPid);
+        }
+      }
+      let memBytes = 0;
+      for (const pid of treePids) {
+        const ws = Number(procByPid.get(pid)?.WorkingSetSize || 0);
+        if (Number.isFinite(ws) && ws > 0) memBytes += ws;
+      }
+      return { memBytes, treePids };
+    };
+
+    const totalPluginPids = new Set();
     const plugins = await Promise.all(
       config.plugins.map(async (plugin) => {
         const matchedProcs = matchPluginProcesses(processes, plugin);
         const health = await this.fetchHealth(plugin.healthUrl);
         const pids = matchedProcs.map((p) => p.ProcessId);
+        const { memBytes, treePids } = sumTreeMemory(matchedProcs);
+        for (const pid of treePids) totalPluginPids.add(pid);
         const cmdPath = this.resolveCommand(plugin.command);
         const executableExists =
           !cmdPath.includes(path.sep) && !/\.(exe|cmd|bat|ps1)$/i.test(cmdPath)
@@ -1340,12 +1392,19 @@ export class AgyProcessManager {
           version: resolvePluginVersion(this.baseDir, plugin, health),
           running: pids.length > 0 || Boolean(health),
           pids,
+          memoryBytes: memBytes,
           health,
           executableExists,
           logs: this.getPluginLogInfo(plugin.id),
         };
       })
     );
+
+    let totalPluginMemoryBytes = 0;
+    for (const pid of totalPluginPids) {
+      const ws = Number(procByPid.get(pid)?.WorkingSetSize || 0);
+      if (Number.isFinite(ws) && ws > 0) totalPluginMemoryBytes += ws;
+    }
 
     return {
       timestamp: new Date().toISOString(),
@@ -1359,6 +1418,8 @@ export class AgyProcessManager {
       cdp,
       proxy: config.proxy,
       lifecycle: config.lifecycle,
+      totalPluginMemoryBytes,
+      runningPluginProcessCount: totalPluginPids.size,
       plugins,
     };
   }

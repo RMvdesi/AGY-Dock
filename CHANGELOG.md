@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.3.1] - 2026-11-14
+
+### Fixed
+- 修复全站搜索框在 Tailwind v4 未分层样式下左侧放大镜图标与输入文本/占位文字重叠的问题（`@layer base` / `@layer components` 规范化，并抽取统一 `SearchInput` 组件内置安全留白与 `Escape`/一键清空）。
+- 修复「存储管理」右侧详情面板操作按钮换行错位问题，改为对称按钮网格布局。
+- 重设计删除确认弹窗与通用确认弹窗：移除左侧红色竖条，统一圆角卡片、语义图标徽章与高对比度实心确认按钮。
+
+### Changed
+- 完善全站微交互与无障碍动画：支持系统「减少动画」偏好（`<MotionConfig reducedMotion="user">`）、修复导航胶囊与开关滑块/方向性切页过渡，并补齐存储管理视图切换、钻取与列表重排的弹性动画。
+
+## [2.3.0] - 2026-11-14
+
+### Added
+- 整体重构为基于 **Tauri v2（Rust 后端）+ React + TypeScript + Tailwind CSS v4 + Motion** 的原生桌面应用（`AGY Plugin Manager.exe`），统一内聚启动器与插件管理职责（完整支持 `--quick-launch`、`--attach`、`--stop`、`--cleanup`、`--watch-exit`、`--shortcut` 与单实例托盘唤醒）。
+- 新增「存储管理」工作区（SpaceSniffer 交互式方框热图 + 多选排序列表双视图）：支持 `.gemini/*` 与 `%APPDATA%/Antigravity` 存储扫描、`按会话`/`按文件类型`/`按目录结构` 分组、会话 UUID 标题自动解析、Windows 回收站默认安全清理、失效会话记录同步清理（`conversation_summaries.db`、`agyhub_summaries_proto.pb`、`app_storage.json`）及被占用文件非致命保护提示。
+- 新增插件进程树递归内存统计（`memoryBytes` / `totalPluginMemoryBytes`）与状态总览展示，精简顶部品牌区为纯图标对称胶囊导航。
+- 切换 Windows 安装包至 **NSIS `currentUser` 免管理员通用安装包**（`AGY-Plugin-Manager-Setup-v{version}.exe`），并支持 `npm run build:local` 本地免重装热同步覆盖。
+
+### Changed
+- 使用 Rust 原生库（`sysinfo`、`winreg`、Win32 `GetExtendedTcpTable` / `IShellLinkW` / `SHFileOperationW`、`rusqlite`）替代高频 PowerShell / `netstat.exe` 轮询，消除后台进程拉起开销并保持既有 `plugins.json` 与插件包生态 100% 兼容。
+
 ## [2.2.1] - 2026-11-14
 
 ### Fixed

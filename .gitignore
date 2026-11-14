@@ -13,6 +13,9 @@ AGY-Launcher/dist/
 
 # Node / OS / Editor
 node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
 .DS_Store
 Thumbs.db
 *.pid
@@ -31,6 +34,7 @@ AGY-Launcher/.app-profile/
 
 # CI Release staging artifacts
 .release-artifacts/
+dist-release/
 release-downloads/
 .release-original/
 release-notes.md
