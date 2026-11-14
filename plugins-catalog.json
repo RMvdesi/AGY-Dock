@@ -1,49 +1,49 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Plugin-Manager",
-  "updatedAt": "2026-11-14T16:19:00Z",
+  "updatedAt": "2026-11-14T17:08:11Z",
   "plugins": [
     {
       "id": "office-viewer",
       "name": "Antigravity Office Viewer",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "author": "HaoAn",
       "description": "通过 CDP 为 Antigravity 右侧栏提供 Word / Excel / PPT 高清实时预览。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.3.1/office-viewer-v1.1.0.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/office-viewer-v1.1.1.zip",
       "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
-      "changelog": "新增文档自适应视口缩放、Ctrl/Cmd+滚轮以光标为中心放大缩小（25%–300%）及右下角悬浮缩放工具条。",
-      "sha256": "6fcb190586265a38090a07f36361f50b18bcffb1702e9f6f38706f52b33696c0",
-      "size": 2879721,
-      "releaseTag": "v2.3.1"
+      "changelog": "常驻低功耗与稳定性优化：稳态停止周期性拉起 PowerShell，改为浏览器 CDP 长连接事件与 15s 轻量 HTTP 兜底；过滤启动页并缓存非编辑器页面避免重复建连；为静态前端资源增加 ETag 缓存与文件流清理。",
+      "sha256": "5e5bc863430a2fe1ec42b283f997b6b5f9c6a691963d8f62bae692990a40854e",
+      "size": 2879698,
+      "releaseTag": "v2.4.0"
     },
     {
       "id": "antigravity-hans",
       "name": "Antigravity Hans (动态汉化)",
-      "version": "0.5.2",
+      "version": "0.6.0",
       "author": "HaoAn",
       "description": "纯 Node.js CDP 动态注入引擎，实时汉化 Antigravity 界面、Agent 面板与 Swarm 看板（无任何 .exe 二进制，零杀软误报）。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/antigravity-hans-v0.5.2.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/antigravity-hans-v0.6.0.zip",
       "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
-      "changelog": "移除 IDE 内右下角悬浮中英切换按钮及选项菜单，自动清理旧版残留悬浮组件并默认保持中文汉化。",
-      "sha256": "7cf26e5332f198fcb25e9f27ae9d1704031beaa80d5ff35135e2bc54059ba813",
-      "size": 140260,
+      "changelog": "常驻低功耗与稳定性优化：稳态停止周期性拉起 PowerShell，改为浏览器 CDP 长连接事件、15s 轻量 HTTP 兜底与 60s 复检节流；修复探测超时误判自退出并增加 30s 失联宽限期；新增可选 --once 单次注入退出模式。",
+      "sha256": "c74bd932cb5eb84faa4c533f34f09e36d2651766b748e7fd25965bd0888bf860",
+      "size": 142609,
       "releaseTag": "v2.4.0"
     },
     {
       "id": "agy-telemetry",
       "name": "Antigravity Telemetry (会话与上下文监控)",
-      "version": "1.0.4",
+      "version": "1.1.0",
       "author": "HaoAn",
       "description": "在对话右上角极简显示输出速度、缓存命中率与上下文占比，悬停展示完整统计与响应模型。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.2.1/agy-telemetry-v1.0.4.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/agy-telemetry-v1.1.0.zip",
       "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
-      "changelog": "",
-      "sha256": "",
-      "size": 17020,
-      "releaseTag": "v2.2.1"
+      "changelog": "常驻低功耗与稳定性优化：稳态停止周期性拉起 PowerShell，改为浏览器 CDP 长连接事件与 15s 轻量 HTTP 兜底；过滤启动页并缓存非聊天页面避免重复建连；新增可选 --once 单次注入退出模式。",
+      "sha256": "5ae0d443297fc10e7bfb55a7f88e598833f5237d7c9268b0f3fe797c2dce6df9",
+      "size": 18804,
+      "releaseTag": "v2.4.0"
     }
   ]
 }
