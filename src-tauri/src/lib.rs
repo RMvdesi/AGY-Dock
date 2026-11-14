@@ -6,6 +6,7 @@ pub mod models;
 pub mod paths;
 pub mod plugins;
 pub mod shortcuts;
+pub mod storage;
 pub mod supervisor;
 pub mod tray;
 pub mod updater;
@@ -16,6 +17,7 @@ pub mod events {
     pub const UPDATE_AVAILABLE: &str = "update:available";
     pub const LOG_UPDATED: &str = "log:updated";
     pub const TOAST_MESSAGE: &str = "toast:message";
+    pub const STORAGE_SCAN_PROGRESS: &str = "storage:scan-progress";
 }
 
 use crate::commands::AppState;
@@ -24,6 +26,7 @@ use crate::paths::ManagerPaths;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 use tauri::{Emitter, Manager, WindowEvent};
+use tokio::sync::Mutex;
 
 fn spawn_background_monitor(app: tauri::AppHandle, paths: ManagerPaths) {
     tauri::async_runtime::spawn(async move {
@@ -133,6 +136,7 @@ pub fn run() {
             app.manage(AppState {
                 paths: paths.clone(),
                 force_quit: AtomicBool::new(false),
+                storage_cache: Mutex::new(None),
             });
 
             if let Some(win) = app.get_webview_window("main") {
@@ -220,6 +224,13 @@ pub fn run() {
             commands::open_path_in_explorer,
             commands::pick_file,
             commands::get_system_dark_mode,
+            commands::scan_agy_storage,
+            commands::get_storage_tree,
+            commands::clean_orphan_storage_summaries,
+            commands::delete_storage_session_files,
+            commands::delete_storage_sessions,
+            commands::delete_storage_items,
+            commands::is_antigravity_running_for_storage,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AGY Plugin Manager");

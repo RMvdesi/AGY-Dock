@@ -60,7 +60,7 @@ export function ConfirmModal({
               </div>
               <div className="min-w-0 flex-1">
                 <h3 className="text-[15px] font-bold text-[var(--text-primary)]">{title}</h3>
-                <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--text-muted)]">
+                <p className="mt-1.5 whitespace-pre-line text-[13px] leading-relaxed text-[var(--text-muted)]">
                   {description}
                 </p>
               </div>

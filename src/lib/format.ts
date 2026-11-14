@@ -95,3 +95,58 @@ export function basename(filePath: string): string {
   const idx = normalized.lastIndexOf("/");
   return idx >= 0 ? normalized.slice(idx + 1) : normalized;
 }
+
+export function formatCompactBytes(size: number | null | undefined): string {
+  const val = Math.max(0, Number(size) || 0);
+  if (val < 1024) return `${Math.round(val)}B`;
+  if (val < 1024 * 1024) {
+    const kb = val / 1024;
+    return kb >= 100 ? `${kb.toFixed(0)}K` : `${kb.toFixed(1)}K`;
+  }
+  if (val < 1024 * 1024 * 1024) {
+    const mb = val / (1024 * 1024);
+    return mb >= 100 ? `${mb.toFixed(0)}M` : `${mb.toFixed(1)}M`;
+  }
+  const gb = val / (1024 * 1024 * 1024);
+  return gb >= 10 ? `${gb.toFixed(1)}G` : `${gb.toFixed(2)}G`;
+}
+
+export function formatMtime(ts: number | null | undefined): string {
+  const n = Number(ts) || 0;
+  if (n <= 0) return "--";
+  try {
+    const d = new Date(n * 1000);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+  } catch {
+    return "--";
+  }
+}
+
+export function idleAgeDays(mtime: number | null | undefined, nowTs?: number): number | null {
+  const mt = Number(mtime) || 0;
+  if (mt <= 0) return null;
+  const refMs = nowTs !== undefined ? nowTs * 1000 : Date.now();
+  const refDate = new Date(refMs);
+  const itemDate = new Date(mt * 1000);
+  const refDay = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate()).getTime();
+  const itemDay = new Date(itemDate.getFullYear(), itemDate.getMonth(), itemDate.getDate()).getTime();
+  return Math.max(0, Math.round((refDay - itemDay) / 86400000));
+}
+
+export function formatIdleAge(
+  mtime: number | null | undefined,
+  nowTs?: number,
+): { label: string; tone: "ok" | "muted" | "warn" | "danger" } {
+  const days = idleAgeDays(mtime, nowTs);
+  if (days === null) return { label: "未知时间", tone: "muted" };
+  if (days === 0) return { label: "今天更新", tone: "ok" };
+  if (days === 1) return { label: "昨天更新", tone: "muted" };
+  if (days < 7) return { label: `${days} 天前`, tone: "muted" };
+  if (days < 30) return { label: `${days} 天未用`, tone: "warn" };
+  return { label: `${days} 天未用 · 闲置`, tone: "danger" };
+}

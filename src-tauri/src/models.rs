@@ -500,3 +500,71 @@ pub struct ToastEventPayload {
     #[serde(default)]
     pub tone: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageScanProgress {
+    pub phase: String,
+    pub root_index: usize,
+    pub root_count: usize,
+    pub root_label: String,
+    pub current_path: String,
+    pub scanned_files: u64,
+    pub scanned_bytes: u64,
+    pub fraction: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageNode {
+    pub node_id: String,
+    pub name: String,
+    pub kind: String,
+    pub category: String,
+    pub size_bytes: u64,
+    pub file_count: u64,
+    pub path: String,
+    pub subtitle: String,
+    pub purpose_desc: String,
+    pub deletability: String,
+    pub deletability_label: String,
+    #[serde(rename = "protected")]
+    pub is_protected: bool,
+    pub session_id: String,
+    pub mtime: f64,
+    pub is_archived: bool,
+    pub is_unnamed: bool,
+    pub is_subagent: bool,
+    pub delete_targets: Vec<String>,
+    pub children: Vec<StorageNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageTreeResponse {
+    pub scanned_at: f64,
+    pub total_bytes: u64,
+    pub total_files: u64,
+    pub session_count: usize,
+    pub orphan_summary_count: usize,
+    pub antigravity_running: bool,
+    pub tree: StorageNode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageDeleteResult {
+    pub mode: String,
+    pub permanent: bool,
+    pub requested: usize,
+    pub deleted_count: usize,
+    pub deleted_paths: Vec<String>,
+    pub locked_paths: Vec<String>,
+    pub warnings: Vec<String>,
+    pub freed_bytes: u64,
+    pub db_cleaned: bool,
+    pub proto_cleaned: bool,
+    pub app_storage_cleaned: bool,
+    pub antigravity_running: bool,
+    pub cleaned_ids: Vec<String>,
+}

@@ -269,6 +269,71 @@ export interface ToastEventPayload {
   tone?: "info" | "ok" | "warn" | "error";
 }
 
+export type StorageViewMode = "session" | "type" | "dir";
+export type StorageDisplayStyle = "treemap" | "list";
+export type StorageListSortKey = "time" | "size";
+export type StorageAgeFilter = "all" | "7d" | "30d";
+export type StorageAttrFilter = "archived" | "subagent" | "unnamed";
+
+export interface StorageScanProgress {
+  phase: "roots" | "scanning" | "done" | string;
+  rootIndex: number;
+  rootCount: number;
+  rootLabel: string;
+  currentPath: string;
+  scannedFiles: number;
+  scannedBytes: number;
+  fraction: number;
+}
+
+export interface StorageNode {
+  nodeId: string;
+  name: string;
+  kind: string;
+  category: string;
+  sizeBytes: number;
+  fileCount: number;
+  path: string;
+  subtitle: string;
+  purposeDesc: string;
+  deletability: "safe" | "caution" | "protected" | string;
+  deletabilityLabel: string;
+  protected: boolean;
+  sessionId: string;
+  mtime: number;
+  isArchived: boolean;
+  isUnnamed: boolean;
+  isSubagent: boolean;
+  deleteTargets: string[];
+  children: StorageNode[];
+}
+
+export interface StorageTreeResponse {
+  scannedAt: number;
+  totalBytes: number;
+  totalFiles: number;
+  sessionCount: number;
+  orphanSummaryCount: number;
+  antigravityRunning: boolean;
+  tree: StorageNode;
+}
+
+export interface StorageDeleteResult {
+  mode: string;
+  permanent: boolean;
+  requested: number;
+  deletedCount: number;
+  deletedPaths: string[];
+  lockedPaths: string[];
+  warnings: string[];
+  freedBytes: number;
+  dbCleaned: boolean;
+  protoCleaned: boolean;
+  appStorageCleaned: boolean;
+  antigravityRunning: boolean;
+  cleanedIds: string[];
+}
+
 export const TAURI_COMMANDS = {
   GET_OVERVIEW: "get_overview",
   LIST_NATIVE_PLUGINS: "list_native_plugins",
@@ -300,6 +365,13 @@ export const TAURI_COMMANDS = {
   OPEN_PATH_IN_EXPLORER: "open_path_in_explorer",
   PICK_FILE: "pick_file",
   GET_SYSTEM_DARK_MODE: "get_system_dark_mode",
+  SCAN_AGY_STORAGE: "scan_agy_storage",
+  GET_STORAGE_TREE: "get_storage_tree",
+  CLEAN_ORPHAN_STORAGE_SUMMARIES: "clean_orphan_storage_summaries",
+  DELETE_STORAGE_SESSION_FILES: "delete_storage_session_files",
+  DELETE_STORAGE_SESSIONS: "delete_storage_sessions",
+  DELETE_STORAGE_ITEMS: "delete_storage_items",
+  IS_ANTIGRAVITY_RUNNING_FOR_STORAGE: "is_antigravity_running_for_storage",
 } as const;
 
 export const TAURI_EVENTS = {
@@ -308,4 +380,5 @@ export const TAURI_EVENTS = {
   UPDATE_AVAILABLE: "update:available",
   LOG_UPDATED: "log:updated",
   TOAST_MESSAGE: "toast:message",
+  STORAGE_SCAN_PROGRESS: "storage:scan-progress",
 } as const;

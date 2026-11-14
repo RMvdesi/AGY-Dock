@@ -6,22 +6,26 @@ use crate::models::{
     DeletePluginResult, FileFilterSpec, InstallPackageResult, LaunchResult, LifecycleConfig,
     LocalPluginPackage, LogTailResult, NativePluginInfo, OverviewSnapshot, PluginActionResult,
     PluginConfigEntry, PluginPayload, ProxyConfig, SaveExeResult, ShortcutResult,
-    SystemProxyDetection, UiPreferences, UpdateCheckResult,
+    StorageDeleteResult, StorageTreeResponse, SystemProxyDetection, UiPreferences,
+    UpdateCheckResult,
 };
 use crate::paths::ManagerPaths;
 use crate::plugins;
 use crate::shortcuts;
+use crate::storage::{self, StorageScanSnapshot};
 use crate::supervisor;
 use crate::tray::{apply_dwm_titlebar_theme, resolve_theme_is_dark};
 use crate::updater;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tokio::sync::Mutex;
 use url::Url;
 
 pub struct AppState {
     pub paths: ManagerPaths,
     pub force_quit: AtomicBool,
+    pub storage_cache: Mutex<Option<StorageScanSnapshot>>,
 }
 
 async fn emit_overview_bg(app: &AppHandle, paths: &ManagerPaths) {
@@ -469,4 +473,138 @@ pub async fn pick_file(
 #[tauri::command]
 pub async fn get_system_dark_mode() -> Result<bool, String> {
     Ok(detector::get_system_dark_mode())
+}
+
+async fn get_or_scan_storage_snapshot(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+) -> Result<StorageScanSnapshot, String> {
+    if let Some(cached) = state.storage_cache.lock().await.clone() {
+        return Ok(cached);
+    }
+    let paths = state.paths.clone();
+    let app_handle = app.clone();
+    let snap = tokio::task::spawn_blocking(move || {
+        storage::scan_agy_storage_with_progress(&paths, |prog| {
+            let _ = app_handle.emit(events::STORAGE_SCAN_PROGRESS, &prog);
+        })
+    })
+    .await
+    .map_err(|e| format!("存储扫描任务失败: {e}"))?;
+    *state.storage_cache.lock().await = Some(snap.clone());
+    Ok(snap)
+}
+
+#[tauri::command]
+pub async fn scan_agy_storage(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    view_mode: String,
+    include_appdata: bool,
+    query: Option<String>,
+) -> Result<StorageTreeResponse, String> {
+    let paths = state.paths.clone();
+    let app_handle = app.clone();
+    let (snap, agy_running) = tokio::task::spawn_blocking(move || {
+        let s = storage::scan_agy_storage_with_progress(&paths, |prog| {
+            let _ = app_handle.emit(events::STORAGE_SCAN_PROGRESS, &prog);
+        });
+        let running = storage::is_antigravity_active_for_storage();
+        (s, running)
+    })
+    .await
+    .map_err(|e| format!("扫描本地存储失败: {e}"))?;
+
+    *state.storage_cache.lock().await = Some(snap.clone());
+    Ok(storage::build_storage_tree_response(
+        &snap,
+        &view_mode,
+        include_appdata,
+        query.as_deref(),
+        agy_running,
+    ))
+}
+
+#[tauri::command]
+pub async fn get_storage_tree(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    view_mode: String,
+    include_appdata: bool,
+    query: Option<String>,
+) -> Result<StorageTreeResponse, String> {
+    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    let agy_running = tokio::task::spawn_blocking(storage::is_antigravity_active_for_storage)
+        .await
+        .unwrap_or(false);
+    Ok(storage::build_storage_tree_response(
+        &snap,
+        &view_mode,
+        include_appdata,
+        query.as_deref(),
+        agy_running,
+    ))
+}
+
+#[tauri::command]
+pub async fn clean_orphan_storage_summaries(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<StorageDeleteResult, String> {
+    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    tokio::task::spawn_blocking(move || storage::clean_orphan_summaries(&snap))
+        .await
+        .map_err(|e| format!("清理失效记录失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn delete_storage_session_files(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_ids: Vec<String>,
+    recycle_bin: bool,
+) -> Result<StorageDeleteResult, String> {
+    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    tokio::task::spawn_blocking(move || {
+        storage::delete_session_files(&snap, &session_ids, recycle_bin)
+    })
+    .await
+    .map_err(|e| format!("清理会话产物失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn delete_storage_sessions(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_ids: Vec<String>,
+    recycle_bin: bool,
+) -> Result<StorageDeleteResult, String> {
+    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    tokio::task::spawn_blocking(move || {
+        storage::delete_sessions(&snap, &session_ids, recycle_bin)
+    })
+    .await
+    .map_err(|e| format!("删除会话失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn delete_storage_items(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    targets: Vec<String>,
+    recycle_bin: bool,
+) -> Result<StorageDeleteResult, String> {
+    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    tokio::task::spawn_blocking(move || {
+        storage::delete_storage_items(&snap, &targets, recycle_bin)
+    })
+    .await
+    .map_err(|e| format!("删除存储条目失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn is_antigravity_running_for_storage() -> Result<bool, String> {
+    tokio::task::spawn_blocking(storage::is_antigravity_active_for_storage)
+        .await
+        .map_err(|e| format!("检测 Antigravity 运行状态失败: {e}"))
 }

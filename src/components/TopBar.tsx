@@ -3,7 +3,14 @@ import { motion } from "motion/react";
 import type { ThemeMode } from "../types/ipc";
 import { BrandMark } from "./BrandMark";
 
-export type NavTabId = "status" | "external" | "market" | "native" | "logs" | "settings";
+export type NavTabId =
+  | "status"
+  | "external"
+  | "market"
+  | "native"
+  | "storage"
+  | "logs"
+  | "settings";
 
 export interface NavTabItem {
   id: NavTabId;
@@ -45,6 +52,7 @@ export function TopBar({
     { id: "external", label: "我的插件", count: externalCount },
     { id: "market", label: "插件市场" },
     { id: "native", label: "原生扩展", count: nativeCount },
+    { id: "storage", label: "存储管理" },
     { id: "logs", label: "日志" },
     { id: "settings", label: "设置" },
   ];
@@ -53,12 +61,9 @@ export function TopBar({
 
   return (
     <header className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
-      {/* Left Brand Mark */}
-      <div className="flex min-w-0 items-center gap-2.5">
+      {/* Left Brand Mark (bare icon for symmetric dock centering) */}
+      <div className="flex min-w-0 items-center" title="AGY Plugin Manager">
         <BrandMark size={26} className="shrink-0" />
-        <span className="truncate text-[13.5px] font-bold tracking-tight text-[var(--text-primary)] max-[960px]:hidden">
-          AGY Plugin Manager
-        </span>
       </div>
 
       {/* Center Floating Capsule Dock */}

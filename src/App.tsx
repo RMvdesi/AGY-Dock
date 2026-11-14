@@ -15,6 +15,7 @@ import { NativeExtensionsPage } from "./pages/NativeExtensionsPage";
 import { NativePluginDetailPage } from "./pages/NativePluginDetailPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { StatusPage } from "./pages/StatusPage";
+import { StoragePage } from "./pages/StoragePage";
 import type {
   BundledPackageInfo,
   LocalPluginPackage,
@@ -22,6 +23,7 @@ import type {
   OverviewSnapshot,
   PluginPayload,
   PluginRuntimeStatus,
+  StorageScanProgress,
   ThemeMode,
   UpdateCheckResult,
 } from "./types/ipc";
@@ -51,6 +53,7 @@ export default function App() {
   );
 
   const [selectedLogId, setSelectedLogId] = useState<string>("launcher");
+  const [storageScanProgress, setStorageScanProgress] = useState<StorageScanProgress | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
@@ -232,6 +235,13 @@ export default function App() {
         if (payload?.message) {
           pushToast(payload.message, payload.tone ?? "info");
         }
+      })
+      .then((fn) => unlisteners.push(fn))
+      .catch(() => {});
+
+    events
+      .onStorageScanProgress((prog) => {
+        setStorageScanProgress(prog);
       })
       .then((fn) => unlisteners.push(fn))
       .catch(() => {});
@@ -719,6 +729,14 @@ export default function App() {
                 nativePlugins={nativePlugins}
                 isDark={resolvedDark}
                 onOpenDetail={openNativeDetail}
+              />
+            )}
+
+            {view.kind === "tab" && view.tab === "storage" && (
+              <StoragePage
+                isDark={resolvedDark}
+                scanProgress={storageScanProgress}
+                onToast={pushToast}
               />
             )}
 

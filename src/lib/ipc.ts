@@ -24,6 +24,10 @@ import {
   type ProxyConfig,
   type SaveExeResult,
   type ShortcutResult,
+  type StorageDeleteResult,
+  type StorageScanProgress,
+  type StorageTreeResponse,
+  type StorageViewMode,
   type SystemProxyDetection,
   type ThemeMode,
   type ToastEventPayload,
@@ -123,6 +127,44 @@ export const ipc = {
     callCommand<string | null>(TAURI_COMMANDS.PICK_FILE, options ?? {}),
 
   getSystemDarkMode: () => callCommand<boolean>(TAURI_COMMANDS.GET_SYSTEM_DARK_MODE),
+
+  scanAgyStorage: (viewMode: StorageViewMode, includeAppdata: boolean, query?: string) =>
+    callCommand<StorageTreeResponse>(TAURI_COMMANDS.SCAN_AGY_STORAGE, {
+      viewMode,
+      includeAppdata,
+      query: query?.trim() ? query.trim() : null,
+    }),
+
+  getStorageTree: (viewMode: StorageViewMode, includeAppdata: boolean, query?: string) =>
+    callCommand<StorageTreeResponse>(TAURI_COMMANDS.GET_STORAGE_TREE, {
+      viewMode,
+      includeAppdata,
+      query: query?.trim() ? query.trim() : null,
+    }),
+
+  cleanOrphanStorageSummaries: () =>
+    callCommand<StorageDeleteResult>(TAURI_COMMANDS.CLEAN_ORPHAN_STORAGE_SUMMARIES),
+
+  deleteStorageSessionFiles: (sessionIds: string[], recycleBin: boolean) =>
+    callCommand<StorageDeleteResult>(TAURI_COMMANDS.DELETE_STORAGE_SESSION_FILES, {
+      sessionIds,
+      recycleBin,
+    }),
+
+  deleteStorageSessions: (sessionIds: string[], recycleBin: boolean) =>
+    callCommand<StorageDeleteResult>(TAURI_COMMANDS.DELETE_STORAGE_SESSIONS, {
+      sessionIds,
+      recycleBin,
+    }),
+
+  deleteStorageItems: (targets: string[], recycleBin: boolean) =>
+    callCommand<StorageDeleteResult>(TAURI_COMMANDS.DELETE_STORAGE_ITEMS, {
+      targets,
+      recycleBin,
+    }),
+
+  isAntigravityRunningForStorage: () =>
+    callCommand<boolean>(TAURI_COMMANDS.IS_ANTIGRAVITY_RUNNING_FOR_STORAGE),
 };
 
 export const events = {
@@ -149,5 +191,10 @@ export const events = {
   onToastMessage: (cb: (payload: ToastEventPayload) => void): Promise<UnlistenFn> =>
     isTauriRuntime()
       ? listen<ToastEventPayload>(TAURI_EVENTS.TOAST_MESSAGE, (e) => cb(e.payload))
+      : Promise.resolve(() => {}),
+
+  onStorageScanProgress: (cb: (payload: StorageScanProgress) => void): Promise<UnlistenFn> =>
+    isTauriRuntime()
+      ? listen<StorageScanProgress>(TAURI_EVENTS.STORAGE_SCAN_PROGRESS, (e) => cb(e.payload))
       : Promise.resolve(() => {}),
 };
