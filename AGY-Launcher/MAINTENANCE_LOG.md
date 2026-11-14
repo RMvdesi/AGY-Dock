@@ -6,6 +6,31 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.3.1] - 2026-11-14 17:58
+
+### Summary
+- **Search Input Icon & Text Overlap Fix (App-Wide)**: Wrapped base element styles in `@layer base` and shared card/input/button styles inside `@layer components` in `src/index.css` so Tailwind padding utilities cleanly take precedence; introduced shared `SearchInput` (`pl-9 pr-8`, Escape/clear button) in `src/components/MotionPrimitives.tsx` and migrated `StoragePage`, `MyPluginsPage`, `MarketplacePage`, `NativeExtensionsPage`, `LogsPage`, and `.agy-search-input` styling so the magnifying glass icon never overlaps placeholder or typed text.
+- **Storage Page Inspector & Action Grid Polish (`src/pages/StoragePage.tsx`)**: Replaced wrapping flex session action buttons with a balanced CSS grid (`grid-cols-2` 2×2 for 4 session actions, `col-span-2` span on the 3rd of 3 actions, `grid-cols-1` for single action), added `inline-flex h-9 w-full items-center justify-center gap-1.5 whitespace-nowrap`, and applied `.agy-btn-danger` / `.agy-btn-danger-ghost` so the `"删除会话"` action keeps its icon and label inline inside a full rounded button frame without orphan row wrapping.
+- **Confirmation & Delete Modal Redesign (`src/components/StorageDeleteModal.tsx`, `src/components/ConfirmModal.tsx`)**: Removed the left red vertical border stripe, unified `rounded-2xl` dialog card framing with a semantic soft icon badge, `Escape` / close affordance, `useReducedMotion()` support, and high-contrast solid `.agy-btn-danger` (`--danger-solid`) / `.agy-btn-primary` / `.agy-btn` action buttons so `"移入回收站"` / confirm buttons render with clear filled button framing.
+- **UI Transition & Animation Overhaul (`src/components/MotionPrimitives.tsx`, `src/App.tsx`, `src/components/TopBar.tsx`, `src/pages/*`)**:
+  - Wrapped the app root in `<MotionConfig reducedMotion="user">` and scoped `TopBar` capsule indicator (`capsule-nav-pill`) inside `<LayoutGroup id="topbar-nav">`.
+  - Fixed page transition direction prop propagation (`custom={transitionDir}` on `<AnimatePresence mode="wait">` and `<motion.div>`) and `SpringSwitch` thumb travel (`x` translation).
+  - Added spring `layoutId` segmented pills (`storage-view-mode-pill`, `storage-display-style-pill`, `storage-age-filter-pill`) and smooth `AnimatePresence mode="wait"` transitions across `方框 / 列表` display modes, `按会话 / 按文件类型 / 按目录结构` grouping switches, treemap breadcrumb drill-down (`viewKey`), and right-hand inspector selection in `StoragePage` + `SpaceTreemap`, as well as filter/list transitions across `MyPluginsPage`, `MarketplacePage`, `NativeExtensionsPage`, `LogsPage`, `StatusPage`, `SettingsPage`, `ExternalPluginDetailPage`, and `NativePluginDetailPage`.
+- **Patch SemVer Bump & Local Desktop Hot-Sync (`2.3.1`)**: Bumped version references to `2.3.1` across `VERSION`, `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `src-tauri/src/updater.rs`, `src/pages/SettingsPage.tsx`, `AGY-Launcher/server.mjs`, and `AGY-Launcher/lib/process-manager.mjs`, and rebuilt + hot-synced the desktop binary at `%LOCALAPPDATA%\AGY-Plugin-Manager\AGY Plugin Manager.exe` via `npm run build:local`.
+
+### Files Changed
+- `src/index.css` — Moved reset rules into `@layer base` and component classes (`.agy-card`, `.agy-inset`, `.agy-input`, `.agy-search-input`, `.agy-btn`, `.agy-btn-primary`, `.agy-btn-danger`, `.agy-btn-danger-ghost`) into `@layer components`; added `--danger-solid`, `--danger-solid-hover`, `--danger-solid-text`, and `--danger-border` tokens.
+- `src/components/MotionPrimitives.tsx`, `src/App.tsx`, `src/components/TopBar.tsx` — Added `SearchInput` and `SegmentedControl`, wrapped root in `MotionConfig`, scoped `TopBar` `LayoutGroup`, fixed directional `AnimatePresence` page transitions and `SpringSwitch`.
+- `src/components/StorageDeleteModal.tsx`, `src/components/ConfirmModal.tsx` — Removed red left stripe, unified modal header/badge/close styling and solid primary/danger footer buttons with reduced-motion support.
+- `src/pages/StoragePage.tsx`, `src/components/SpaceTreemap.tsx` — Fixed search input padding/clear button, balanced action button grids & inline-flex button framing, added `LayoutGroup` spring pills and `AnimatePresence` transitions across grouping, display style, drill-down, and inspector selection.
+- `src/pages/{MyPluginsPage,MarketplacePage,NativeExtensionsPage,LogsPage,StatusPage,SettingsPage,ExternalPluginDetailPage,NativePluginDetailPage}.tsx` — Adopted `SearchInput`, aligned segmented filter pills and `AnimatePresence` list/status transitions.
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `src-tauri/src/updater.rs`, `AGY-Launcher/server.mjs`, `AGY-Launcher/lib/process-manager.mjs`, `AGY-Launcher/MAINTENANCE_LOG.md` — Synced `2.3.1` patch version and logged maintenance entry.
+
+### Verification
+- `npm run build` (`tsc --noEmit && vite build`): exited 0 (`2019 modules transformed`, `✓ built in 2.89s`).
+- `cargo test --manifest-path src-tauri/Cargo.toml`: `test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`.
+- `npm run build:local` (`tauri build --no-bundle` + hot-sync script): exited 0; compiled `src-tauri\target\release\agy-plugin-manager.exe` and hot-synced `C:\Users\HaoAn\AppData\Local\AGY-Plugin-Manager\AGY Plugin Manager.exe` (`7938560` bytes / `7.57 MB`, preserving `plugins.json` and `plugins/`).
+
 ## [v2.3.0] - 2026-11-14 (Tauri v2 + React Architecture Refactor)
 
 ### Summary

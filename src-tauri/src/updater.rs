@@ -51,7 +51,7 @@ pub fn normalize_semver_str(raw: &str, fallback: &str) -> String {
     if let Some((maj, min, pat)) = parse_semver_tuple(fallback) {
         return format!("{maj}.{min}.{pat}");
     }
-    "2.3.0".to_string()
+    "2.3.1".to_string()
 }
 
 pub fn is_newer_semver(candidate: &str, current: &str) -> bool {

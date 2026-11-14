@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Shield } from "lucide-react";
-import { motion } from "motion/react";
+import { FolderSearch, Shield } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { formatBytes, formatCompactBytes } from "../lib/format";
 import type { StorageNode, StorageScanProgress } from "../types/ipc";
 
@@ -258,6 +258,7 @@ function layoutTreeTiles(
 
 interface SpaceTreemapProps {
   rootNode: StorageNode | null;
+  viewKey?: string;
   selectedId: string;
   isDark: boolean;
   scanning: boolean;
@@ -271,6 +272,7 @@ interface SpaceTreemapProps {
 
 export function SpaceTreemap({
   rootNode,
+  viewKey,
   selectedId,
   isDark,
   scanning,
@@ -281,6 +283,7 @@ export function SpaceTreemap({
   onActivateNode,
   onContextMenuNode,
 }: SpaceTreemapProps) {
+  const prefersReduced = useReducedMotion();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 640, h: 420 });
   const [hoveredId, setHoveredId] = useState<string>("");
@@ -339,6 +342,31 @@ export function SpaceTreemap({
 
   const hasData = Boolean(rootNode && rootNode.sizeBytes > 0 && rootNode.children.length > 0);
   const pctText = scanProgress ? `${Math.round(scanProgress.fraction * 100)}%` : "0%";
+  const layerKey = viewKey || rootNode?.nodeId || "root";
+
+  const layerVariants = prefersReduced
+    ? {
+        initial: { opacity: 0 },
+        animate: { opacity: 1 },
+        exit: { opacity: 0 },
+      }
+    : zoomDirection === "in"
+      ? {
+          initial: { opacity: 0, scale: 0.96 },
+          animate: { opacity: 1, scale: 1 },
+          exit: { opacity: 0, scale: 1.03 },
+        }
+      : zoomDirection === "out"
+        ? {
+            initial: { opacity: 0, scale: 1.03 },
+            animate: { opacity: 1, scale: 1 },
+            exit: { opacity: 0, scale: 0.96 },
+          }
+        : {
+            initial: { opacity: 0, y: 5 },
+            animate: { opacity: 1, y: 0 },
+            exit: { opacity: 0, y: -4 },
+          };
 
   return (
     <div
@@ -352,216 +380,247 @@ export function SpaceTreemap({
         const rect = e.currentTarget.getBoundingClientRect();
         setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
       }}
-      className="relative h-full min-h-[340px] w-full select-none overflow-hidden rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-subtle)]"
+      className="relative h-full min-h-[340px] w-full select-none overflow-hidden rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-subtle)]/75"
     >
       {/* Interactive Squarified Tiles */}
-      {hasData && (
-        <motion.div
-          key={rootNode?.nodeId || "root"}
-          initial={
-            zoomDirection === "in"
-              ? { opacity: 0.4, scale: 0.94 }
-              : zoomDirection === "out"
-                ? { opacity: 0.4, scale: 1.05 }
-                : { opacity: 0.7 }
-          }
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-          className="absolute inset-0"
-        >
-          {tiles.map((tile) => {
-            const { node, rect, depth, hasNestedChildren } = tile;
-            const colors = getColors(node.category);
-            const isSelected = selectedId === node.nodeId;
-            const isHovered = hoveredId === node.nodeId;
-            const radius = depth === 0 ? 7 : 5;
-            const w = rect.w;
-            const h = rect.h;
+      <AnimatePresence mode="wait" initial={false}>
+        {hasData ? (
+          <motion.div
+            key={layerKey}
+            initial={layerVariants.initial}
+            animate={layerVariants.animate}
+            exit={layerVariants.exit}
+            transition={{
+              duration: prefersReduced ? 0.08 : 0.19,
+              ease: [0.22, 1, 0.36, 1],
+            }}
+            className="absolute inset-0"
+          >
+            {tiles.map((tile) => {
+              const { node, rect, depth, hasNestedChildren } = tile;
+              const colors = getColors(node.category);
+              const isSelected = selectedId === node.nodeId;
+              const isHovered = hoveredId === node.nodeId;
+              const radius = depth === 0 ? 8 : 5;
+              const w = rect.w;
+              const h = rect.h;
 
-            const showHeader = hasNestedChildren;
-            const showTierA = !showHeader && w >= 46 && h >= 36;
-            const showTierB = !showHeader && !showTierA && w >= 52 && h >= 18;
-            const showTierC = !showHeader && !showTierA && !showTierB && w >= 24 && h >= 14;
+              const showHeader = hasNestedChildren;
+              const showTierA = !showHeader && w >= 46 && h >= 36;
+              const showTierB = !showHeader && !showTierA && w >= 52 && h >= 18;
+              const showTierC = !showHeader && !showTierA && !showTierB && w >= 24 && h >= 14;
 
-            return (
-              <div
-                key={`${depth}:${node.nodeId}`}
-                onMouseEnter={(e) => {
-                  e.stopPropagation();
-                  setHoveredId(node.nodeId);
-                  onHoverNode(node);
-                }}
-                onMouseMove={(e) => {
-                  if (hoveredId !== node.nodeId) {
+              return (
+                <div
+                  key={`${depth}:${node.nodeId}`}
+                  onMouseEnter={(e) => {
+                    e.stopPropagation();
                     setHoveredId(node.nodeId);
                     onHoverNode(node);
-                  }
-                  const parentRect = containerRef.current?.getBoundingClientRect();
-                  if (parentRect) {
-                    setMousePos({ x: e.clientX - parentRect.left, y: e.clientY - parentRect.top });
-                  }
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectNode(node);
-                }}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  if (node.children.length > 0) {
-                    onActivateNode(node);
-                  }
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onSelectNode(node);
-                  onContextMenuNode(node, e.clientX, e.clientY);
-                }}
-                style={{
-                  left: rect.x,
-                  top: rect.y,
-                  width: rect.w,
-                  height: rect.h,
-                  borderRadius: radius,
-                  backgroundColor: colors.fill,
-                  borderColor: isSelected
-                    ? "var(--accent)"
-                    : isHovered
-                      ? "var(--text-muted)"
-                      : colors.border,
-                  borderWidth: isSelected ? 2 : 1,
-                  zIndex: depth === 0 ? (isSelected ? 5 : isHovered ? 4 : 1) : isSelected ? 8 : isHovered ? 7 : 3,
-                }}
-                className="absolute box-border overflow-hidden border transition-[border-color,box-shadow] duration-100"
-              >
-                {showHeader && (
-                  <div
-                    style={{ backgroundColor: colors.header, borderBottomColor: colors.border }}
-                    className="flex h-[22px] items-center justify-between gap-1.5 border-b px-2"
-                  >
-                    <span className="flex min-w-0 items-center gap-1 truncate text-[11px] font-semibold text-[var(--text-primary)]">
-                      {node.protected && <Shield className="h-3 w-3 shrink-0 text-[var(--warn)]" />}
-                      <span className="truncate">{node.name}</span>
-                    </span>
-                    <span className="shrink-0 font-mono-code text-[10px] font-medium text-[var(--text-muted)]">
-                      {formatBytes(node.sizeBytes)}
-                    </span>
-                  </div>
-                )}
-
-                {showTierA && (
-                  <div className="flex h-full flex-col justify-start overflow-hidden px-1.5 py-1">
-                    <div className="flex items-center gap-1 truncate text-[11px] font-semibold leading-tight text-[var(--text-primary)]">
-                      {node.protected && <Shield className="h-3 w-3 shrink-0 text-[var(--warn)]" />}
-                      <span className="truncate">{node.name}</span>
-                    </div>
-                    <div className="mt-0.5 truncate font-mono-code text-[10px] text-[var(--text-muted)]">
-                      {w >= 54 ? formatBytes(node.sizeBytes) : formatCompactBytes(node.sizeBytes)}
-                    </div>
-                  </div>
-                )}
-
-                {showTierB && (
-                  <div className="flex h-full items-center justify-between gap-1 px-1.5">
-                    <span className="truncate text-[10px] font-semibold text-[var(--text-primary)]">
-                      {node.name}
-                    </span>
-                    <span className="shrink-0 font-mono-code text-[9.5px] text-[var(--text-muted)]">
-                      {formatCompactBytes(node.sizeBytes)}
-                    </span>
-                  </div>
-                )}
-
-                {showTierC && (
-                  <div className="flex h-full items-center justify-center px-0.5 font-mono-code text-[9px] font-medium text-[var(--text-muted)]">
-                    {formatCompactBytes(node.sizeBytes)}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </motion.div>
-      )}
-
-      {/* Initial Empty / Scanning Skeleton Overlay */}
-      {!hasData && (
-        <div className="absolute inset-0">
-          {skeletonTiles.map(({ item, rect }) => {
-            const colors = getColors(item.cat);
-            return (
-              <div
-                key={item.id}
-                style={{
-                  left: rect.x + 2,
-                  top: rect.y + 2,
-                  width: Math.max(0, rect.w - 4),
-                  height: Math.max(0, rect.h - 4),
-                  backgroundColor: colors.fill,
-                  borderColor: colors.border,
-                }}
-                className={`absolute rounded-md border opacity-75 ${scanning ? "animate-pulse" : ""}`}
-              />
-            );
-          })}
-
-          <div className="absolute inset-0 flex items-center justify-center bg-black/5 p-6 backdrop-blur-[1px]">
-            <div className="w-full max-w-[360px] rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-5 py-4 text-center shadow-[var(--shadow-card)]">
-              <div className="text-[13.5px] font-semibold text-[var(--text-primary)]">
-                {scanning ? "正在深度扫描 Antigravity 存储空间..." : "当前筛选条件下暂无可显示条目"}
-              </div>
-              {scanning ? (
-                <>
-                  <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-subtle)]">
+                  }}
+                  onMouseMove={(e) => {
+                    if (hoveredId !== node.nodeId) {
+                      setHoveredId(node.nodeId);
+                      onHoverNode(node);
+                    }
+                    const parentRect = containerRef.current?.getBoundingClientRect();
+                    if (parentRect) {
+                      setMousePos({ x: e.clientX - parentRect.left, y: e.clientY - parentRect.top });
+                    }
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectNode(node);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    if (node.children.length > 0) {
+                      onActivateNode(node);
+                    }
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onSelectNode(node);
+                    onContextMenuNode(node, e.clientX, e.clientY);
+                  }}
+                  style={{
+                    left: rect.x,
+                    top: rect.y,
+                    width: rect.w,
+                    height: rect.h,
+                    borderRadius: radius,
+                    backgroundColor: colors.fill,
+                    borderColor: isSelected
+                      ? "var(--accent)"
+                      : isHovered
+                        ? "var(--text-muted)"
+                        : colors.border,
+                    borderWidth: isSelected ? 1.5 : 1,
+                    boxShadow: isSelected
+                      ? isDark
+                        ? "0 0 0 2px rgba(16, 185, 129, 0.35), 0 6px 16px -4px rgba(0, 0, 0, 0.45)"
+                        : "0 0 0 2px rgba(16, 185, 129, 0.25), 0 6px 14px -4px rgba(15, 23, 42, 0.14)"
+                      : isHovered
+                        ? isDark
+                          ? "0 2px 8px rgba(0, 0, 0, 0.3)"
+                          : "0 2px 8px rgba(15, 23, 42, 0.08)"
+                        : undefined,
+                    filter:
+                      isHovered && !isSelected
+                        ? isDark
+                          ? "brightness(1.08)"
+                          : "brightness(0.975)"
+                        : undefined,
+                    zIndex: depth === 0 ? (isSelected ? 5 : isHovered ? 4 : 1) : isSelected ? 8 : isHovered ? 7 : 3,
+                  }}
+                  className="absolute box-border cursor-pointer overflow-hidden border transition-[border-color,box-shadow,filter] duration-100"
+                >
+                  {showHeader && (
                     <div
-                      style={{ width: pctText }}
-                      className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-150"
-                    />
-                  </div>
-                  <div className="mt-2 truncate font-mono-code text-[11px] text-[var(--text-muted)]">
-                    {scanProgress?.rootLabel
-                      ? `${scanProgress.rootLabel} · ${scanProgress.scannedFiles} 文件 · ${formatBytes(scanProgress.scannedBytes)}`
-                      : "准备扫描目录..."}
-                  </div>
-                </>
-              ) : (
-                <p className="mt-1 text-[12px] text-[var(--text-muted)]">
-                  可清空搜索关键字，或点击右上角“重新扫描”刷新磁盘数据
-                </p>
-              )}
+                      style={{ backgroundColor: colors.header, borderBottomColor: colors.border }}
+                      className="flex h-[22px] items-center justify-between gap-1.5 border-b px-2"
+                    >
+                      <span className="flex min-w-0 items-center gap-1 truncate text-[11px] font-semibold text-[var(--text-primary)]">
+                        {node.protected && <Shield className="h-3 w-3 shrink-0 text-[var(--warn)]" />}
+                        <span className="truncate">{node.name}</span>
+                      </span>
+                      <span className="shrink-0 font-mono-code text-[10px] font-medium tabular-nums text-[var(--text-muted)]">
+                        {formatBytes(node.sizeBytes)}
+                      </span>
+                    </div>
+                  )}
+
+                  {showTierA && (
+                    <div className="flex h-full flex-col justify-start overflow-hidden px-2 py-1.5">
+                      <div className="flex items-center gap-1 truncate text-[11px] font-semibold leading-tight text-[var(--text-primary)]">
+                        {node.protected && <Shield className="h-3 w-3 shrink-0 text-[var(--warn)]" />}
+                        <span className="truncate">{node.name}</span>
+                      </div>
+                      <div className="mt-0.5 truncate font-mono-code text-[10px] tabular-nums text-[var(--text-muted)]">
+                        {w >= 54 ? formatBytes(node.sizeBytes) : formatCompactBytes(node.sizeBytes)}
+                      </div>
+                    </div>
+                  )}
+
+                  {showTierB && (
+                    <div className="flex h-full items-center justify-between gap-1 px-1.5">
+                      <span className="truncate text-[10px] font-semibold text-[var(--text-primary)]">
+                        {node.name}
+                      </span>
+                      <span className="shrink-0 font-mono-code text-[9.5px] tabular-nums text-[var(--text-muted)]">
+                        {formatCompactBytes(node.sizeBytes)}
+                      </span>
+                    </div>
+                  )}
+
+                  {showTierC && (
+                    <div className="flex h-full items-center justify-center px-0.5 font-mono-code text-[9px] font-medium tabular-nums text-[var(--text-muted)]">
+                      {formatCompactBytes(node.sizeBytes)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </motion.div>
+        ) : (
+          /* Initial Empty / Scanning Skeleton Overlay */
+          <motion.div
+            key="empty-or-scanning"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: prefersReduced ? 0.05 : 0.16 }}
+            className="absolute inset-0"
+          >
+            {skeletonTiles.map(({ item, rect }) => {
+              const colors = getColors(item.cat);
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    left: rect.x + 2,
+                    top: rect.y + 2,
+                    width: Math.max(0, rect.w - 4),
+                    height: Math.max(0, rect.h - 4),
+                    backgroundColor: colors.fill,
+                    borderColor: colors.border,
+                  }}
+                  className={`absolute rounded-lg border opacity-75 ${scanning && !prefersReduced ? "animate-pulse" : ""}`}
+                />
+              );
+            })}
+
+            <div className="absolute inset-0 flex items-center justify-center bg-black/5 p-6 backdrop-blur-[1.5px]">
+              <div className="w-full max-w-[360px] rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)]/95 px-5 py-4 text-center shadow-[var(--shadow-floating)] backdrop-blur">
+                <div className="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--bg-subtle)] text-[var(--text-muted)]">
+                  <FolderSearch className="h-4.5 w-4.5" />
+                </div>
+                <div className="text-[13.5px] font-semibold text-[var(--text-primary)]">
+                  {scanning ? "正在深度扫描 Antigravity 存储空间..." : "当前筛选条件下暂无可显示条目"}
+                </div>
+                {scanning ? (
+                  <>
+                    <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-subtle)]">
+                      <div
+                        style={{ width: pctText }}
+                        className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-150"
+                      />
+                    </div>
+                    <div className="mt-2 truncate font-mono-code text-[11px] tabular-nums text-[var(--text-muted)]">
+                      {scanProgress?.rootLabel
+                        ? `${scanProgress.rootLabel} · ${scanProgress.scannedFiles} 文件 · ${formatBytes(scanProgress.scannedBytes)}`
+                        : "准备扫描目录..."}
+                    </div>
+                  </>
+                ) : (
+                  <p className="mt-1 text-[12px] text-[var(--text-muted)]">
+                    可清空搜索关键字，或点击右上角“重新扫描”刷新磁盘数据
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Rescan translucent badge when refreshing over existing treemap */}
-      {hasData && scanning && (
-        <div className="pointer-events-none absolute right-3 top-3 z-20 flex items-center gap-2 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)]/95 px-3 py-1.5 shadow-[var(--shadow-card)] backdrop-blur">
-          <span className="h-2 w-2 animate-ping rounded-full bg-[var(--accent)]" />
-          <span className="text-[11.5px] font-medium text-[var(--text-primary)]">
-            正在重新扫描 ({pctText})
-          </span>
-        </div>
-      )}
+      <AnimatePresence>
+        {hasData && scanning && (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.96 }}
+            transition={{ duration: prefersReduced ? 0.05 : 0.16 }}
+            className="pointer-events-none absolute right-3 top-3 z-20 flex items-center gap-2 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)]/95 px-3 py-1.5 shadow-[var(--shadow-card)] backdrop-blur"
+          >
+            <span className="h-2 w-2 animate-ping rounded-full bg-[var(--accent)]" />
+            <span className="text-[11.5px] font-medium tabular-nums text-[var(--text-primary)]">
+              正在重新扫描 ({pctText})
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Floating Tooltip */}
       {hoveredTile && mousePos && !scanning && (
         <div
           style={{
             left: Math.min(Math.max(10, mousePos.x + 14), Math.max(10, size.w - 260)),
-            top: Math.min(Math.max(10, mousePos.y + 16), Math.max(10, size.h - 90)),
+            top: Math.min(Math.max(10, mousePos.y + 16), Math.max(10, size.h - 92)),
           }}
-          className="pointer-events-none absolute z-30 max-w-[250px] rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]/95 px-2.5 py-1.5 text-[11px] shadow-lg backdrop-blur"
+          className="pointer-events-none absolute z-30 max-w-[250px] rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)]/95 px-3 py-2 text-[11px] shadow-[var(--shadow-floating)] backdrop-blur"
         >
           <div className="truncate font-semibold text-[var(--text-primary)]">
             {hoveredTile.node.name}
           </div>
-          <div className="mt-0.5 flex items-center gap-2 font-mono-code text-[10.5px] text-[var(--text-muted)]">
+          <div className="mt-0.5 flex items-center gap-1.5 font-mono-code text-[10.5px] tabular-nums text-[var(--text-muted)]">
             <span>{formatBytes(hoveredTile.node.sizeBytes)}</span>
             <span>·</span>
             <span>{hoveredTile.node.fileCount} 个文件</span>
           </div>
           {hoveredTile.node.deletabilityLabel && (
-            <div className="mt-0.5 text-[10.5px] font-medium text-[var(--text-muted)]">
+            <div className="mt-1 inline-flex items-center gap-1 rounded-md bg-[var(--bg-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-muted)]">
               {hoveredTile.node.deletabilityLabel}
             </div>
           )}

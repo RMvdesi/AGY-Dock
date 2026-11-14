@@ -4,16 +4,20 @@ import {
   ArrowLeft,
   ArrowUpNarrowWide,
   ChevronRight,
+  FileX2,
   FolderOpen,
   HardDrive,
+  Info,
   Layers,
   ListChecks,
   RefreshCw,
   Search,
   Sparkles,
   Trash2,
+  X,
+  ZoomIn,
 } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { StatusPill } from "../components/MotionPrimitives";
 import { SpaceTreemap } from "../components/SpaceTreemap";
@@ -611,889 +615,1039 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
     return [...focusNode.children].sort((a, b) => b.sizeBytes - a.sizeBytes);
   }, [focusNode]);
 
+  const prefersReduced = useReducedMotion();
+  const pillTransition = prefersReduced
+    ? { duration: 0 }
+    : { type: "spring" as const, stiffness: 520, damping: 36, mass: 0.85 };
+  const viewTransition = prefersReduced
+    ? { duration: 0.06 }
+    : { duration: 0.18, ease: [0.22, 1, 0.36, 1] as const };
+
   const orphanCount = snapshotResp?.orphanSummaryCount ?? 0;
   const totalRootBytes = Math.max(1, snapshotResp?.totalBytes ?? rootTree?.sizeBytes ?? 1);
 
+  type InspectorAction = {
+    key: string;
+    label: string;
+    icon: React.ReactNode;
+    variant: "secondary" | "warn" | "danger";
+    disabled?: boolean;
+    onClick: () => void;
+  };
+
+  const inspectorActions: InspectorAction[] = useMemo(() => {
+    if (!inspectorNode) return [];
+    const actions: InspectorAction[] = [];
+
+    if (inspectorNode.children.length > 0) {
+      actions.push({
+        key: "drill",
+        label: "深入查看",
+        icon: <ZoomIn className="h-3.5 w-3.5 shrink-0" />,
+        variant: "secondary",
+        onClick: () => handleDrillNode(inspectorNode),
+      });
+    }
+
+    if (inspectorNode.path) {
+      actions.push({
+        key: "explorer",
+        label: "打开目录",
+        icon: <FolderOpen className="h-3.5 w-3.5 shrink-0" />,
+        variant: "secondary",
+        onClick: () => openExplorer(inspectorNode.path),
+      });
+    }
+
+    if (
+      (inspectorNode.kind === "session" || inspectorNode.kind === "session_files") &&
+      inspectorNode.sessionId
+    ) {
+      const noFiles =
+        inspectorNode.kind === "session"
+          ? !inspectorNode.children.some((c) => c.kind === "session_files" && c.fileCount > 0)
+          : inspectorNode.deleteTargets.length === 0;
+      actions.push({
+        key: "delete-session-files",
+        label: "仅删会话文件",
+        icon: <FileX2 className="h-3.5 w-3.5 shrink-0" />,
+        variant: "warn",
+        disabled: noFiles,
+        onClick: () => openDeleteSessionFilesDialog([inspectorNode]),
+      });
+    }
+
+    if (inspectorNode.kind === "session" && inspectorNode.sessionId) {
+      actions.push({
+        key: "delete-session",
+        label: "删除会话",
+        icon: <Trash2 className="h-3.5 w-3.5 shrink-0" />,
+        variant: "danger",
+        onClick: () => openDeleteSessionDialog([inspectorNode]),
+      });
+    }
+
+    if (
+      !["root", "session", "session_files", "aggregate"].includes(inspectorNode.kind) &&
+      inspectorNode.deleteTargets.length > 0
+    ) {
+      actions.push({
+        key: "delete-item",
+        label: inspectorNode.kind === "file" ? "删除此文件" : "清理此项",
+        icon: <Trash2 className="h-3.5 w-3.5 shrink-0" />,
+        variant: "danger",
+        onClick: () => openDeleteItemsDialog([inspectorNode]),
+      });
+    }
+
+    return actions;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inspectorNode, focusNode, pathIds]);
+
+  const hintTarget = hoveredNode || inspectorNode;
+  const hintDelTone = hintTarget ? DEL_TONE_MAP[hintTarget.deletability] ?? "warn" : "muted";
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
-      {/* Toolbar Card */}
-      <section className="agy-card shrink-0 px-4 py-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-          {/* Grouping Switcher */}
-          <div className="inline-flex items-center rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-subtle)] p-0.5">
-            {(
-              [
-                ["session", "按会话"],
-                ["type", "按文件类型"],
-                ["dir", "按目录结构"],
-              ] as Array<[StorageViewMode, string]>
-            ).map(([m, label]) => {
-              const active = viewMode === m;
-              return (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => handleViewModeChange(m)}
-                  className={`cursor-pointer rounded-[9px] px-2.5 py-1 text-[12px] transition-all ${
-                    active
-                      ? "bg-[var(--bg-surface)] font-semibold text-[var(--text-primary)] shadow-xs"
-                      : "font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Display Style Switcher */}
-          <div className="inline-flex items-center rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-subtle)] p-0.5">
-            {(
-              [
-                ["treemap", "方框", Layers],
-                ["list", "列表", ListChecks],
-              ] as const
-            ).map(([styleKey, styleLabel, Icon]) => {
-              const active = displayStyle === styleKey;
-              return (
-                <button
-                  key={styleKey}
-                  type="button"
-                  onClick={() => setDisplayStyle(styleKey)}
-                  className={`inline-flex cursor-pointer items-center gap-1 rounded-[9px] px-2.5 py-1 text-[12px] transition-all ${
-                    active
-                      ? "bg-[var(--bg-surface)] font-semibold text-[var(--text-primary)] shadow-xs"
-                      : "font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                  }`}
-                >
-                  <Icon className="h-3.5 w-3.5" />
-                  <span>{styleLabel}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Search */}
-          <div className="relative min-w-[180px] flex-1 max-w-[260px]">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-faint)]" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setPathIds([]);
-                setSelectedId("");
-              }}
-              placeholder="搜索会话名 / UUID / 文件..."
-              className="agy-input h-[30px] pl-8 text-[12px]"
-            />
-          </div>
-
-          {/* Include AppData Checkbox */}
-          <label className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-[var(--text-muted)] select-none hover:text-[var(--text-primary)]">
-            <input
-              type="checkbox"
-              checked={includeAppdata}
-              onChange={(e) => {
-                setIncludeAppdata(e.target.checked);
-                setPathIds([]);
-                setSelectedId("");
-              }}
-              className="h-3.5 w-3.5 accent-[var(--accent)]"
-            />
-            <span>含应用缓存</span>
-          </label>
-
-          <div className="ml-auto flex items-center gap-2">
-            {orphanCount > 0 && (
-              <button
-                type="button"
-                onClick={handleClickOrphanButton}
-                title="清理本地文件已删除但仍残留在 Antigravity 对话列表索引中的失效记录"
-                className="inline-flex h-[30px] cursor-pointer items-center gap-1.5 rounded-xl border border-[var(--warn)]/40 bg-[var(--warn-bg)] px-3 text-[12px] font-semibold text-[var(--warn)] transition-colors hover:brightness-95"
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-                <span>清理失效记录 ({orphanCount})</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              disabled={scanning}
-              onClick={() => runFullScan(viewMode, includeAppdata, query)}
-              className="agy-btn h-[30px] text-[12px]"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${scanning ? "animate-spin" : ""}`} />
-              <span>{scanning ? "扫描中..." : "重新扫描"}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Sub-row: Treemap Breadcrumbs OR List Sort & Filters */}
-        {displayStyle === "treemap" ? (
-          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-hairline)] pt-2.5">
-            <div className="flex min-w-0 flex-wrap items-center gap-1">
-              {pathIds.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleNavigateUp}
-                  className="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--text-primary)] transition-colors hover:border-[var(--border-strong)]"
-                >
-                  <ArrowLeft className="h-3 w-3" />
-                  <span>返回上级</span>
-                </button>
-              )}
-              {trail.map((node, idx) => {
-                const isLast = idx === trail.length - 1;
+    <LayoutGroup id="storage-toolbar-controls">
+      <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
+        {/* Toolbar Card */}
+        <section className="agy-card shrink-0 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Grouping Switcher */}
+            <div className="inline-flex h-8 items-center rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-subtle)] p-0.5">
+              {(
+                [
+                  ["session", "按会话"],
+                  ["type", "按文件类型"],
+                  ["dir", "按目录结构"],
+                ] as Array<[StorageViewMode, string]>
+              ).map(([m, label]) => {
+                const active = viewMode === m;
                 return (
-                  <div key={`${idx}:${node.nodeId}`} className="flex items-center gap-1">
-                    {idx > 0 && <ChevronRight className="h-3 w-3 text-[var(--text-faint)]" />}
-                    <button
-                      type="button"
-                      disabled={isLast}
-                      onClick={() => handleJumpCrumb(idx)}
-                      className={`max-w-[200px] truncate rounded-md px-1.5 py-0.5 text-[12px] ${
-                        isLast
-                          ? "font-semibold text-[var(--text-primary)]"
-                          : "cursor-pointer font-medium text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
-                      }`}
-                    >
-                      {node.name}
-                    </button>
-                  </div>
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => handleViewModeChange(m)}
+                    className={`relative inline-flex h-full cursor-pointer items-center justify-center rounded-[9px] px-2.5 text-[12px] whitespace-nowrap transition-colors ${
+                      active
+                        ? "font-semibold text-[var(--text-primary)]"
+                        : "font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                    }`}
+                  >
+                    {active && (
+                      <motion.span
+                        layoutId="storage-view-mode-pill"
+                        transition={pillTransition}
+                        className="absolute inset-0 rounded-[9px] border border-[var(--border-hairline)]/70 bg-[var(--bg-surface)] shadow-xs"
+                      />
+                    )}
+                    <span className="relative z-10">{label}</span>
+                  </button>
                 );
               })}
             </div>
 
-            <div className="flex items-center gap-2 font-mono-code text-[11.5px] text-[var(--text-muted)]">
-              <HardDrive className="h-3.5 w-3.5 text-[var(--accent)]" />
-              <span>
-                共 {formatBytes(snapshotResp?.totalBytes ?? 0)} · {snapshotResp?.totalFiles ?? 0} 文件 ·{" "}
-                {snapshotResp?.sessionCount ?? 0} 会话
-              </span>
+            {/* Display Style Switcher */}
+            <div className="inline-flex h-8 items-center rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-subtle)] p-0.5">
+              {(
+                [
+                  ["treemap", "方框", Layers],
+                  ["list", "列表", ListChecks],
+                ] as const
+              ).map(([styleKey, styleLabel, Icon]) => {
+                const active = displayStyle === styleKey;
+                return (
+                  <button
+                    key={styleKey}
+                    type="button"
+                    onClick={() => setDisplayStyle(styleKey)}
+                    className={`relative inline-flex h-full cursor-pointer items-center justify-center gap-1.5 rounded-[9px] px-2.5 text-[12px] whitespace-nowrap transition-colors ${
+                      active
+                        ? "font-semibold text-[var(--text-primary)]"
+                        : "font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                    }`}
+                  >
+                    {active && (
+                      <motion.span
+                        layoutId="storage-display-style-pill"
+                        transition={pillTransition}
+                        className="absolute inset-0 rounded-[9px] border border-[var(--border-hairline)]/70 bg-[var(--bg-surface)] shadow-xs"
+                      />
+                    )}
+                    <Icon className="relative z-10 h-3.5 w-3.5 shrink-0" />
+                    <span className="relative z-10">{styleLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Search */}
+            <div className="relative min-w-[190px] max-w-[280px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-faint)]" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setPathIds([]);
+                  setSelectedId("");
+                }}
+                placeholder="搜索会话名 / UUID / 文件..."
+                className="agy-input agy-search-input h-8 w-full pl-9 pr-8 text-[12px]"
+              />
+              <AnimatePresence>
+                {query.length > 0 && (
+                  <motion.button
+                    type="button"
+                    aria-label="清空搜索"
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    transition={{ duration: prefersReduced ? 0.04 : 0.12 }}
+                    onClick={() => {
+                      setQuery("");
+                      setPathIds([]);
+                      setSelectedId("");
+                    }}
+                    className="absolute right-2 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-[var(--text-faint)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
+                  >
+                    <X className="h-3 w-3" />
+                  </motion.button>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Include AppData Checkbox */}
+            <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-2.5 text-[12px] font-medium text-[var(--text-muted)] select-none transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]">
+              <input
+                type="checkbox"
+                checked={includeAppdata}
+                onChange={(e) => {
+                  setIncludeAppdata(e.target.checked);
+                  setPathIds([]);
+                  setSelectedId("");
+                }}
+                className="h-3.5 w-3.5 accent-[var(--accent)]"
+              />
+              <span className="whitespace-nowrap">含应用缓存</span>
+            </label>
+
+            <div className="ml-auto flex items-center gap-2">
+              {orphanCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClickOrphanButton}
+                  title="清理本地文件已删除但仍残留在 Antigravity 对话列表索引中的失效记录"
+                  className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-[var(--warn)]/40 bg-[var(--warn-bg)] px-3 text-[12px] font-semibold whitespace-nowrap text-[var(--warn)] transition-all hover:brightness-95 active:scale-[0.98]"
+                >
+                  <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                  <span>清理失效记录 ({orphanCount})</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                disabled={scanning}
+                onClick={() => runFullScan(viewMode, includeAppdata, query)}
+                className="agy-btn h-8 px-3 text-[12px]"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 shrink-0 ${scanning ? "animate-spin" : ""}`} />
+                <span>{scanning ? "扫描中..." : "重新扫描"}</span>
+              </button>
             </div>
           </div>
-        ) : (
-          <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-[var(--border-hairline)] pt-2.5">
-            {viewMode !== "session" && pathIds.length > 0 && (
-              <button
-                type="button"
-                onClick={handleNavigateUp}
-                className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--text-primary)] hover:border-[var(--border-strong)]"
-              >
-                <ArrowLeft className="h-3 w-3" />
-                <span>返回上级</span>
-              </button>
-            )}
 
-            {/* Sort pills */}
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => handleToggleSort("time")}
-                className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-1 text-[11.5px] transition-colors ${
-                  sortKey === "time"
-                    ? "border-[var(--accent)]/40 bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
-                    : "border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                }`}
+          {/* Sub-row: Treemap Breadcrumbs OR List Sort & Filters */}
+          <AnimatePresence mode="wait" initial={false}>
+            {displayStyle === "treemap" ? (
+              <motion.div
+                key="subrow-treemap"
+                initial={{ opacity: 0, y: prefersReduced ? 0 : 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: prefersReduced ? 0 : -4 }}
+                transition={{ duration: prefersReduced ? 0.05 : 0.14 }}
+                className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-hairline)] pt-2.5"
               >
-                {sortKey === "time" && !sortAsc ? (
-                  <ArrowDownWideNarrow className="h-3 w-3" />
-                ) : (
-                  <ArrowUpNarrowWide className="h-3 w-3" />
-                )}
-                <span>
-                  {sortKey === "time"
-                    ? sortAsc
-                      ? "最近更新 ↑ 最久未用"
-                      : "最近更新 ↓ 最新在前"
-                    : "最近更新"}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleToggleSort("size")}
-                className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-1 text-[11.5px] transition-colors ${
-                  sortKey === "size"
-                    ? "border-[var(--accent)]/40 bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
-                    : "border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                {sortKey === "size" && sortAsc ? (
-                  <ArrowUpNarrowWide className="h-3 w-3" />
-                ) : (
-                  <ArrowDownWideNarrow className="h-3 w-3" />
-                )}
-                <span>
-                  {sortKey === "size"
-                    ? sortAsc
-                      ? "占用空间 ↑ 最小在前"
-                      : "占用空间 ↓ 最大在前"
-                    : "占用空间"}
-                </span>
-              </button>
-            </div>
-
-            {viewMode === "session" && (
-              <>
-                <span className="h-4 w-px bg-[var(--border-hairline)]" />
-                <div className="flex items-center gap-1">
-                  {(
-                    [
-                      ["all", "全部时间"],
-                      ["7d", "> 7天未用"],
-                      ["30d", "> 30天未用"],
-                    ] as Array<[StorageAgeFilter, string]>
-                  ).map(([ak, al]) => (
+                <div className="flex min-w-0 flex-wrap items-center gap-1">
+                  {pathIds.length > 0 && (
                     <button
-                      key={ak}
                       type="button"
-                      onClick={() => {
-                        setAgeFilter(ak);
-                        setLastCheckedIdx(null);
-                      }}
-                      className={`cursor-pointer rounded-lg border px-2 py-1 text-[11.5px] transition-colors ${
-                        ageFilter === ak
-                          ? "border-[var(--border-strong)] bg-[var(--bg-subtle)] font-semibold text-[var(--text-primary)]"
-                          : "border-transparent text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]"
-                      }`}
+                      onClick={handleNavigateUp}
+                      className="mr-1 inline-flex h-6 cursor-pointer items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)] px-2 text-[11.5px] font-medium whitespace-nowrap text-[var(--text-primary)] transition-colors hover:border-[var(--border-strong)]"
                     >
-                      {al}
+                      <ArrowLeft className="h-3 w-3" />
+                      <span>返回上级</span>
                     </button>
-                  ))}
-                </div>
-
-                <span className="h-4 w-px bg-[var(--border-hairline)]" />
-                <div className="flex items-center gap-1">
-                  {(
-                    [
-                      ["archived", "已归档"],
-                      ["subagent", "子代理会话"],
-                      ["unnamed", "未命名会话"],
-                    ] as Array<[StorageAttrFilter, string]>
-                  ).map(([fk, fl]) => {
-                    const active = attrFilters.has(fk);
+                  )}
+                  {trail.map((node, idx) => {
+                    const isLast = idx === trail.length - 1;
                     return (
-                      <button
-                        key={fk}
-                        type="button"
-                        onClick={() => toggleAttrFilter(fk)}
-                        className={`cursor-pointer rounded-lg border px-2 py-1 text-[11.5px] transition-colors ${
-                          active
-                            ? "border-[var(--accent)]/40 bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
-                            : "border-[var(--border-hairline)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                        }`}
-                      >
-                        {fl}
-                      </button>
+                      <div key={`${idx}:${node.nodeId}`} className="flex items-center gap-1">
+                        {idx > 0 && <ChevronRight className="h-3 w-3 text-[var(--text-faint)]" />}
+                        <button
+                          type="button"
+                          disabled={isLast}
+                          onClick={() => handleJumpCrumb(idx)}
+                          className={`max-w-[200px] truncate rounded-md px-1.5 py-0.5 text-[12px] transition-colors ${
+                            isLast
+                              ? "bg-[var(--bg-subtle)]/80 font-semibold text-[var(--text-primary)]"
+                              : "cursor-pointer font-medium text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
+                          }`}
+                        >
+                          {node.name}
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
-              </>
-            )}
 
-            <span className="ml-auto font-mono-code text-[11.5px] text-[var(--text-muted)]">
-              {viewMode === "session"
-                ? `共 ${listItems.length} 个会话 · ${formatBytes(listTotalBytes)}`
-                : `当前 ${listItems.length} 项 · ${formatBytes(focusNode?.sizeBytes ?? 0)}`}
-            </span>
-          </div>
-        )}
-
-        {/* Thin Scan Progress Strip */}
-        {scanning && (
-          <div className="mt-2 flex items-center gap-2.5">
-            <div className="h-1 flex-1 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-              <div
-                style={{ width: `${Math.round((scanProgress?.fraction ?? 0.05) * 100)}%` }}
-                className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-150"
-              />
-            </div>
-            <span className="max-w-[320px] truncate font-mono-code text-[10.5px] text-[var(--text-faint)]">
-              {scanProgress?.currentPath || "正在扫描存储根目录..."}
-            </span>
-          </div>
-        )}
-      </section>
-
-      {/* Workspace Body */}
-      {displayStyle === "treemap" ? (
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_340px]">
-          {/* Left: Treemap + Bottom Purpose Hover Bar */}
-          <div className="flex min-h-0 flex-col gap-2">
-            <div className="min-h-0 flex-1">
-              <SpaceTreemap
-                rootNode={focusNode}
-                selectedId={selectedId}
-                isDark={isDark}
-                scanning={scanning}
-                scanProgress={scanProgress}
-                zoomDirection={zoomDir}
-                onHoverNode={setHoveredNode}
-                onSelectNode={(n) => setSelectedId(n.nodeId)}
-                onActivateNode={handleDrillNode}
-                onContextMenuNode={(n, x, y) => setContextMenu({ node: n, x, y })}
-              />
-            </div>
-
-            {/* Hover Purpose Hint Bar */}
-            {(() => {
-              const target = hoveredNode || inspectorNode;
-              const delTone = target ? DEL_TONE_MAP[target.deletability] ?? "warn" : "muted";
-              return (
-                <div className="agy-card flex shrink-0 items-center justify-between gap-3 px-3.5 py-2 text-[12px]">
-                  <span className="min-w-0 truncate text-[var(--text-muted)]">
-                    {target
-                      ? `${target.name}：${target.purposeDesc || target.subtitle || target.path}`
-                      : "悬停方块查看内容用途，点击选中详情，双击深入下一层级，右键快捷清理"}
+                <div className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)]/65 px-2.5 py-1 font-mono-code text-[11.5px] tabular-nums text-[var(--text-muted)]">
+                  <HardDrive className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
+                  <span>
+                    共 {formatBytes(snapshotResp?.totalBytes ?? 0)} · {snapshotResp?.totalFiles ?? 0} 文件 ·{" "}
+                    {snapshotResp?.sessionCount ?? 0} 会话
                   </span>
-                  {target?.deletabilityLabel && (
-                    <StatusPill tone={delTone} className="shrink-0">
-                      {target.deletabilityLabel}
-                    </StatusPill>
-                  )}
                 </div>
-              );
-            })()}
-          </div>
-
-          {/* Right: Inspector + Ranked Children */}
-          <aside className="agy-card flex min-h-0 flex-col gap-3 overflow-hidden p-4">
-            {inspectorNode ? (
-              <>
-                <div className="shrink-0">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <StatusPill tone="muted">
-                      {KIND_LABELS[inspectorNode.kind] ?? inspectorNode.kind}
-                    </StatusPill>
-                    {inspectorNode.deletabilityLabel && (
-                      <StatusPill tone={DEL_TONE_MAP[inspectorNode.deletability] ?? "warn"}>
-                        {inspectorNode.deletabilityLabel}
-                      </StatusPill>
-                    )}
-                    {inspectorNode.protected && inspectorNode.deletabilityLabel !== "受保护配置" && (
-                      <StatusPill tone="danger">受保护</StatusPill>
-                    )}
-                  </div>
-
-                  <h3 className="mt-2 truncate text-[14.5px] font-bold text-[var(--text-primary)]">
-                    {inspectorNode.name}
-                  </h3>
-                  <p className="mt-0.5 truncate font-mono-code text-[11px] text-[var(--text-faint)]" title={inspectorNode.path}>
-                    {inspectorNode.path || inspectorNode.subtitle || "-"}
-                  </p>
-
-                  {inspectorNode.purposeDesc && (
-                    <p className="mt-2 rounded-xl bg-[var(--bg-subtle)] px-3 py-2 text-[12px] leading-relaxed text-[var(--text-muted)]">
-                      {inspectorNode.purposeDesc}
-                    </p>
-                  )}
-
-                  {/* 3 Stats */}
-                  <div className="mt-3 grid grid-cols-3 gap-2">
-                    <div className="rounded-xl border border-[var(--border-hairline)] px-2.5 py-2 text-center">
-                      <div className="text-[10.5px] text-[var(--text-faint)]">占用大小</div>
-                      <div className="mt-0.5 font-mono-code text-[12.5px] font-bold text-[var(--text-primary)]">
-                        {formatBytes(inspectorNode.sizeBytes)}
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-[var(--border-hairline)] px-2.5 py-2 text-center">
-                      <div className="text-[10.5px] text-[var(--text-faint)]">占总存储</div>
-                      <div className="mt-0.5 font-mono-code text-[12.5px] font-bold text-[var(--text-primary)]">
-                        {((inspectorNode.sizeBytes / totalRootBytes) * 100).toFixed(1)}%
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-[var(--border-hairline)] px-2.5 py-2 text-center">
-                      <div className="text-[10.5px] text-[var(--text-faint)]">文件数</div>
-                      <div className="mt-0.5 font-mono-code text-[12.5px] font-bold text-[var(--text-primary)]">
-                        {inspectorNode.fileCount}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {(inspectorNode.kind === "session" || inspectorNode.kind === "session_files") &&
-                      inspectorNode.sessionId && (
-                        <button
-                          type="button"
-                          disabled={
-                            inspectorNode.kind === "session"
-                              ? !inspectorNode.children.some(
-                                  (c) => c.kind === "session_files" && c.fileCount > 0,
-                                )
-                              : inspectorNode.deleteTargets.length === 0
-                          }
-                          onClick={() => openDeleteSessionFilesDialog([inspectorNode])}
-                          className="agy-btn h-[30px] text-[11.5px]"
-                        >
-                          <Trash2 className="h-3.5 w-3.5 text-[var(--warn)]" />
-                          <span>仅删会话文件</span>
-                        </button>
-                      )}
-
-                    {inspectorNode.kind === "session" && inspectorNode.sessionId && (
-                      <button
-                        type="button"
-                        onClick={() => openDeleteSessionDialog([inspectorNode])}
-                        className="agy-btn-danger h-[30px] text-[11.5px]"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        <span>删除会话</span>
-                      </button>
-                    )}
-
-                    {!["root", "session", "session_files", "aggregate"].includes(inspectorNode.kind) &&
-                      inspectorNode.deleteTargets.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => openDeleteItemsDialog([inspectorNode])}
-                          className="agy-btn-danger h-[30px] text-[11.5px]"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          <span>{inspectorNode.kind === "file" ? "删除此文件" : "清理此项"}</span>
-                        </button>
-                      )}
-
-                    {inspectorNode.children.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => handleDrillNode(inspectorNode)}
-                        className="agy-btn h-[30px] text-[11.5px]"
-                      >
-                        <span>深入查看</span>
-                      </button>
-                    )}
-
-                    {inspectorNode.path && (
-                      <button
-                        type="button"
-                        onClick={() => openExplorer(inspectorNode.path)}
-                        className="agy-btn h-[30px] text-[11.5px]"
-                      >
-                        <FolderOpen className="h-3.5 w-3.5" />
-                        <span>打开目录</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Ranked Children List */}
-                <div className="flex min-h-0 flex-1 flex-col border-t border-[var(--border-hairline)] pt-3">
-                  <div className="mb-2 flex items-center justify-between text-[11.5px] font-semibold text-[var(--text-muted)]">
-                    <span>当前层级（{rankedChildren.length} 项）</span>
-                    <span>大小占比</span>
-                  </div>
-                  <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
-                    {rankedChildren.length === 0 ? (
-                      <div className="py-6 text-center text-[12px] text-[var(--text-faint)]">
-                        当前层级无更多子项
-                      </div>
-                    ) : (
-                      rankedChildren.map((ch) => {
-                        const active = selectedId === ch.nodeId;
-                        const pct = Math.min(
-                          100,
-                          (ch.sizeBytes / Math.max(1, focusNode?.sizeBytes ?? 1)) * 100,
-                        );
-                        return (
-                          <button
-                            key={ch.nodeId}
-                            type="button"
-                            onClick={() => setSelectedId(ch.nodeId)}
-                            onDoubleClick={() => {
-                              if (ch.children.length > 0) handleDrillNode(ch);
-                            }}
-                            className={`w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transition-colors ${
-                              active
-                                ? "border-[var(--accent)]/50 bg-[var(--accent-soft)]"
-                                : "border-transparent hover:bg-[var(--bg-subtle)]"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="truncate text-[12px] font-medium text-[var(--text-primary)]">
-                                {ch.name}
-                              </span>
-                              <span className="shrink-0 font-mono-code text-[11.5px] font-semibold text-[var(--text-muted)]">
-                                {formatBytes(ch.sizeBytes)}
-                              </span>
-                            </div>
-                            <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-                              <div
-                                style={{ width: `${Math.max(2, pct)}%` }}
-                                className="h-full rounded-full bg-[var(--accent)]/70"
-                              />
-                            </div>
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-              </>
+              </motion.div>
             ) : (
-              <div className="py-10 text-center text-[12.5px] text-[var(--text-faint)]">
-                暂无可检视的存储条目
-              </div>
-            )}
-          </aside>
-        </div>
-      ) : (
-        /* List Workspace */
-        <section className="agy-card flex min-h-0 flex-1 flex-col overflow-hidden">
-          {/* Table Header */}
-          <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border-hairline)] bg-[var(--bg-subtle)]/70 px-4 py-2 text-[11.5px] font-semibold text-[var(--text-muted)]">
-            <input
-              type="checkbox"
-              checked={allListChecked}
-              disabled={listItems.length === 0}
-              onChange={(e) => {
-                if (e.target.checked) {
-                  setCheckedIds(new Set(listItems.map((i) => i.nodeId)));
-                } else {
-                  setCheckedIds(new Set());
-                }
-                setLastCheckedIdx(null);
-              }}
-              className="h-3.5 w-3.5 cursor-pointer accent-[var(--accent)]"
-            />
-            <span className="min-w-0 flex-1">
-              {viewMode === "session" ? "会话名称 / 产物与对话库详情" : "名称 / 路径"}
-            </span>
-            <span className="w-[175px] shrink-0">最近更新</span>
-            <span className="w-[155px] shrink-0">占用空间</span>
-            <span className="w-[140px] shrink-0 text-right">快捷操作</span>
-          </div>
+              <motion.div
+                key="subrow-list"
+                initial={{ opacity: 0, y: prefersReduced ? 0 : 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: prefersReduced ? 0 : -4 }}
+                transition={{ duration: prefersReduced ? 0.05 : 0.14 }}
+                className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-[var(--border-hairline)] pt-2.5"
+              >
+                {viewMode !== "session" && pathIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleNavigateUp}
+                    className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)] px-2.5 text-[11.5px] font-medium whitespace-nowrap text-[var(--text-primary)] transition-colors hover:border-[var(--border-strong)]"
+                  >
+                    <ArrowLeft className="h-3 w-3" />
+                    <span>返回上级</span>
+                  </button>
+                )}
 
-          {/* Scrollable Rows */}
-          <div className="min-h-0 flex-1 divide-y divide-[var(--border-hairline)] overflow-y-auto">
-            {listItems.length === 0 ? (
-              <div className="flex h-full items-center justify-center py-12 text-[13px] text-[var(--text-faint)]">
-                当前筛选条件下没有可清理的会话或存储条目
-              </div>
-            ) : (
-              listItems.map((node, idx) => {
-                const isChecked = checkedIds.has(node.nodeId);
-                const isSessionMode = viewMode === "session";
-                const { filesBytes, pbBytes } = sessionBreakdown(node);
-                const idle = formatIdleAge(node.mtime);
-                const pctOfTotal = (node.sizeBytes / Math.max(1, listTotalBytes)) * 100;
-                const barPct = Math.max(2, (node.sizeBytes / listMaxBytes) * 100);
-
-                let metaText = node.subtitle || node.path || KIND_LABELS[node.kind] || node.kind;
-                if (isSessionMode) {
-                  const splitHint =
-                    filesBytes > 0
-                      ? `产出 ${formatBytes(filesBytes)} · 对话库 ${formatBytes(pbBytes)}`
-                      : `仅保留对话库 ${formatBytes(pbBytes)}`;
-                  metaText = metaText ? `${metaText} · ${splitHint}` : splitHint;
-                }
-
-                return (
-                  <div
-                    key={node.nodeId}
-                    className={`flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--bg-row-hover)] ${
-                      isChecked ? "bg-[var(--accent-soft)]/55" : ""
+                {/* Sort pills */}
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleSort("time")}
+                    className={`inline-flex h-7 cursor-pointer items-center gap-1 rounded-lg border px-2.5 text-[11.5px] whitespace-nowrap transition-colors ${
+                      sortKey === "time"
+                        ? "border-[var(--accent)]/40 bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
+                        : "border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
                     }`}
                   >
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={(e) => {
-                        const native = e.nativeEvent as MouseEvent;
-                        handleRowCheck(node.nodeId, idx, e.target.checked, Boolean(native.shiftKey));
-                      }}
-                      className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[var(--accent)]"
-                    />
+                    {sortKey === "time" && !sortAsc ? (
+                      <ArrowDownWideNarrow className="h-3 w-3" />
+                    ) : (
+                      <ArrowUpNarrowWide className="h-3 w-3" />
+                    )}
+                    <span>
+                      {sortKey === "time"
+                        ? sortAsc
+                          ? "最近更新 ↑ 最久未用"
+                          : "最近更新 ↓ 最新在前"
+                        : "最近更新"}
+                    </span>
+                  </button>
 
-                    {/* Name + Badges */}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate text-[13px] font-semibold text-[var(--text-primary)]">
-                          {node.name}
-                        </span>
-                        {isSessionMode && node.isArchived && (
-                          <StatusPill tone="muted">已归档</StatusPill>
-                        )}
-                        {isSessionMode && node.isSubagent && (
-                          <StatusPill tone="info">子代理</StatusPill>
-                        )}
-                        {!isSessionMode && node.protected && (
-                          <StatusPill tone="warn">受保护</StatusPill>
-                        )}
-                      </div>
-                      <p className="mt-0.5 truncate text-[11.5px] text-[var(--text-faint)]">
-                        {metaText}
-                      </p>
-                    </div>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleSort("size")}
+                    className={`inline-flex h-7 cursor-pointer items-center gap-1 rounded-lg border px-2.5 text-[11.5px] whitespace-nowrap transition-colors ${
+                      sortKey === "size"
+                        ? "border-[var(--accent)]/40 bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
+                        : "border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+                    }`}
+                  >
+                    {sortKey === "size" && sortAsc ? (
+                      <ArrowUpNarrowWide className="h-3 w-3" />
+                    ) : (
+                      <ArrowDownWideNarrow className="h-3 w-3" />
+                    )}
+                    <span>
+                      {sortKey === "size"
+                        ? sortAsc
+                          ? "占用空间 ↑ 最小在前"
+                          : "占用空间 ↓ 最大在前"
+                        : "占用空间"}
+                    </span>
+                  </button>
+                </div>
 
-                    {/* Mtime & Idle Age */}
-                    <div className="w-[175px] shrink-0">
-                      <div className="font-mono-code text-[11.5px] text-[var(--text-muted)]">
-                        {formatMtime(node.mtime)}
-                      </div>
-                      <div className="mt-0.5">
-                        <StatusPill tone={idle.tone}>{idle.label}</StatusPill>
-                      </div>
-                    </div>
-
-                    {/* Size & Bar */}
-                    <div className="w-[155px] shrink-0">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="font-mono-code text-[12.5px] font-semibold text-[var(--text-primary)]">
-                          {formatBytes(node.sizeBytes)}
-                        </span>
-                        <span className="font-mono-code text-[10.5px] text-[var(--text-faint)]">
-                          {pctOfTotal.toFixed(1)}%
-                        </span>
-                      </div>
-                      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-                        <div
-                          style={{ width: `${barPct}%` }}
-                          className="h-full rounded-full bg-[var(--accent)]"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Row Quick Actions */}
-                    <div className="flex w-[140px] shrink-0 items-center justify-end gap-1">
-                      {!isSessionMode && node.children.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => handleDrillNode(node)}
-                          className="cursor-pointer rounded-lg border border-[var(--border-hairline)] px-2 py-1 text-[11px] font-medium text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
-                        >
-                          展开
-                        </button>
-                      )}
-                      {isSessionMode && filesBytes > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => openDeleteSessionFilesDialog([node])}
-                          title="仅删除会话产出文件，保留对话记录"
-                          className="cursor-pointer rounded-lg border border-[var(--warn)]/35 bg-[var(--warn-bg)] px-2 py-1 text-[11px] font-medium text-[var(--warn)] hover:brightness-95"
-                        >
-                          删产物
-                        </button>
-                      )}
-                      {isSessionMode ? (
-                        <button
-                          type="button"
-                          onClick={() => openDeleteSessionDialog([node])}
-                          className="cursor-pointer rounded-lg border border-[var(--danger)]/35 bg-[var(--danger-bg)] px-2 py-1 text-[11px] font-medium text-[var(--danger)] hover:brightness-95"
-                        >
-                          删会话
-                        </button>
-                      ) : (
-                        node.deleteTargets.length > 0 && (
+                {viewMode === "session" && (
+                  <>
+                    <span className="h-4 w-px bg-[var(--border-hairline)]" />
+                    <div className="inline-flex h-7 items-center rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)]/70 p-0.5">
+                      {(
+                        [
+                          ["all", "全部时间"],
+                          ["7d", "> 7天未用"],
+                          ["30d", "> 30天未用"],
+                        ] as Array<[StorageAgeFilter, string]>
+                      ).map(([ak, al]) => {
+                        const active = ageFilter === ak;
+                        return (
                           <button
+                            key={ak}
                             type="button"
-                            onClick={() => openDeleteItemsDialog([node])}
-                            className="cursor-pointer rounded-lg border border-[var(--danger)]/35 bg-[var(--danger-bg)] px-2 py-1 text-[11px] font-medium text-[var(--danger)] hover:brightness-95"
+                            onClick={() => {
+                              setAgeFilter(ak);
+                              setLastCheckedIdx(null);
+                            }}
+                            className={`relative inline-flex h-full cursor-pointer items-center rounded-md px-2 text-[11.5px] whitespace-nowrap transition-colors ${
+                              active
+                                ? "font-semibold text-[var(--text-primary)]"
+                                : "font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                            }`}
                           >
-                            清理
+                            {active && (
+                              <motion.span
+                                layoutId="storage-age-filter-pill"
+                                transition={pillTransition}
+                                className="absolute inset-0 rounded-md bg-[var(--bg-surface)] shadow-xs"
+                              />
+                            )}
+                            <span className="relative z-10">{al}</span>
                           </button>
-                        )
-                      )}
-                      {node.path && (
-                        <button
-                          type="button"
-                          onClick={() => openExplorer(node.path)}
-                          title="打开所在目录"
-                          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-transparent text-[var(--text-muted)] hover:border-[var(--border-hairline)] hover:text-[var(--text-primary)]"
-                        >
-                          <FolderOpen className="h-3.5 w-3.5" />
-                        </button>
-                      )}
+                        );
+                      })}
                     </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
 
-          {/* Bottom Docked BatchActionBar */}
-          <AnimatePresence>
-            {selectedListNodes.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 8 }}
-                transition={{ duration: 0.16 }}
-                className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--border-hairline)] bg-[var(--bg-subtle)]/90 px-4 py-2.5 backdrop-blur"
-              >
-                <div className="flex items-center gap-2 text-[12.5px]">
-                  <span className="font-semibold text-[var(--text-primary)]">
-                    已选 {selectedListNodes.length} 项
-                  </span>
-                  <span className="font-mono-code text-[var(--text-muted)]">
-                    共 {formatBytes(selectedListBytes)}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCheckedIds((prev) => {
-                        const next = new Set<string>();
-                        for (const item of listItems) {
-                          if (!prev.has(item.nodeId)) next.add(item.nodeId);
-                        }
-                        return next;
-                      });
-                    }}
-                    className="ml-2 cursor-pointer text-[11.5px] font-medium text-[var(--accent)] hover:underline"
-                  >
-                    反选
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCheckedIds(new Set());
-                      setLastCheckedIdx(null);
-                    }}
-                    className="cursor-pointer text-[11.5px] font-medium text-[var(--text-muted)] hover:underline"
-                  >
-                    清空
-                  </button>
-                </div>
+                    <span className="h-4 w-px bg-[var(--border-hairline)]" />
+                    <div className="flex items-center gap-1">
+                      {(
+                        [
+                          ["archived", "已归档"],
+                          ["subagent", "子代理会话"],
+                          ["unnamed", "未命名会话"],
+                        ] as Array<[StorageAttrFilter, string]>
+                      ).map(([fk, fl]) => {
+                        const active = attrFilters.has(fk);
+                        return (
+                          <button
+                            key={fk}
+                            type="button"
+                            onClick={() => toggleAttrFilter(fk)}
+                            className={`inline-flex h-7 cursor-pointer items-center rounded-lg border px-2 text-[11.5px] whitespace-nowrap transition-colors ${
+                              active
+                                ? "border-[var(--accent)]/40 bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
+                                : "border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+                            }`}
+                          >
+                            {fl}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
 
-                <div className="flex items-center gap-2">
-                  {viewMode === "session" ? (
-                    <>
-                      <button
-                        type="button"
-                        disabled={!selectedListNodes.some((n) => sessionBreakdown(n).filesBytes > 0)}
-                        onClick={() => openDeleteSessionFilesDialog(selectedListNodes)}
-                        className="agy-btn h-[30px] text-[12px]"
-                      >
-                        <Trash2 className="h-3.5 w-3.5 text-[var(--warn)]" />
-                        <span>仅删除会话文件（保留记录）</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openDeleteSessionDialog(selectedListNodes)}
-                        className="agy-btn-danger h-[30px] text-[12px]"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        <span>删除所选会话</span>
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={!selectedListNodes.some((n) => n.deleteTargets.length > 0)}
-                      onClick={() => openDeleteItemsDialog(selectedListNodes)}
-                      className="agy-btn-danger h-[30px] text-[12px]"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      <span>清理所选条目</span>
-                    </button>
-                  )}
-                </div>
+                <span className="ml-auto inline-flex items-center rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)]/65 px-2.5 py-1 font-mono-code text-[11.5px] tabular-nums text-[var(--text-muted)]">
+                  {viewMode === "session"
+                    ? `共 ${listItems.length} 个会话 · ${formatBytes(listTotalBytes)}`
+                    : `当前 ${listItems.length} 项 · ${formatBytes(focusNode?.sizeBytes ?? 0)}`}
+                </span>
               </motion.div>
             )}
           </AnimatePresence>
-        </section>
-      )}
 
-      {/* Right-click Treemap Context Menu */}
-      {contextMenu && (
-        <div
-          style={{
-            left: Math.min(contextMenu.x, Math.max(16, window.innerWidth - 260)),
-            top: Math.min(contextMenu.y, Math.max(16, window.innerHeight - 210)),
-          }}
-          onClick={(e) => e.stopPropagation()}
-          className="fixed z-50 min-w-[230px] overflow-hidden rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-1 shadow-xl"
-        >
-          {(contextMenu.node.kind === "session" || contextMenu.node.kind === "session_files") &&
-            contextMenu.node.sessionId && (
-              <>
-                {((contextMenu.node.kind === "session" &&
-                  contextMenu.node.children.some(
-                    (c) => c.kind === "session_files" && c.fileCount > 0,
-                  )) ||
-                  (contextMenu.node.kind === "session_files" &&
-                    contextMenu.node.deleteTargets.length > 0)) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const n = contextMenu.node;
-                      setContextMenu(null);
-                      openDeleteSessionFilesDialog([n]);
-                    }}
-                    className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]"
+          {/* Thin Scan Progress Strip */}
+          {scanning && (
+            <div className="mt-2.5 flex items-center gap-2.5">
+              <div className="h-1 flex-1 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
+                <div
+                  style={{ width: `${Math.round((scanProgress?.fraction ?? 0.05) * 100)}%` }}
+                  className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-150"
+                />
+              </div>
+              <span className="max-w-[320px] truncate font-mono-code text-[10.5px] text-[var(--text-faint)]">
+                {scanProgress?.currentPath || "正在扫描存储根目录..."}
+              </span>
+            </div>
+          )}
+        </section>
+
+        {/* Workspace Body */}
+        <AnimatePresence mode="wait" initial={false}>
+          {displayStyle === "treemap" ? (
+            <motion.div
+              key="workspace-treemap"
+              initial={{ opacity: 0, y: prefersReduced ? 0 : 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: prefersReduced ? 0 : -5 }}
+              transition={viewTransition}
+              className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_348px]"
+            >
+              {/* Left: Treemap + Bottom Purpose Hover Bar */}
+              <div className="flex min-h-0 flex-col gap-2">
+                <div className="min-h-0 flex-1">
+                  <SpaceTreemap
+                    rootNode={focusNode}
+                    viewKey={`${viewMode}:${includeAppdata ? "1" : "0"}:${focusNode?.nodeId || "root"}`}
+                    selectedId={selectedId}
+                    isDark={isDark}
+                    scanning={scanning}
+                    scanProgress={scanProgress}
+                    zoomDirection={zoomDir}
+                    onHoverNode={setHoveredNode}
+                    onSelectNode={(n) => setSelectedId(n.nodeId)}
+                    onActivateNode={handleDrillNode}
+                    onContextMenuNode={(n, x, y) => setContextMenu({ node: n, x, y })}
+                  />
+                </div>
+
+                {/* Hover Purpose Hint Bar */}
+                <div className="agy-card flex min-h-[38px] shrink-0 items-center justify-between gap-3 px-3.5 py-2 text-[12px]">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <Info className="h-3.5 w-3.5 shrink-0 text-[var(--text-faint)]" />
+                    <span className="min-w-0 truncate text-[var(--text-muted)]">
+                      {hintTarget
+                        ? `${hintTarget.name}：${hintTarget.purposeDesc || hintTarget.subtitle || hintTarget.path}`
+                        : "悬停方块查看内容用途，点击选中详情，双击深入下一层级，右键快捷清理"}
+                    </span>
+                  </div>
+                  {hintTarget?.deletabilityLabel && (
+                    <StatusPill tone={hintDelTone} className="shrink-0">
+                      {hintTarget.deletabilityLabel}
+                    </StatusPill>
+                  )}
+                </div>
+              </div>
+
+              {/* Right: Inspector + Ranked Children */}
+              <aside className="agy-card flex min-h-0 flex-col gap-3 overflow-hidden p-4">
+                {inspectorNode ? (
+                  <>
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.div
+                        key={inspectorNode.nodeId}
+                        initial={{ opacity: 0, y: prefersReduced ? 0 : 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: prefersReduced ? 0 : -3 }}
+                        transition={{ duration: prefersReduced ? 0.05 : 0.14, ease: "easeOut" }}
+                        className="shrink-0"
+                      >
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <StatusPill tone="muted">
+                            {KIND_LABELS[inspectorNode.kind] ?? inspectorNode.kind}
+                          </StatusPill>
+                          {inspectorNode.deletabilityLabel && (
+                            <StatusPill tone={DEL_TONE_MAP[inspectorNode.deletability] ?? "warn"}>
+                              {inspectorNode.deletabilityLabel}
+                            </StatusPill>
+                          )}
+                          {inspectorNode.protected && inspectorNode.deletabilityLabel !== "受保护配置" && (
+                            <StatusPill tone="danger">受保护</StatusPill>
+                          )}
+                        </div>
+
+                        <h3 className="mt-2 truncate text-[14.5px] font-bold text-[var(--text-primary)]">
+                          {inspectorNode.name}
+                        </h3>
+                        <p
+                          className="mt-0.5 truncate font-mono-code text-[11px] text-[var(--text-faint)]"
+                          title={inspectorNode.path}
+                        >
+                          {inspectorNode.path || inspectorNode.subtitle || "-"}
+                        </p>
+
+                        {inspectorNode.purposeDesc && (
+                          <p className="mt-2 rounded-xl border border-[var(--border-hairline)]/80 bg-[var(--bg-subtle)]/75 px-3 py-2 text-[12px] leading-relaxed text-[var(--text-muted)]">
+                            {inspectorNode.purposeDesc}
+                          </p>
+                        )}
+
+                        {/* 3 Stats */}
+                        <div className="mt-3 grid grid-cols-3 gap-2">
+                          <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-2.5 py-2 text-center">
+                            <div className="text-[10.5px] text-[var(--text-faint)]">占用大小</div>
+                            <div className="mt-0.5 font-mono-code text-[12.5px] font-bold tabular-nums text-[var(--text-primary)]">
+                              {formatBytes(inspectorNode.sizeBytes)}
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-2.5 py-2 text-center">
+                            <div className="text-[10.5px] text-[var(--text-faint)]">占总存储</div>
+                            <div className="mt-0.5 font-mono-code text-[12.5px] font-bold tabular-nums text-[var(--text-primary)]">
+                              {((inspectorNode.sizeBytes / totalRootBytes) * 100).toFixed(1)}%
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-2.5 py-2 text-center">
+                            <div className="text-[10.5px] text-[var(--text-faint)]">文件数</div>
+                            <div className="mt-0.5 font-mono-code text-[12.5px] font-bold tabular-nums text-[var(--text-primary)]">
+                              {inspectorNode.fileCount}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Balanced Action Buttons Grid */}
+                        {inspectorActions.length > 0 && (
+                          <div
+                            className={`mt-3 grid gap-2 ${
+                              inspectorActions.length === 1 ? "grid-cols-1" : "grid-cols-2"
+                            }`}
+                          >
+                            {inspectorActions.map((act, idx) => {
+                              const spanTwo =
+                                inspectorActions.length === 3 && idx === inspectorActions.length - 1;
+                              const variantClass =
+                                act.variant === "danger"
+                                  ? "agy-btn-danger"
+                                  : act.variant === "warn"
+                                    ? "agy-btn border-[var(--warn)]/35 bg-[var(--warn-bg)]/60 text-[var(--warn)] hover:border-[var(--warn)]/65 hover:bg-[var(--warn-bg)] disabled:border-[var(--border-hairline)] disabled:bg-[var(--bg-surface-soft)] disabled:text-[var(--text-faint)]"
+                                    : "agy-btn";
+                              return (
+                                <button
+                                  key={act.key}
+                                  type="button"
+                                  disabled={act.disabled}
+                                  onClick={act.onClick}
+                                  className={`${variantClass} inline-flex h-9 w-full items-center justify-center gap-1.5 px-2.5 text-[12px] whitespace-nowrap ${
+                                    spanTwo ? "col-span-2" : ""
+                                  }`}
+                                >
+                                  {act.icon}
+                                  <span>{act.label}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </motion.div>
+                    </AnimatePresence>
+
+                    {/* Ranked Children List */}
+                    <div className="flex min-h-0 flex-1 flex-col border-t border-[var(--border-hairline)] pt-3">
+                      <div className="mb-2 flex items-center justify-between text-[11.5px] font-semibold text-[var(--text-muted)]">
+                        <span>当前层级（{rankedChildren.length} 项）</span>
+                        <span>大小占比</span>
+                      </div>
+                      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+                        {rankedChildren.length === 0 ? (
+                          <div className="py-6 text-center text-[12px] text-[var(--text-faint)]">
+                            当前层级无更多子项
+                          </div>
+                        ) : (
+                          rankedChildren.map((ch) => {
+                            const active = selectedId === ch.nodeId;
+                            const pct = Math.min(
+                              100,
+                              (ch.sizeBytes / Math.max(1, focusNode?.sizeBytes ?? 1)) * 100,
+                            );
+                            return (
+                              <button
+                                key={ch.nodeId}
+                                type="button"
+                                onClick={() => setSelectedId(ch.nodeId)}
+                                onDoubleClick={() => {
+                                  if (ch.children.length > 0) handleDrillNode(ch);
+                                }}
+                                className={`w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transition-colors ${
+                                  active
+                                    ? "border-[var(--accent)]/50 bg-[var(--accent-soft)]"
+                                    : "border-transparent hover:border-[var(--border-hairline)] hover:bg-[var(--bg-subtle)]/75"
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="truncate text-[12px] font-medium text-[var(--text-primary)]">
+                                    {ch.name}
+                                  </span>
+                                  <span className="shrink-0 font-mono-code text-[11.5px] font-semibold tabular-nums text-[var(--text-muted)]">
+                                    {formatBytes(ch.sizeBytes)}
+                                  </span>
+                                </div>
+                                <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-[var(--bg-subtle)]">
+                                  <div
+                                    style={{ width: `${Math.max(2, pct)}%` }}
+                                    className="h-full rounded-full bg-[var(--accent)]/75 transition-[width] duration-200"
+                                  />
+                                </div>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-1 items-center justify-center py-10 text-center text-[12.5px] text-[var(--text-faint)]">
+                    暂无可检视的存储条目
+                  </div>
+                )}
+              </aside>
+            </motion.div>
+          ) : (
+            /* List Workspace */
+            <motion.section
+              key={`workspace-list:${viewMode}:${focusNode?.nodeId || "root"}`}
+              initial={{ opacity: 0, y: prefersReduced ? 0 : 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: prefersReduced ? 0 : -5 }}
+              transition={viewTransition}
+              className="agy-card flex min-h-0 flex-1 flex-col overflow-hidden"
+            >
+              {/* Table Header */}
+              <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border-hairline)] bg-[var(--bg-subtle)]/70 px-4 py-2.5 text-[11.5px] font-semibold text-[var(--text-muted)]">
+                <input
+                  type="checkbox"
+                  checked={allListChecked}
+                  disabled={listItems.length === 0}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setCheckedIds(new Set(listItems.map((i) => i.nodeId)));
+                    } else {
+                      setCheckedIds(new Set());
+                    }
+                    setLastCheckedIdx(null);
+                  }}
+                  className="h-3.5 w-3.5 cursor-pointer accent-[var(--accent)]"
+                />
+                <span className="min-w-0 flex-1">
+                  {viewMode === "session" ? "会话名称 / 产物与对话库详情" : "名称 / 路径"}
+                </span>
+                <span className="w-[175px] shrink-0">最近更新</span>
+                <span className="w-[155px] shrink-0">占用空间</span>
+                <span className="w-[156px] shrink-0 text-right">快捷操作</span>
+              </div>
+
+              {/* Scrollable Rows */}
+              <div className="min-h-0 flex-1 divide-y divide-[var(--border-hairline)] overflow-y-auto">
+                {listItems.length === 0 ? (
+                  <div className="flex h-full items-center justify-center py-12 text-[13px] text-[var(--text-faint)]">
+                    当前筛选条件下没有可清理的会话或存储条目
+                  </div>
+                ) : (
+                  listItems.map((node, idx) => {
+                    const isChecked = checkedIds.has(node.nodeId);
+                    const isSessionMode = viewMode === "session";
+                    const { filesBytes, pbBytes } = sessionBreakdown(node);
+                    const idle = formatIdleAge(node.mtime);
+                    const pctOfTotal = (node.sizeBytes / Math.max(1, listTotalBytes)) * 100;
+                    const barPct = Math.max(2, (node.sizeBytes / listMaxBytes) * 100);
+
+                    let metaText = node.subtitle || node.path || KIND_LABELS[node.kind] || node.kind;
+                    if (isSessionMode) {
+                      const splitHint =
+                        filesBytes > 0
+                          ? `产出 ${formatBytes(filesBytes)} · 对话库 ${formatBytes(pbBytes)}`
+                          : `仅保留对话库 ${formatBytes(pbBytes)}`;
+                      metaText = metaText ? `${metaText} · ${splitHint}` : splitHint;
+                    }
+
+                    return (
+                      <div
+                        key={node.nodeId}
+                        className={`flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--bg-row-hover)] ${
+                          isChecked ? "bg-[var(--accent-soft)]/55" : ""
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            const native = e.nativeEvent as MouseEvent;
+                            handleRowCheck(node.nodeId, idx, e.target.checked, Boolean(native.shiftKey));
+                          }}
+                          className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[var(--accent)]"
+                        />
+
+                        {/* Name + Badges */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate text-[13px] font-semibold text-[var(--text-primary)]">
+                              {node.name}
+                            </span>
+                            {isSessionMode && node.isArchived && (
+                              <StatusPill tone="muted">已归档</StatusPill>
+                            )}
+                            {isSessionMode && node.isSubagent && (
+                              <StatusPill tone="info">子代理</StatusPill>
+                            )}
+                            {!isSessionMode && node.protected && (
+                              <StatusPill tone="warn">受保护</StatusPill>
+                            )}
+                          </div>
+                          <p className="mt-0.5 truncate text-[11.5px] text-[var(--text-faint)]">
+                            {metaText}
+                          </p>
+                        </div>
+
+                        {/* Mtime & Idle Age */}
+                        <div className="w-[175px] shrink-0">
+                          <div className="font-mono-code text-[11.5px] tabular-nums text-[var(--text-muted)]">
+                            {formatMtime(node.mtime)}
+                          </div>
+                          <div className="mt-0.5">
+                            <StatusPill tone={idle.tone}>{idle.label}</StatusPill>
+                          </div>
+                        </div>
+
+                        {/* Size & Bar */}
+                        <div className="w-[155px] shrink-0">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className="font-mono-code text-[12.5px] font-semibold tabular-nums text-[var(--text-primary)]">
+                              {formatBytes(node.sizeBytes)}
+                            </span>
+                            <span className="font-mono-code text-[10.5px] tabular-nums text-[var(--text-faint)]">
+                              {pctOfTotal.toFixed(1)}%
+                            </span>
+                          </div>
+                          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-subtle)]">
+                            <div
+                              style={{ width: `${barPct}%` }}
+                              className="h-full rounded-full bg-[var(--accent)]"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Row Quick Actions */}
+                        <div className="flex w-[156px] shrink-0 items-center justify-end gap-1.5">
+                          {!isSessionMode && node.children.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleDrillNode(node)}
+                              className="inline-flex h-7 cursor-pointer items-center justify-center rounded-lg border border-[var(--border-hairline)] px-2 text-[11px] font-medium whitespace-nowrap text-[var(--text-muted)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+                            >
+                              展开
+                            </button>
+                          )}
+                          {isSessionMode && filesBytes > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => openDeleteSessionFilesDialog([node])}
+                              title="仅删除会话产出文件，保留对话记录"
+                              className="inline-flex h-7 cursor-pointer items-center justify-center rounded-lg border border-[var(--warn)]/35 bg-[var(--warn-bg)] px-2 text-[11px] font-medium whitespace-nowrap text-[var(--warn)] transition-all hover:brightness-95"
+                            >
+                              删产物
+                            </button>
+                          )}
+                          {isSessionMode ? (
+                            <button
+                              type="button"
+                              onClick={() => openDeleteSessionDialog([node])}
+                              className="inline-flex h-7 cursor-pointer items-center justify-center rounded-lg border border-[var(--danger)]/35 bg-[var(--danger-bg)] px-2 text-[11px] font-medium whitespace-nowrap text-[var(--danger)] transition-all hover:brightness-95"
+                            >
+                              删会话
+                            </button>
+                          ) : (
+                            node.deleteTargets.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => openDeleteItemsDialog([node])}
+                                className="inline-flex h-7 cursor-pointer items-center justify-center rounded-lg border border-[var(--danger)]/35 bg-[var(--danger-bg)] px-2 text-[11px] font-medium whitespace-nowrap text-[var(--danger)] transition-all hover:brightness-95"
+                              >
+                                清理
+                              </button>
+                            )
+                          )}
+                          {node.path && (
+                            <button
+                              type="button"
+                              onClick={() => openExplorer(node.path)}
+                              title="打开所在目录"
+                              className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-transparent text-[var(--text-muted)] transition-colors hover:border-[var(--border-hairline)] hover:text-[var(--text-primary)]"
+                            >
+                              <FolderOpen className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Bottom Docked BatchActionBar */}
+              <AnimatePresence>
+                {selectedListNodes.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: prefersReduced ? 0 : 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: prefersReduced ? 0 : 8 }}
+                    transition={{ duration: prefersReduced ? 0.05 : 0.16 }}
+                    className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--border-hairline)] bg-[var(--bg-subtle)]/90 px-4 py-2.5 backdrop-blur"
                   >
-                    <Trash2 className="h-3.5 w-3.5 text-[var(--warn)]" />
-                    <span>仅删除会话产出文件（保留历史记录）</span>
-                  </button>
+                    <div className="flex items-center gap-2 text-[12.5px]">
+                      <span className="font-semibold text-[var(--text-primary)]">
+                        已选 {selectedListNodes.length} 项
+                      </span>
+                      <span className="font-mono-code tabular-nums text-[var(--text-muted)]">
+                        共 {formatBytes(selectedListBytes)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCheckedIds((prev) => {
+                            const next = new Set<string>();
+                            for (const item of listItems) {
+                              if (!prev.has(item.nodeId)) next.add(item.nodeId);
+                            }
+                            return next;
+                          });
+                        }}
+                        className="ml-2 cursor-pointer text-[11.5px] font-medium text-[var(--accent)] hover:underline"
+                      >
+                        反选
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCheckedIds(new Set());
+                          setLastCheckedIdx(null);
+                        }}
+                        className="cursor-pointer text-[11.5px] font-medium text-[var(--text-muted)] hover:underline"
+                      >
+                        清空
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {viewMode === "session" ? (
+                        <>
+                          <button
+                            type="button"
+                            disabled={!selectedListNodes.some((n) => sessionBreakdown(n).filesBytes > 0)}
+                            onClick={() => openDeleteSessionFilesDialog(selectedListNodes)}
+                            className="agy-btn h-8 px-3 text-[12px]"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 shrink-0 text-[var(--warn)]" />
+                            <span>仅删除会话文件（保留记录）</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openDeleteSessionDialog(selectedListNodes)}
+                            className="agy-btn-danger h-8 px-3 text-[12px]"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                            <span>删除所选会话</span>
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={!selectedListNodes.some((n) => n.deleteTargets.length > 0)}
+                          onClick={() => openDeleteItemsDialog(selectedListNodes)}
+                          className="agy-btn-danger h-8 px-3 text-[12px]"
+                        >
+                          <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                          <span>清理所选条目</span>
+                        </button>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.section>
+          )}
+        </AnimatePresence>
+
+        {/* Right-click Treemap Context Menu */}
+        <AnimatePresence>
+          {contextMenu && (
+            <motion.div
+              initial={{ opacity: 0, scale: prefersReduced ? 1 : 0.96, y: prefersReduced ? 0 : -4 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: prefersReduced ? 1 : 0.96, y: prefersReduced ? 0 : -4 }}
+              transition={{ duration: prefersReduced ? 0.04 : 0.12 }}
+              style={{
+                left: Math.min(contextMenu.x, Math.max(16, window.innerWidth - 260)),
+                top: Math.min(contextMenu.y, Math.max(16, window.innerHeight - 210)),
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="fixed z-50 min-w-[230px] overflow-hidden rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-floating)]"
+            >
+              {(contextMenu.node.kind === "session" || contextMenu.node.kind === "session_files") &&
+                contextMenu.node.sessionId && (
+                  <>
+                    {((contextMenu.node.kind === "session" &&
+                      contextMenu.node.children.some(
+                        (c) => c.kind === "session_files" && c.fileCount > 0,
+                      )) ||
+                      (contextMenu.node.kind === "session_files" &&
+                        contextMenu.node.deleteTargets.length > 0)) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const n = contextMenu.node;
+                          setContextMenu(null);
+                          openDeleteSessionFilesDialog([n]);
+                        }}
+                        className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]"
+                      >
+                        <FileX2 className="h-3.5 w-3.5 shrink-0 text-[var(--warn)]" />
+                        <span>仅删除会话产出文件（保留历史记录）</span>
+                      </button>
+                    )}
+
+                    {contextMenu.node.kind === "session" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const n = contextMenu.node;
+                          setContextMenu(null);
+                          openDeleteSessionDialog([n]);
+                        }}
+                        className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[12px] text-[var(--danger)] hover:bg-[var(--danger-bg)]"
+                      >
+                        <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                        <span>删除整个会话（文件 + 记录）</span>
+                      </button>
+                    )}
+                  </>
                 )}
 
-                {contextMenu.node.kind === "session" && (
+              {contextMenu.node.kind !== "root" &&
+                !["session", "session_files", "aggregate"].includes(contextMenu.node.kind) &&
+                contextMenu.node.deleteTargets.length > 0 && (
                   <button
                     type="button"
                     onClick={() => {
                       const n = contextMenu.node;
                       setContextMenu(null);
-                      openDeleteSessionDialog([n]);
+                      openDeleteItemsDialog([n]);
                     }}
                     className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[12px] text-[var(--danger)] hover:bg-[var(--danger-bg)]"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>删除整个会话（文件 + 记录）</span>
+                    <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                    <span>{contextMenu.node.kind === "file" ? "删除此文件" : "清理此项"}</span>
                   </button>
                 )}
-              </>
-            )}
 
-          {contextMenu.node.kind !== "root" &&
-            !["session", "session_files", "aggregate"].includes(contextMenu.node.kind) &&
-            contextMenu.node.deleteTargets.length > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  const n = contextMenu.node;
-                  setContextMenu(null);
-                  openDeleteItemsDialog([n]);
-                }}
-                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[12px] text-[var(--danger)] hover:bg-[var(--danger-bg)]"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                <span>{contextMenu.node.kind === "file" ? "删除此文件" : "清理此项"}</span>
-              </button>
-            )}
+              {contextMenu.node.children.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const n = contextMenu.node;
+                    setContextMenu(null);
+                    handleDrillNode(n);
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]"
+                >
+                  <ZoomIn className="h-3.5 w-3.5 shrink-0" />
+                  <span>深入查看子项</span>
+                </button>
+              )}
 
-          {contextMenu.node.children.length > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                const n = contextMenu.node;
-                setContextMenu(null);
-                handleDrillNode(n);
-              }}
-              className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]"
-            >
-              <Layers className="h-3.5 w-3.5" />
-              <span>深入查看子项</span>
-            </button>
+              {contextMenu.node.path && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const p = contextMenu.node.path;
+                    setContextMenu(null);
+                    openExplorer(p);
+                  }}
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]"
+                >
+                  <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+                  <span>打开所在目录</span>
+                </button>
+              )}
+            </motion.div>
           )}
-
-          {contextMenu.node.path && (
-            <button
-              type="button"
-              onClick={() => {
-                const p = contextMenu.node.path;
-                setContextMenu(null);
-                openExplorer(p);
-              }}
-              className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]"
-            >
-              <FolderOpen className="h-3.5 w-3.5" />
-              <span>打开所在目录</span>
-            </button>
-          )}
-        </div>
-      )}
+        </AnimatePresence>
 
       {/* Delete Safety Confirmation Modal */}
       <StorageDeleteModal
@@ -1511,6 +1665,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
           "确认将它们从 conversation_summaries.db、agyhub_summaries_proto.pb 与 app_storage.json 中同步移除吗？"
         }
         confirmLabel="同步移除"
+        tone="warn"
         busy={orphanBusy}
         onCancel={() => setOrphanConfirmOpen(false)}
         onConfirm={handleConfirmOrphanClean}
@@ -1522,9 +1677,12 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
         title={noticeModal?.title ?? "提示"}
         description={noticeModal?.body ?? ""}
         confirmLabel="知道了"
+        tone="warn"
+        hideCancel
         onCancel={() => setNoticeModal(null)}
         onConfirm={() => setNoticeModal(null)}
       />
-    </div>
+      </div>
+    </LayoutGroup>
   );
 }

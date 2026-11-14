@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, Pause, Play, Trash2 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { MOTION_EASE, SearchInput } from "../components/MotionPrimitives";
 import { formatBytes, formatErrorMessage } from "../lib/format";
 import { events, ipc } from "../lib/ipc";
 import type { PluginRuntimeStatus } from "../types/ipc";
@@ -19,6 +21,7 @@ export function LogsPage({
 }: LogsPageProps) {
   const [tailLines, setTailLines] = useState<number>(200);
   const [streaming, setStreaming] = useState<boolean>(true);
+  const [filterQuery, setFilterQuery] = useState<string>("");
   const [logPath, setLogPath] = useState<string>("logs/launcher.log");
   const [logBytes, setLogBytes] = useState<number>(0);
   const [content, setContent] = useState<string>("暂无日志");
@@ -26,6 +29,15 @@ export function LogsPage({
   const [pinnedBottom, setPinnedBottom] = useState<boolean>(true);
 
   const preRef = useRef<HTMLPreElement | null>(null);
+
+  const displayContent = useMemo(() => {
+    const q = filterQuery.trim().toLowerCase();
+    if (!q || content === "暂无日志") return content;
+    const matched = content
+      .split(/\r?\n/)
+      .filter((line) => line.toLowerCase().includes(q));
+    return matched.length > 0 ? matched.join("\n") : "未找到匹配的日志行";
+  }, [content, filterQuery]);
 
   const sources = useMemo(() => {
     const items: Array<{ id: string; label: string }> = [
@@ -83,7 +95,7 @@ export function LogsPage({
     const el = preRef.current;
     if (!el || !pinnedBottom) return;
     el.scrollTop = el.scrollHeight;
-  }, [content, pinnedBottom]);
+  }, [displayContent, pinnedBottom]);
 
   const handleScroll = () => {
     const el = preRef.current;
@@ -142,6 +154,13 @@ export function LogsPage({
             <option value={500}>最近 500 行</option>
           </select>
 
+          <SearchInput
+            value={filterQuery}
+            onChange={setFilterQuery}
+            placeholder="过滤日志关键词..."
+            className="w-[180px]"
+          />
+
           <span className="rounded-md bg-[var(--bg-subtle)] px-2.5 py-1 font-mono-code text-[11.5px] tabular-nums text-[var(--text-muted)]">
             {formatBytes(logBytes)}
           </span>
@@ -155,6 +174,7 @@ export function LogsPage({
           >
             {streaming ? (
               <>
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--ok)]" />
                 <Pause className="h-3.5 w-3.5" />
                 <span>暂停</span>
               </>
@@ -179,31 +199,45 @@ export function LogsPage({
       </div>
 
       {/* Path Line */}
-      <div className="flex items-center justify-between px-1">
+      <div className="flex min-h-[22px] items-center justify-between px-1">
         <span className="truncate font-mono-code text-[11.5px] text-[var(--text-faint)]">
           {logPath}
         </span>
-        {!pinnedBottom && (
-          <button
-            type="button"
-            onClick={scrollToBottom}
-            className="inline-flex cursor-pointer items-center gap-1 rounded-md bg-[var(--bg-subtle)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-          >
-            <ArrowDown className="h-3 w-3" />
-            <span>回到底部</span>
-          </button>
-        )}
+        <AnimatePresence initial={false}>
+          {!pinnedBottom && (
+            <motion.button
+              key="scroll-bottom"
+              type="button"
+              initial={{ opacity: 0, y: 4, scale: 0.94 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 4, scale: 0.94 }}
+              transition={{ duration: 0.14, ease: MOTION_EASE }}
+              onClick={scrollToBottom}
+              className="inline-flex cursor-pointer items-center gap-1 rounded-md bg-[var(--bg-subtle)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+            >
+              <ArrowDown className="h-3 w-3" />
+              <span>回到底部</span>
+            </motion.button>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Terminal Console */}
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-[14px] border border-[var(--border-hairline)] bg-[var(--log-bg)]">
-        <pre
-          ref={preRef}
-          onScroll={handleScroll}
-          className="h-full w-full overflow-auto p-4 font-mono-code text-[12px] leading-[1.6] text-[var(--log-text)] select-text whitespace-pre-wrap break-all"
-        >
-          {content}
-        </pre>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.pre
+            key={effectiveLogId}
+            ref={preRef}
+            onScroll={handleScroll}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.14, ease: MOTION_EASE }}
+            className="h-full w-full overflow-auto p-4 font-mono-code text-[12px] leading-[1.6] text-[var(--log-text)] select-text whitespace-pre-wrap break-all"
+          >
+            {displayContent}
+          </motion.pre>
+        </AnimatePresence>
       </div>
     </div>
   );

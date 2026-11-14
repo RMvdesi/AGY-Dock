@@ -1,7 +1,12 @@
 import { ArrowRight, PlugZap, Rocket, Square } from "lucide-react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { PluginMonogram } from "../components/BrandMark";
-import { HeroStatusBadge, StatusPill, TopologyDiagram } from "../components/MotionPrimitives";
+import {
+  HeroStatusBadge,
+  MOTION_EASE,
+  StatusPill,
+  TopologyDiagram,
+} from "../components/MotionPrimitives";
 import { formatBytes } from "../lib/format";
 import type { NativePluginInfo, OverviewSnapshot, PluginRuntimeStatus } from "../types/ipc";
 
@@ -188,25 +193,45 @@ export function StatusPage({
           </div>
 
           <div className="mt-3.5 flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto pr-0.5">
-            {runningPlugins.length === 0 ? (
-              <div className="agy-inset flex flex-col items-center justify-center px-4 py-8 text-center">
-                <p className="text-[13px] text-[var(--text-muted)]">当前无活跃扩展</p>
-                <p className="mt-1 text-[11.5px] text-[var(--text-faint)]">
-                  启动 Antigravity 或点击「热附着」激活已启用插件
-                </p>
-              </div>
-            ) : (
-              runningPlugins.map((p) => (
-                <ActiveSpotlightCard
-                  key={p.id}
-                  plugin={p}
-                  isDark={isDark}
-                  stopping={actionPluginId === p.id}
-                  onStop={() => onStopPlugin(p.id)}
-                  onOpen={() => onOpenExternalDetail(p.id)}
-                />
-              ))
-            )}
+            <AnimatePresence mode="wait" initial={false}>
+              {runningPlugins.length === 0 ? (
+                <motion.div
+                  key="spotlight-empty"
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.14, ease: MOTION_EASE }}
+                  className="agy-inset flex flex-col items-center justify-center px-4 py-8 text-center"
+                >
+                  <p className="text-[13px] text-[var(--text-muted)]">当前无活跃扩展</p>
+                  <p className="mt-1 text-[11.5px] text-[var(--text-faint)]">
+                    启动 Antigravity 或点击「热附着」激活已启用插件
+                  </p>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="spotlight-list"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.14, ease: MOTION_EASE }}
+                  className="flex flex-col gap-2.5"
+                >
+                  <AnimatePresence initial={false} mode="popLayout">
+                    {runningPlugins.map((p) => (
+                      <ActiveSpotlightCard
+                        key={p.id}
+                        plugin={p}
+                        isDark={isDark}
+                        stopping={actionPluginId === p.id}
+                        onStop={() => onStopPlugin(p.id)}
+                        onOpen={() => onOpenExternalDetail(p.id)}
+                      />
+                    ))}
+                  </AnimatePresence>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           <div className="mt-3.5 flex items-center justify-between border-t border-[var(--border-hairline)] pt-3">
@@ -263,9 +288,12 @@ function ActiveSpotlightCard({
 
   return (
     <motion.div
-      layout
+      layout="position"
+      initial={{ opacity: 0, y: 5 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.97 }}
       whileHover={{ y: -1 }}
-      transition={{ duration: 0.14 }}
+      transition={{ duration: 0.15, ease: MOTION_EASE }}
       onClick={onOpen}
       className="flex cursor-pointer items-center gap-3 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-3.5 py-2.5 transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-row-hover)]"
     >

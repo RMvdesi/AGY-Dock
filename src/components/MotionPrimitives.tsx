@@ -1,4 +1,145 @@
-import { motion } from "motion/react";
+import { Search, X } from "lucide-react";
+import { AnimatePresence, LayoutGroup, motion } from "motion/react";
+
+export const MOTION_EASE = [0.22, 1, 0.36, 1] as const;
+export const MOTION_SPRING = {
+  type: "spring" as const,
+  stiffness: 460,
+  damping: 34,
+  mass: 0.8,
+};
+
+interface SearchInputProps {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  className?: string;
+  inputClassName?: string;
+  ariaLabel?: string;
+}
+
+export function SearchInput({
+  value,
+  onChange,
+  placeholder = "搜索...",
+  className = "",
+  inputClassName = "",
+  ariaLabel,
+}: SearchInputProps) {
+  return (
+    <div className={`relative flex items-center ${className}`}>
+      <Search
+        aria-hidden="true"
+        className="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-faint)]"
+      />
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && value) {
+            e.stopPropagation();
+            onChange("");
+          }
+        }}
+        placeholder={placeholder}
+        aria-label={ariaLabel || placeholder}
+        className={`agy-input agy-search-input w-full pl-9 ${value ? "pr-8" : "pr-3"} ${inputClassName}`}
+      />
+      <AnimatePresence initial={false}>
+        {value.length > 0 && (
+          <motion.button
+            key="search-clear"
+            type="button"
+            aria-label="清空搜索"
+            title="清空搜索"
+            initial={{ opacity: 0, scale: 0.75 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.75 }}
+            transition={{ duration: 0.12 }}
+            onClick={() => onChange("")}
+            className="absolute top-1/2 right-2 flex h-5 w-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-[var(--text-faint)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
+          >
+            <X className="h-3 w-3" />
+          </motion.button>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+export interface SegmentedOption<T extends string> {
+  key: T;
+  label: string;
+  count?: number;
+}
+
+interface SegmentedControlProps<T extends string> {
+  options: ReadonlyArray<SegmentedOption<T>>;
+  value: T;
+  onChange: (value: T) => void;
+  layoutId: string;
+  ariaLabel?: string;
+  className?: string;
+}
+
+export function SegmentedControl<T extends string>({
+  options,
+  value,
+  onChange,
+  layoutId,
+  ariaLabel,
+  className = "",
+}: SegmentedControlProps<T>) {
+  return (
+    <LayoutGroup id={layoutId}>
+      <div
+        role="tablist"
+        aria-label={ariaLabel}
+        className={`inline-flex items-center gap-0.5 rounded-[11px] border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] p-0.5 ${className}`}
+      >
+        {options.map((opt) => {
+          const active = value === opt.key;
+          return (
+            <button
+              key={opt.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => onChange(opt.key)}
+              className={`relative flex cursor-pointer items-center gap-1.5 rounded-[9px] px-3 py-1 text-[12.5px] transition-colors duration-150 ${
+                active
+                  ? "font-semibold text-[var(--text-primary)]"
+                  : "font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              }`}
+            >
+              {active && (
+                <motion.span
+                  layoutId={`${layoutId}-pill`}
+                  transition={MOTION_SPRING}
+                  className="absolute inset-0 rounded-[9px] bg-[var(--bg-surface)] shadow-[var(--shadow-card)]"
+                  style={{ zIndex: 0 }}
+                />
+              )}
+              <span className="relative z-10 whitespace-nowrap">{opt.label}</span>
+              {typeof opt.count === "number" && (
+                <span
+                  className={`relative z-10 rounded px-1 py-[0.5px] text-[10.5px] font-semibold tabular-nums transition-colors ${
+                    active
+                      ? "bg-[var(--bg-subtle)] text-[var(--text-primary)]"
+                      : "text-[var(--text-faint)]"
+                  }`}
+                >
+                  {opt.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </LayoutGroup>
+  );
+}
 
 interface SpringSwitchProps {
   checked: boolean;
@@ -30,17 +171,15 @@ export function SpringSwitch({
       }}
     >
       <motion.span
-        layout
+        initial={false}
+        animate={{ x: checked ? 18 : 0 }}
         transition={{
           type: "spring",
-          stiffness: 520,
-          damping: 28,
-          mass: 0.75,
+          stiffness: 560,
+          damping: 32,
+          mass: 0.7,
         }}
         className="pointer-events-none block h-[15px] w-[15px] rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.22)]"
-        style={{
-          marginLeft: checked ? "18px" : "0px",
-        }}
       />
     </button>
   );
@@ -99,46 +238,63 @@ export function HeroStatusBadge({ tone }: HeroStatusBadgeProps) {
 
   return (
     <div
-      className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-[14px]"
+      className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-[14px] transition-colors duration-200"
       style={{ backgroundColor: bg, color: fg }}
     >
-      {tone === "ok" && (
-        <motion.span
-          initial={{ opacity: 0.35, scale: 0.92 }}
-          animate={{ opacity: [0.35, 0.75, 0.35], scale: [0.96, 1.06, 0.96] }}
-          transition={{ duration: 2.6, repeat: Infinity, ease: "easeInOut" }}
-          className="pointer-events-none absolute inset-0 rounded-[14px]"
-          style={{ boxShadow: `0 0 0 1px ${fg}33, 0 0 18px -2px ${fg}44` }}
-        />
-      )}
-      <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
-        {tone === "ok" ? (
-          <motion.path
-            d="M6.5 13.5L11 18L19.5 8.5"
-            stroke="currentColor"
-            strokeWidth="2.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            initial={{ pathLength: 0.2, opacity: 0.6 }}
-            animate={{ pathLength: 1, opacity: 1 }}
-            transition={{ duration: 0.35, ease: "easeOut" }}
+      <AnimatePresence initial={false}>
+        {tone === "ok" && (
+          <motion.span
+            key="hero-ok-glow"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: [0.35, 0.75, 0.35], scale: [0.96, 1.06, 0.96] }}
+            exit={{ opacity: 0, scale: 0.92 }}
+            transition={{ duration: 2.6, repeat: Infinity, ease: "easeInOut" }}
+            className="pointer-events-none absolute inset-0 rounded-[14px]"
+            style={{ boxShadow: `0 0 0 1px ${fg}33, 0 0 18px -2px ${fg}44` }}
           />
-        ) : tone === "warn" ? (
-          <>
-            <circle cx="13" cy="13" r="7" stroke="currentColor" strokeWidth="2.3" />
-            <motion.circle
-              cx="13"
-              cy="13"
-              r="2.6"
-              fill="currentColor"
-              animate={{ scale: [1, 1.35, 1], opacity: [0.7, 1, 0.7] }}
-              transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-            />
-          </>
-        ) : (
-          <circle cx="13" cy="13" r="7" stroke="currentColor" strokeWidth="2.3" />
         )}
-      </svg>
+      </AnimatePresence>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.svg
+          key={tone}
+          width="26"
+          height="26"
+          viewBox="0 0 26 26"
+          fill="none"
+          aria-hidden="true"
+          initial={{ opacity: 0, scale: 0.85 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.85 }}
+          transition={{ duration: 0.16, ease: MOTION_EASE }}
+        >
+          {tone === "ok" ? (
+            <motion.path
+              d="M6.5 13.5L11 18L19.5 8.5"
+              stroke="currentColor"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              initial={{ pathLength: 0.2, opacity: 0.6 }}
+              animate={{ pathLength: 1, opacity: 1 }}
+              transition={{ duration: 0.32, ease: "easeOut" }}
+            />
+          ) : tone === "warn" ? (
+            <>
+              <circle cx="13" cy="13" r="7" stroke="currentColor" strokeWidth="2.3" />
+              <motion.circle
+                cx="13"
+                cy="13"
+                r="2.6"
+                fill="currentColor"
+                animate={{ scale: [1, 1.35, 1], opacity: [0.7, 1, 0.7] }}
+                transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+              />
+            </>
+          ) : (
+            <circle cx="13" cy="13" r="7" stroke="currentColor" strokeWidth="2.3" />
+          )}
+        </motion.svg>
+      </AnimatePresence>
     </div>
   );
 }

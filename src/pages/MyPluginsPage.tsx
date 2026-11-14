@@ -5,14 +5,19 @@ import {
   Play,
   Plus,
   RotateCw,
-  Search,
   Square,
   Store,
   Upload,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { PluginMonogram } from "../components/BrandMark";
-import { SpringSwitch, StatusPill } from "../components/MotionPrimitives";
+import {
+  MOTION_EASE,
+  SearchInput,
+  SegmentedControl,
+  SpringSwitch,
+  StatusPill,
+} from "../components/MotionPrimitives";
 import { formatBytes, formatVersionText, isSupportedPackagePath } from "../lib/format";
 import type { PluginRuntimeStatus } from "../types/ipc";
 
@@ -91,47 +96,36 @@ export function MyPluginsPage({
     }
   };
 
-  const filterChips: Array<{ key: FilterKey; label: string }> = [
-    { key: "all", label: "全部" },
-    { key: "running", label: "运行中" },
-    { key: "idle", label: "待命" },
+  const runningCount = useMemo(
+    () => plugins.filter((p) => p.running).length,
+    [plugins],
+  );
+
+  const filterChips: Array<{ key: FilterKey; label: string; count: number }> = [
+    { key: "all", label: "全部", count: plugins.length },
+    { key: "running", label: "运行中", count: runningCount },
+    { key: "idle", label: "待命", count: plugins.length - runningCount },
   ];
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3.5">
       {/* Toolbar */}
       <div className="agy-card flex flex-wrap items-center justify-between gap-2.5 px-4 py-2.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative">
-            <Search className="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-faint)]" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索插件名称、简介或 ID..."
-              className="agy-input w-[220px] pl-8"
-            />
-          </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="搜索插件名称、简介或 ID..."
+            className="w-[230px]"
+          />
 
-          <div className="flex items-center gap-1">
-            {filterChips.map((chip) => {
-              const active = filter === chip.key;
-              return (
-                <button
-                  key={chip.key}
-                  type="button"
-                  onClick={() => setFilter(chip.key)}
-                  className={`cursor-pointer rounded-lg px-3 py-1.5 text-[12.5px] transition-colors ${
-                    active
-                      ? "bg-[var(--bg-subtle)] font-semibold text-[var(--text-primary)]"
-                      : "text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
-                  }`}
-                >
-                  {chip.label}
-                </button>
-              );
-            })}
-          </div>
+          <SegmentedControl
+            options={filterChips}
+            value={filter}
+            onChange={setFilter}
+            layoutId="my-plugins-filter"
+            ariaLabel="筛选插件状态"
+          />
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -166,146 +160,162 @@ export function MyPluginsPage({
         }`}
       >
         <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1">
-          {filtered.length === 0 ? (
-            <div className="flex h-full min-h-[200px] flex-col items-center justify-center px-6 py-12 text-center">
-              <p className="text-[13.5px] text-[var(--text-muted)]">
-                {plugins.length > 0
-                  ? "未找到匹配的扩展"
-                  : "暂无已安装扩展，可点击「+ 导入插件」或拖入插件包"}
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-[var(--border-hairline)]">
-              <AnimatePresence initial={false}>
-                {filtered.map((p) => {
-                  const isBusy = busyPluginId === p.id;
-                  const enabled = p.enabled !== false;
-                  const pids = p.pids ?? [];
-                  const mem = p.memoryBytes || 0;
+          <AnimatePresence mode="wait" initial={false}>
+            {filtered.length === 0 ? (
+              <motion.div
+                key={`empty-${filter}`}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.14, ease: MOTION_EASE }}
+                className="flex h-full min-h-[200px] flex-col items-center justify-center px-6 py-12 text-center"
+              >
+                <p className="text-[13.5px] text-[var(--text-muted)]">
+                  {plugins.length > 0
+                    ? "未找到匹配的扩展"
+                    : "暂无已安装扩展，可点击「+ 导入插件」或拖入插件包"}
+                </p>
+              </motion.div>
+            ) : (
+              <motion.div
+                key={`list-${filter}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.13, ease: MOTION_EASE }}
+                className="divide-y divide-[var(--border-hairline)]"
+              >
+                <AnimatePresence initial={false} mode="popLayout">
+                  {filtered.map((p) => {
+                    const isBusy = busyPluginId === p.id;
+                    const enabled = p.enabled !== false;
+                    const pids = p.pids ?? [];
+                    const mem = p.memoryBytes || 0;
 
-                  let statusTone: "ok" | "muted" | "warn" = "muted";
-                  let statusText = "○ 待命";
-                  if (p.running) {
-                    statusTone = "ok";
-                    if (mem > 0) {
-                      statusText = pids[0]
-                        ? `${pids[0]} · ${formatBytes(mem)}`
-                        : formatBytes(mem);
-                    } else {
-                      statusText = pids[0] ? `运行 ${pids[0]}` : "运行中";
+                    let statusTone: "ok" | "muted" | "warn" = "muted";
+                    let statusText = "○ 待命";
+                    if (p.running) {
+                      statusTone = "ok";
+                      if (mem > 0) {
+                        statusText = pids[0]
+                          ? `${pids[0]} · ${formatBytes(mem)}`
+                          : formatBytes(mem);
+                      } else {
+                        statusText = pids[0] ? `运行 ${pids[0]}` : "运行中";
+                      }
+                    } else if (!enabled) {
+                      statusTone = "warn";
+                      statusText = "已禁用";
                     }
-                  } else if (!enabled) {
-                    statusTone = "warn";
-                    statusText = "已禁用";
-                  }
 
-                  return (
-                    <motion.div
-                      key={p.id}
-                      layout
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -4 }}
-                      transition={{ duration: 0.16 }}
-                      onClick={() => onOpenDetail(p.id)}
-                      className="group flex cursor-pointer items-center gap-3.5 rounded-xl px-3.5 py-3 transition-colors hover:bg-[var(--bg-row-hover)]"
-                    >
-                      <PluginMonogram
-                        pluginId={p.id}
-                        pluginType={p.type}
-                        label={p.name}
-                        size={36}
-                        isDark={isDark}
-                      />
-
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-[13.5px] font-semibold text-[var(--text-primary)]">
-                            {p.name || p.id}
-                          </span>
-                          <span className="shrink-0 rounded-md bg-[var(--bg-subtle)] px-1.5 py-[1px] font-mono-code text-[11px] font-medium text-[var(--text-muted)]">
-                            {formatVersionText(p.version)}
-                          </span>
-                        </div>
-                        <p className="mt-0.5 truncate text-[12.5px] text-[var(--text-muted)]">
-                          {p.description || "外部扩展"}
-                        </p>
-                      </div>
-
-                      <span className="hidden w-[86px] shrink-0 truncate text-[11.5px] text-[var(--text-faint)] md:inline-block">
-                        {p.type || "custom-cdp"}
-                      </span>
-
-                      <div className="w-[138px] shrink-0 text-center">
-                        <StatusPill tone={statusTone} pulse={p.running} className="w-full">
-                          {statusText}
-                        </StatusPill>
-                      </div>
-
-                      <div
-                        className="flex shrink-0 items-center gap-1"
-                        onClick={(e) => e.stopPropagation()}
+                    return (
+                      <motion.div
+                        key={p.id}
+                        layout="position"
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.98 }}
+                        transition={{ duration: 0.15, ease: MOTION_EASE }}
+                        onClick={() => onOpenDetail(p.id)}
+                        className="group flex cursor-pointer items-center gap-3.5 rounded-xl px-3.5 py-3 transition-colors hover:bg-[var(--bg-row-hover)]"
                       >
-                        {p.running ? (
-                          <>
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => onPluginAction(p.id, "restart")}
-                              title="重启插件"
-                              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-transparent text-[var(--text-muted)] transition-colors hover:border-[var(--border-hairline)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)] disabled:opacity-40"
-                            >
-                              <RotateCw className={`h-3.5 w-3.5 ${isBusy ? "animate-spin" : ""}`} />
-                            </button>
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => onPluginAction(p.id, "stop")}
-                              title="停止插件"
-                              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-transparent text-[var(--text-muted)] transition-colors hover:border-[var(--border-hairline)] hover:bg-[var(--bg-surface)] hover:text-[var(--danger)] disabled:opacity-40"
-                            >
-                              <Square className="h-3.5 w-3.5" />
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={isBusy || !enabled}
-                            onClick={() => onPluginAction(p.id, "start")}
-                            title={enabled ? "启动并附着" : "请先启用插件"}
-                            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-transparent text-[var(--text-muted)] transition-colors hover:border-[var(--border-hairline)] hover:bg-[var(--bg-surface)] hover:text-[var(--ok)] disabled:opacity-35"
-                          >
-                            <Play className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="shrink-0 pl-1">
-                        <SpringSwitch
-                          checked={enabled}
-                          disabled={isBusy}
-                          ariaLabel={`切换启用 ${p.name || p.id}`}
-                          onChange={(next) => onTogglePlugin(p.id, next)}
+                        <PluginMonogram
+                          pluginId={p.id}
+                          pluginType={p.type}
+                          label={p.name}
+                          size={36}
+                          isDark={isDark}
                         />
-                      </div>
 
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenDetail(p.id);
-                        }}
-                        className="agy-btn shrink-0 px-2.5 py-1 text-[12px]"
-                      >
-                        <span>详情</span>
-                        <ChevronRight className="h-3.5 w-3.5 opacity-60" />
-                      </button>
-                    </motion.div>
-                  );
-                })}
-              </AnimatePresence>
-            </div>
-          )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-[13.5px] font-semibold text-[var(--text-primary)]">
+                              {p.name || p.id}
+                            </span>
+                            <span className="shrink-0 rounded-md bg-[var(--bg-subtle)] px-1.5 py-[1px] font-mono-code text-[11px] font-medium text-[var(--text-muted)]">
+                              {formatVersionText(p.version)}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 truncate text-[12.5px] text-[var(--text-muted)]">
+                            {p.description || "外部扩展"}
+                          </p>
+                        </div>
+
+                        <span className="hidden w-[86px] shrink-0 truncate text-[11.5px] text-[var(--text-faint)] md:inline-block">
+                          {p.type || "custom-cdp"}
+                        </span>
+
+                        <div className="w-[138px] shrink-0 text-center">
+                          <StatusPill tone={statusTone} pulse={p.running} className="w-full">
+                            {statusText}
+                          </StatusPill>
+                        </div>
+
+                        <div
+                          className="flex shrink-0 items-center gap-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {p.running ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => onPluginAction(p.id, "restart")}
+                                title="重启插件"
+                                className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-transparent text-[var(--text-muted)] transition-colors hover:border-[var(--border-hairline)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-primary)] disabled:opacity-40"
+                              >
+                                <RotateCw className={`h-3.5 w-3.5 ${isBusy ? "animate-spin" : ""}`} />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => onPluginAction(p.id, "stop")}
+                                title="停止插件"
+                                className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-transparent text-[var(--text-muted)] transition-colors hover:border-[var(--border-hairline)] hover:bg-[var(--bg-surface)] hover:text-[var(--danger)] disabled:opacity-40"
+                              >
+                                <Square className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={isBusy || !enabled}
+                              onClick={() => onPluginAction(p.id, "start")}
+                              title={enabled ? "启动并附着" : "请先启用插件"}
+                              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-transparent text-[var(--text-muted)] transition-colors hover:border-[var(--border-hairline)] hover:bg-[var(--bg-surface)] hover:text-[var(--ok)] disabled:opacity-35"
+                            >
+                              <Play className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="shrink-0 pl-1">
+                          <SpringSwitch
+                            checked={enabled}
+                            disabled={isBusy}
+                            ariaLabel={`切换启用 ${p.name || p.id}`}
+                            onChange={(next) => onTogglePlugin(p.id, next)}
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenDetail(p.id);
+                          }}
+                          className="agy-btn shrink-0 px-2.5 py-1 text-[12px]"
+                        >
+                          <span>详情</span>
+                          <ChevronRight className="h-3.5 w-3.5 opacity-60 transition-transform duration-150 group-hover:translate-x-0.5" />
+                        </button>
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Bottom Drag-and-Drop Hint Banner */}

@@ -1,6 +1,6 @@
 [package]
 name = "agy-plugin-manager"
-version = "2.3.0"
+version = "2.3.1"
 description = "AGY Plugin Manager — Antigravity launcher, CDP process supervisor, and external plugin studio"
 authors = ["HaoAn"]
 edition = "2021"

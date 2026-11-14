@@ -12,6 +12,8 @@ import {
   Trash2,
   Wand2,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { MOTION_EASE } from "../components/MotionPrimitives";
 import { formatErrorMessage } from "../lib/format";
 import { ipc } from "../lib/ipc";
 import type {
@@ -241,11 +243,20 @@ export function SettingsPage({
       <div className="agy-card flex items-center justify-between px-5 py-3">
         <div className="flex items-center gap-3">
           <h2 className="text-[14.5px] font-semibold text-[var(--text-primary)]">设置与维护</h2>
-          {dirty && (
-            <span className="rounded-md bg-[var(--warn-bg)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--warn)]">
-              有未保存更改
-            </span>
-          )}
+          <AnimatePresence initial={false}>
+            {dirty && (
+              <motion.span
+                key="settings-dirty"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ duration: 0.14, ease: MOTION_EASE }}
+                className="rounded-md bg-[var(--warn-bg)] px-2 py-0.5 text-[11.5px] font-medium text-[var(--warn)]"
+              >
+                有未保存更改
+              </motion.span>
+            )}
+          </AnimatePresence>
         </div>
 
         <button
@@ -294,7 +305,7 @@ export function SettingsPage({
             <div className="flex flex-wrap items-center gap-2.5">
               <h3 className="text-[13.5px] font-semibold text-[var(--text-primary)]">版本与更新</h3>
               <span className="rounded-md bg-[var(--bg-subtle)] px-2 py-0.5 font-mono-code text-[11.5px] font-medium text-[var(--text-muted)]">
-                v{overview?.version || "2.3.0"}
+                v{overview?.version || "2.3.1"}
               </span>
               <StatusDot tone={updateStatusTone} text={updateStatusText} />
             </div>
@@ -328,7 +339,19 @@ export function SettingsPage({
               <h3 className="text-[13.5px] font-semibold text-[var(--text-primary)]">
                 Antigravity 主程序
               </h3>
-              {agyStatus.text && <StatusDot tone={agyStatus.tone} text={agyStatus.text} />}
+              <AnimatePresence mode="wait" initial={false}>
+                {agyStatus.text && (
+                  <motion.span
+                    key={`${agyStatus.tone}:${agyStatus.text}`}
+                    initial={{ opacity: 0, y: 2 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -2 }}
+                    transition={{ duration: 0.12, ease: MOTION_EASE }}
+                  >
+                    <StatusDot tone={agyStatus.tone} text={agyStatus.text} />
+                  </motion.span>
+                )}
+              </AnimatePresence>
             </div>
 
             <div className="flex items-center gap-2">
@@ -372,7 +395,19 @@ export function SettingsPage({
               <h3 className="text-[13.5px] font-semibold text-[var(--text-primary)]">
                 按需代理注入
               </h3>
-              {proxyStatus.text && <StatusDot tone={proxyStatus.tone} text={proxyStatus.text} />}
+              <AnimatePresence mode="wait" initial={false}>
+                {proxyStatus.text && (
+                  <motion.span
+                    key={`${proxyStatus.tone}:${proxyStatus.text}`}
+                    initial={{ opacity: 0, y: 2 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -2 }}
+                    transition={{ duration: 0.12, ease: MOTION_EASE }}
+                  >
+                    <StatusDot tone={proxyStatus.tone} text={proxyStatus.text} />
+                  </motion.span>
+                )}
+              </AnimatePresence>
             </div>
 
             <button

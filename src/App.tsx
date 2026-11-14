@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import { ConfirmModal } from "./components/ConfirmModal";
 import { FloatingUpdateBanner, ToastStack, type ToastItem } from "./components/FloatingOverlays";
+import { MOTION_EASE } from "./components/MotionPrimitives";
 import { PluginEditorModal, type PluginEditorInitial } from "./components/PluginEditorModal";
 import { TopBar, type NavTabId } from "./components/TopBar";
 import { basename, formatErrorMessage, isSupportedPackagePath } from "./lib/format";
@@ -33,12 +34,48 @@ type ViewState =
   | { kind: "ext-detail"; pluginId: string }
   | { kind: "nat-detail"; dirName: string };
 
+type TransitionDir = "fade" | "forward" | "back" | "tab-next" | "tab-prev";
+
+const TAB_ORDER: NavTabId[] = [
+  "status",
+  "external",
+  "market",
+  "native",
+  "storage",
+  "logs",
+  "settings",
+];
+
+const PAGE_VARIANTS = {
+  enter: (dir: TransitionDir) => {
+    if (dir === "forward") return { opacity: 0, x: 20, y: 0 };
+    if (dir === "back") return { opacity: 0, x: -20, y: 0 };
+    if (dir === "tab-next") return { opacity: 0, x: 14, y: 0 };
+    if (dir === "tab-prev") return { opacity: 0, x: -14, y: 0 };
+    return { opacity: 0, x: 0, y: 6 };
+  },
+  center: {
+    opacity: 1,
+    x: 0,
+    y: 0,
+    transition: { duration: 0.18, ease: MOTION_EASE },
+  },
+  exit: (dir: TransitionDir) => {
+    const exitTransition = { duration: 0.12, ease: [0.4, 0, 1, 1] as const };
+    if (dir === "forward") return { opacity: 0, x: -14, y: 0, transition: exitTransition };
+    if (dir === "back") return { opacity: 0, x: 14, y: 0, transition: exitTransition };
+    if (dir === "tab-next") return { opacity: 0, x: -10, y: 0, transition: exitTransition };
+    if (dir === "tab-prev") return { opacity: 0, x: 10, y: 0, transition: exitTransition };
+    return { opacity: 0, x: 0, y: -4, transition: exitTransition };
+  },
+};
+
 const THEME_MODES: ThemeMode[] = ["auto", "light", "dark"];
 const DEFAULT_SITE_URL = "https://ahmustudyhelper.xyz";
 
 export default function App() {
   const [view, setView] = useState<ViewState>({ kind: "tab", tab: "status" });
-  const [transitionDir, setTransitionDir] = useState<"fade" | "forward" | "back">("fade");
+  const [transitionDir, setTransitionDir] = useState<TransitionDir>("fade");
 
   const [overview, setOverview] = useState<OverviewSnapshot | null>(null);
   const [nativePlugins, setNativePlugins] = useState<NativePluginInfo[]>([]);
@@ -257,11 +294,28 @@ export default function App() {
     };
   }, [pushToast, refreshAll, refreshMarketplace]);
 
+  const activeNav: NavTabId =
+    view.kind === "ext-detail"
+      ? "external"
+      : view.kind === "nat-detail"
+        ? "native"
+        : view.tab;
+
   // Navigation helpers
-  const selectTab = useCallback((tab: NavTabId) => {
-    setTransitionDir("fade");
-    setView({ kind: "tab", tab });
-  }, []);
+  const selectTab = useCallback(
+    (tab: NavTabId) => {
+      if (view.kind === "tab" && view.tab === tab) return;
+      const prevIdx = TAB_ORDER.indexOf(activeNav);
+      const nextIdx = TAB_ORDER.indexOf(tab);
+      if (prevIdx !== -1 && nextIdx !== -1 && prevIdx !== nextIdx) {
+        setTransitionDir(nextIdx > prevIdx ? "tab-next" : "tab-prev");
+      } else {
+        setTransitionDir("fade");
+      }
+      setView({ kind: "tab", tab });
+    },
+    [activeNav, view],
+  );
 
   const openExternalDetail = useCallback((pluginId: string) => {
     setTransitionDir("forward");
@@ -282,13 +336,6 @@ export default function App() {
     setTransitionDir("back");
     setView({ kind: "tab", tab: "native" });
   }, []);
-
-  const activeNav: NavTabId =
-    view.kind === "ext-detail"
-      ? "external"
-      : view.kind === "nat-detail"
-        ? "native"
-        : view.tab;
 
   // Theme cycle
   const handleCycleTheme = async () => {
@@ -596,54 +643,42 @@ export default function App() {
         ? `ext:${view.pluginId}`
         : `nat:${view.dirName}`;
 
-  const pageInitial =
-    transitionDir === "forward"
-      ? { opacity: 0, x: 18 }
-      : transitionDir === "back"
-        ? { opacity: 0, x: -18 }
-        : { opacity: 0, y: 6 };
-
-  const pageExit =
-    transitionDir === "forward"
-      ? { opacity: 0, x: -12 }
-      : transitionDir === "back"
-        ? { opacity: 0, x: 12 }
-        : { opacity: 0, y: -4 };
-
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-canvas)] px-7 pt-4 pb-4 text-[var(--text-primary)]">
-      {/* Top Capsule Navigation Bar */}
-      <TopBar
-        activeNav={activeNav}
-        onSelectTab={selectTab}
-        externalCount={plugins.length}
-        nativeCount={nativePlugins.length}
-        isStatusPage={view.kind === "tab" && view.tab === "status"}
-        isBusyAction={
-          view.kind === "tab" && view.tab === "status" ? busyRefreshing : busyLaunch
-        }
-        onQuickAction={() => {
-          if (view.kind === "tab" && view.tab === "status") {
-            refreshAll(true);
-          } else {
-            handleQuickLaunch();
+    <MotionConfig reducedMotion="user">
+      <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg-canvas)] px-7 pt-4 pb-4 text-[var(--text-primary)]">
+        {/* Top Capsule Navigation Bar */}
+        <TopBar
+          activeNav={activeNav}
+          onSelectTab={selectTab}
+          externalCount={plugins.length}
+          nativeCount={nativePlugins.length}
+          isStatusPage={view.kind === "tab" && view.tab === "status"}
+          isBusyAction={
+            view.kind === "tab" && view.tab === "status" ? busyRefreshing : busyLaunch
           }
-        }}
-        themeMode={themeMode}
-        onCycleTheme={handleCycleTheme}
-      />
+          onQuickAction={() => {
+            if (view.kind === "tab" && view.tab === "status") {
+              refreshAll(true);
+            } else {
+              handleQuickLaunch();
+            }
+          }}
+          themeMode={themeMode}
+          onCycleTheme={handleCycleTheme}
+        />
 
-      {/* Main Content Stage */}
-      <main className="mt-4 min-h-0 flex-1 overflow-hidden">
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={viewKey}
-            initial={pageInitial}
-            animate={{ opacity: 1, x: 0, y: 0 }}
-            exit={pageExit}
-            transition={{ duration: 0.17, ease: [0.22, 1, 0.36, 1] }}
-            className="h-full min-h-0"
-          >
+        {/* Main Content Stage */}
+        <main className="mt-4 min-h-0 flex-1 overflow-hidden">
+          <AnimatePresence mode="wait" initial={false} custom={transitionDir}>
+            <motion.div
+              key={viewKey}
+              custom={transitionDir}
+              variants={PAGE_VARIANTS}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              className="h-full min-h-0"
+            >
             {view.kind === "tab" && view.tab === "status" && (
               <StatusPage
                 overview={overview}
@@ -864,6 +899,7 @@ export default function App() {
       />
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
-    </div>
+      </div>
+    </MotionConfig>
   );
 }
