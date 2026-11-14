@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "repository": "haoan33/AGY-Plugin-Manager",
+  "updatedAt": "2026-11-14T14:02:50Z",
+  "plugins": [
+    {
+      "id": "office-viewer",
+      "name": "Antigravity Office Viewer",
+      "version": "1.1.0",
+      "author": "HaoAn",
+      "description": "通过 CDP 为 Antigravity 右侧栏提供 Word / Excel / PPT 高清实时预览。",
+      "type": "node-cdp",
+      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.3.1/office-viewer-v1.1.0.zip",
+      "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
+      "changelog": "新增文档自适应视口缩放、Ctrl/Cmd+滚轮以光标为中心放大缩小（25%–300%）及右下角悬浮缩放工具条。",
+      "sha256": "6fcb190586265a38090a07f36361f50b18bcffb1702e9f6f38706f52b33696c0",
+      "size": 2879721,
+      "releaseTag": "v2.3.1"
+    },
+    {
+      "id": "antigravity-hans",
+      "name": "Antigravity Hans (动态汉化)",
+      "version": "0.5.1",
+      "author": "HaoAn",
+      "description": "纯 Node.js CDP 动态注入引擎，实时汉化 Antigravity 界面、Agent 面板与 Swarm 看板（无任何 .exe 二进制，零杀软误报）。",
+      "type": "node-cdp",
+      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.2.1/antigravity-hans-v0.5.1.zip",
+      "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
+      "changelog": "",
+      "sha256": "",
+      "size": 143101,
+      "releaseTag": "v2.2.1"
+    },
+    {
+      "id": "agy-telemetry",
+      "name": "Antigravity Telemetry (会话与上下文监控)",
+      "version": "1.0.4",
+      "author": "HaoAn",
+      "description": "在对话右上角极简显示输出速度、缓存命中率与上下文占比，悬停展示完整统计与响应模型。",
+      "type": "node-cdp",
+      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.2.1/agy-telemetry-v1.0.4.zip",
+      "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
+      "changelog": "",
+      "sha256": "",
+      "size": 17020,
+      "releaseTag": "v2.2.1"
+    }
+  ]
+}

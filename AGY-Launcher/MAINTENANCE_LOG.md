@@ -6,6 +6,21 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [office-viewer v1.1.0] - 2026-11-14 22:02
+
+### Summary
+- **Antigravity Office Viewer Adaptive Fit & Ctrl+Wheel Zoom (`office-viewer v1.1.0`)**:
+  - Added automatic viewport-fit scaling on document open and pane resize across Word (`.docx`/`.dotx` removes fixed `min-width` layout lock and scales `.paged-editor` cleanly so narrow Antigravity sidebars never clip page edges), Excel (`.xlsx`/`.xlsm`/`.xls`/`.csv`/`.tsv`/`.ods` measures actual used columns on sheet load/switch, patches `x-spreadsheet` minimum zoom `0.5 -> 0.25`, max zoom `2 -> 3`, and wheel throttle `300ms -> 16ms`, and auto-fits wide sheets down to `30%`), and PowerPoint (`.pptx`/`.ppt`/`.pptm` fits slides to both viewport width and height while enabling safe bidirectional scroll without left-edge clipping when zoomed in).
+  - Added capture-phase `Ctrl/Cmd + MouseWheel` cursor-anchored zooming (`25%–300%`), `Ctrl/Cmd + +/-/0` shortcuts, and a compact theme-aware bottom-right floating zoom HUD (`− | % | + | 适应`), bumped `office-viewer` version to `1.1.0`, rebuilt `AGY-Launcher/plugin-packages/office-viewer-v1.1.0.zip` (replacing `office-viewer-v1.0.2.zip`), updated `plugins-catalog.json`, and uploaded the release package to GitHub Release `v2.3.1`.
+
+### Files Changed
+- `AGY-Launcher/plugins/office-viewer/{package.json,index.js,lib/preview-zoom.js,test/preview-zoom.test.js}` — Implemented `preview-zoom.js` adaptive fit, capture-phase `Ctrl/Cmd+Wheel` & shortcut zoom, floating HUD, Excel bundle patching, bumped version to `1.1.0` with `"homepage"`, and added 8 unit/HTTP integration tests.
+- `AGY-Launcher/plugin-packages/office-viewer-v1.1.0.zip` (replaces `office-viewer-v1.0.2.zip`), `plugins-catalog.json`, `AGY-Launcher/MAINTENANCE_LOG.md` — Packaged verified ZIP archive (`sha256: 6fcb190586265a38090a07f36361f50b18bcffb1702e9f6f38706f52b33696c0`, `size: 2879721`), updated catalog metadata pointing to `v2.3.1`, and recorded maintenance entry.
+
+### Verification
+- `node --test "AGY-Launcher/plugins/office-viewer/test/*.test.js"` -> exited 0 (`8 passed; 0 failed`).
+- `python AGY-Launcher/scripts/package_plugins.py --plugin office-viewer` -> exited 0 (`office-viewer-v1.1.0.zip`, `84` files, `2812.2 KB`, `author=HaoAn`).
+
 ## [v2.3.1] - 2026-11-14 17:58
 
 ### Summary
