@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Plugin-Manager",
-  "updatedAt": "2026-11-14T14:02:50Z",
+  "updatedAt": "2026-11-14T16:19:00Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -20,16 +20,16 @@
     {
       "id": "antigravity-hans",
       "name": "Antigravity Hans (动态汉化)",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "author": "HaoAn",
       "description": "纯 Node.js CDP 动态注入引擎，实时汉化 Antigravity 界面、Agent 面板与 Swarm 看板（无任何 .exe 二进制，零杀软误报）。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.2.1/antigravity-hans-v0.5.1.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/antigravity-hans-v0.5.2.zip",
       "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
-      "changelog": "",
-      "sha256": "",
-      "size": 143101,
-      "releaseTag": "v2.2.1"
+      "changelog": "移除 IDE 内右下角悬浮中英切换按钮及选项菜单，自动清理旧版残留悬浮组件并默认保持中文汉化。",
+      "sha256": "7cf26e5332f198fcb25e9f27ae9d1704031beaa80d5ff35135e2bc54059ba813",
+      "size": 140260,
+      "releaseTag": "v2.4.0"
     },
     {
       "id": "agy-telemetry",
