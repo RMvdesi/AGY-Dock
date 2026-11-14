@@ -28,7 +28,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/icon.ico",
       "icons/icon.png"
@@ -43,7 +45,10 @@
       },
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["SimpChinese", "English"],
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
         "displayLanguageSelector": false,
         "installerHooks": "nsis/hooks.nsh"
       }
