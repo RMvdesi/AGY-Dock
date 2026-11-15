@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Plugin-Manager",
-  "updatedAt": "2026-11-14T17:08:11Z",
+  "updatedAt": "2026-11-15T08:28:16Z",
   "plugins": [
     {
       "id": "office-viewer",
       "name": "Antigravity Office Viewer",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "author": "HaoAn",
-      "description": "通过 CDP 为 Antigravity 右侧栏提供 Word / Excel / PPT 高清实时预览。",
+      "description": "通过 CDP 为 Antigravity 右侧栏提供 Word / Excel / PPT / PDF 高清实时预览。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/office-viewer-v1.1.1.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/office-viewer-v1.2.0.zip",
       "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
-      "changelog": "常驻低功耗与稳定性优化：稳态停止周期性拉起 PowerShell，改为浏览器 CDP 长连接事件与 15s 轻量 HTTP 兜底；过滤启动页并缓存非编辑器页面避免重复建连；为静态前端资源增加 ETag 缓存与文件流清理。",
-      "sha256": "5e5bc863430a2fe1ec42b283f997b6b5f9c6a691963d8f62bae692990a40854e",
-      "size": 2879698,
+      "changelog": "新增本地离线 PDF 预览支持（内置 Mozilla PDF.js v5.3.93），绕过系统 .mjs MIME 注册表异常导致的原生 PDF 无限加载问题；支持按需懒渲染、文本选择复制、页码跳转、旋转、Ctrl+F 查找、加密 PDF 输入及适应宽度缩放，并补充 HTTP Range 分片读取。",
+      "sha256": "d1db95ad919b7aeab3ce481e44d71995f8f514040251de588233c7a5b2ef5db6",
+      "size": 3278737,
       "releaseTag": "v2.4.0"
     },
     {
@@ -34,15 +34,15 @@
     {
       "id": "agy-telemetry",
       "name": "Antigravity Telemetry (会话与上下文监控)",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "author": "HaoAn",
       "description": "在对话右上角极简显示输出速度、缓存命中率与上下文占比，悬停展示完整统计与响应模型。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/agy-telemetry-v1.1.0.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/agy-telemetry-v1.2.0.zip",
       "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
-      "changelog": "常驻低功耗与稳定性优化：稳态停止周期性拉起 PowerShell，改为浏览器 CDP 长连接事件与 15s 轻量 HTTP 兜底；过滤启动页并缓存非聊天页面避免重复建连；新增可选 --once 单次注入退出模式。",
-      "sha256": "5ae0d443297fc10e7bfb55a7f88e598833f5237d7c9268b0f3fe797c2dce6df9",
-      "size": 18804,
+      "changelog": "上下文窗口拆解由 3 类扩展为 5 大顶层分类（系统提示词、规则与定制、工具定义、对话消息、其他上下文），覆盖全部 11 种 TokenType 并支持递归统计；新增对话消息下的用户输入、模型回复与工具记录估算子项拆解及 5 色堆叠进度条展示。",
+      "sha256": "6bd132147265c3b0a26a39d14c6901ef0bccb4bd7fd90693ea283845ef666f22",
+      "size": 22462,
       "releaseTag": "v2.4.0"
     }
   ]
