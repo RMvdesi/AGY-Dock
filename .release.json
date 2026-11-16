@@ -1,6 +1,7 @@
 {
   "product": "agy-plugin-manager",
-  "siteUrl": "https://ahmustudyhelper.xyz",
+  "siteUrl": "https://www.haoanlab.xyz",
+  "oidcAudience": "https://ahmustudyhelper.xyz",
   "releaseRepository": "haoan33/AGY-Plugin-Manager",
   "versionFiles": [
     { "path": "VERSION", "format": "text" },

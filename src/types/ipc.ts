@@ -330,6 +330,32 @@ export type StorageListSortKey = "time" | "size";
 export type StorageAgeFilter = "all" | "7d" | "30d";
 export type StorageAttrFilter = "archived" | "subagent" | "unnamed";
 
+export interface StorageUsage {
+  sizeBytes: number;
+  fileCount: number;
+}
+
+export interface ProjectStorageFolder extends StorageUsage {
+  path: string;
+  preview: StorageNode[];
+  mtime: number;
+  status: "ok" | "partial" | "unavailable";
+}
+
+export interface ProjectStorageUsage extends StorageUsage {
+  id: string;
+  name: string;
+  source: "antigravity" | "workspace" | "manual";
+  folders: ProjectStorageFolder[];
+}
+
+export interface StorageInventory {
+  local: StorageUsage;
+  projects: ProjectStorageUsage[];
+  projectsUsage: StorageUsage;
+  total: StorageUsage;
+}
+
 export interface StorageScanProgress {
   phase: "roots" | "scanning" | "done" | string;
   rootIndex: number;
@@ -361,6 +387,9 @@ export interface StorageNode {
   isSubagent: boolean;
   deleteTargets: string[];
   children: StorageNode[];
+  lazyChildren?: boolean;
+  projectRootPath?: string;
+  manuallyAdded?: boolean;
 }
 
 export interface StorageTreeResponse {
@@ -419,11 +448,15 @@ export const TAURI_COMMANDS = {
   CLEAR_LOG: "clear_log",
   CLEANUP_ANTIGRAVITY_RESIDUALS: "cleanup_antigravity_residuals",
   CREATE_ALL_SHORTCUTS: "create_all_shortcuts",
+  START_AUTOMATIC_UPDATE_CHECKS: "start_automatic_update_checks",
   CHECK_FOR_UPDATES: "check_for_updates",
   OPEN_EXTERNAL_URL: "open_external_url",
   OPEN_PATH_IN_EXPLORER: "open_path_in_explorer",
   PICK_FILE: "pick_file",
   GET_SYSTEM_DARK_MODE: "get_system_dark_mode",
+  GET_STORAGE_INVENTORY: "get_storage_inventory",
+  PICK_STORAGE_PROJECT: "pick_storage_project",
+  REMOVE_STORAGE_PROJECT: "remove_storage_project",
   SCAN_AGY_STORAGE: "scan_agy_storage",
   GET_STORAGE_TREE: "get_storage_tree",
   CLEAN_ORPHAN_STORAGE_SUMMARIES: "clean_orphan_storage_summaries",

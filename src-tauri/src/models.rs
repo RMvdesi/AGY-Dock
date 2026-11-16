@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_NO_PROXY: &str = "127.0.0.1,localhost,::1";
-pub const DEFAULT_UPDATE_SITE_URL: &str = "https://ahmustudyhelper.xyz";
+pub const DEFAULT_UPDATE_SITE_URL: &str = "https://www.haoanlab.xyz";
 pub const DEFAULT_PRODUCT_SLUG: &str = "agy-plugin-manager";
 pub const DEFAULT_MARKETPLACE_REPO: &str = "haoan33/AGY-Plugin-Manager";
 

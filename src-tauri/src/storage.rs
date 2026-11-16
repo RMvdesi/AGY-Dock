@@ -42,6 +42,8 @@ fn pbtxt_view_time_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"last_user_view_time\s*:\s*\{\s*seconds\s*:\s*(\d+)").unwrap())
 }
 
+const PROJECT_ROOT_KEY: &str = "project";
+
 const IMAGE_EXTS: &[&str] = &[
     ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg", ".ico", ".tif", ".tiff",
 ];
@@ -135,6 +137,7 @@ pub struct StorageScanSnapshot {
     pub files: Vec<FileRecord>,
     pub sessions: HashMap<String, SessionMetadata>,
     pub orphan_summary_ids: Vec<String>,
+    project_dirs: Vec<(PathBuf, f64)>,
 }
 
 fn now_ts() -> f64 {
@@ -144,7 +147,7 @@ fn now_ts() -> f64 {
         .unwrap_or(0.0)
 }
 
-fn mtime_ts(meta: &fs::Metadata) -> f64 {
+pub(crate) fn mtime_ts(meta: &fs::Metadata) -> f64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
@@ -589,27 +592,36 @@ fn classify_file(root: &StorageRoot, rel_parts: &[String], name: &str) -> (Strin
         }
     }
 
-    let ftype = if lower_parts.first().map(String::as_str) == Some("conversations") || CONV_EXTS.contains(&ext.as_str()) {
-        "conversations"
-    } else if IMAGE_EXTS.contains(&ext.as_str()) {
-        "images"
-    } else if VIDEO_EXTS.contains(&ext.as_str()) {
-        "videos"
-    } else if AUDIO_EXTS.contains(&ext.as_str()) {
-        "audio"
-    } else if LOG_EXTS.contains(&ext.as_str())
-        || lower_parts.iter().any(|p| p == "logs" || p == ".system_generated")
+    let mut ftype = file_type_for_extension(&ext);
+    if lower_parts.first().map(String::as_str) == Some("conversations") {
+        ftype = "conversations";
+    } else if matches!(ftype, "docs" | "code" | "other")
+        && lower_parts.iter().any(|p| p == "logs" || p == ".system_generated")
     {
+        ftype = "logs";
+    }
+
+    (session_id, subrole, ftype.to_string(), false)
+}
+
+fn file_type_for_extension(ext: &str) -> &'static str {
+    if CONV_EXTS.contains(&ext) {
+        "conversations"
+    } else if IMAGE_EXTS.contains(&ext) {
+        "images"
+    } else if VIDEO_EXTS.contains(&ext) {
+        "videos"
+    } else if AUDIO_EXTS.contains(&ext) {
+        "audio"
+    } else if LOG_EXTS.contains(&ext) {
         "logs"
-    } else if DOC_EXTS.contains(&ext.as_str()) {
+    } else if DOC_EXTS.contains(&ext) {
         "docs"
-    } else if CODE_EXTS.contains(&ext.as_str()) {
+    } else if CODE_EXTS.contains(&ext) {
         "code"
     } else {
         "other"
-    };
-
-    (session_id, subrole, ftype.to_string(), false)
+    }
 }
 
 fn find_orphan_summary_ids(roots: &[StorageRoot], files: &[FileRecord]) -> Vec<String> {
@@ -659,12 +671,66 @@ fn find_orphan_summary_ids(roots: &[StorageRoot], files: &[FileRecord]) -> Vec<S
 
 pub fn scan_agy_storage_with_progress<F>(
     paths: &ManagerPaths,
-    mut progress_cb: F,
+    progress_cb: F,
 ) -> StorageScanSnapshot
 where
     F: FnMut(StorageScanProgress),
 {
-    let roots = discover_storage_roots(paths);
+    scan_storage_roots(discover_storage_roots(paths), false, progress_cb)
+}
+
+pub(crate) fn is_link_or_reparse_point(meta: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    meta.file_type().is_symlink()
+}
+
+pub fn resolve_project_storage_root(path: &Path) -> Result<PathBuf, String> {
+    let meta = fs::symlink_metadata(path)
+        .map_err(|err| format!("无法访问项目文件夹 {}：{err}", path.display()))?;
+    if !meta.is_dir() || is_link_or_reparse_point(&meta) {
+        return Err("请选择实际的项目文件夹".to_string());
+    }
+    let root = clean_win_path(&fs::canonicalize(path).map_err(|err| err.to_string())?);
+    if root.parent().is_none() {
+        return Err("请选择项目文件夹，不能选择整个磁盘".to_string());
+    }
+    fs::read_dir(&root)
+        .map_err(|err| format!("无法读取项目文件夹 {}：{err}", root.display()))?;
+    Ok(root)
+}
+
+pub fn scan_project_storage_with_progress<F>(
+    root: &Path,
+    progress_cb: F,
+) -> Result<StorageScanSnapshot, String>
+where
+    F: FnMut(StorageScanProgress),
+{
+    if resolve_project_storage_root(root)? != root {
+        return Err("项目文件夹已变更，请重新选择".to_string());
+    }
+    let label = root.file_name().unwrap_or(root.as_os_str()).to_string_lossy().into_owned();
+    let project = StorageRoot {
+        key: PROJECT_ROOT_KEY.to_string(),
+        label,
+        path: root.to_path_buf(),
+        is_appdata: false,
+    };
+    Ok(scan_storage_roots(vec![project], true, progress_cb))
+}
+
+fn scan_storage_roots<F>(roots: Vec<StorageRoot>, project: bool, mut progress_cb: F) -> StorageScanSnapshot
+where
+    F: FnMut(StorageScanProgress),
+{
+    let mut project_dirs = Vec::new();
     let root_count = roots.len();
     let mut files: Vec<FileRecord> = Vec::new();
     let mut scanned_bytes: u64 = 0;
@@ -704,7 +770,7 @@ where
         0.0,
     );
 
-    let sessions = read_session_metadata(&roots);
+    let sessions = if project { HashMap::new() } else { read_session_metadata(&roots) };
 
     for (idx, root) in roots.iter().enumerate() {
         let root_idx = idx + 1;
@@ -742,6 +808,13 @@ where
                 let full_path = entry.path();
 
                 if ft.is_dir() {
+                    if project {
+                        let Ok(meta) = fs::symlink_metadata(&full_path) else { continue };
+                        if is_link_or_reparse_point(&meta) {
+                            continue;
+                        }
+                        project_dirs.push((full_path.clone(), mtime_ts(&meta)));
+                    }
                     stack.push((full_path, rel_parts));
                 } else if ft.is_file() {
                     let Ok(meta) = fs::symlink_metadata(&full_path) else {
@@ -749,7 +822,15 @@ where
                     };
                     let size = meta.len();
                     let mtime = mtime_ts(&meta);
-                    let (sid, subrole, ftype, prot) = classify_file(root, &rel_parts, &name);
+                    let (sid, subrole, ftype, prot) = if project {
+                        if is_link_or_reparse_point(&meta) {
+                            continue;
+                        }
+                        let ext = file_extension_lower(&name.to_lowercase());
+                        (String::new(), String::new(), file_type_for_extension(&ext).to_string(), false)
+                    } else {
+                        classify_file(root, &rel_parts, &name)
+                    };
                     files.push(FileRecord {
                         path: full_path,
                         rel_parts,
@@ -788,7 +869,7 @@ where
         }
     }
 
-    let orphan_ids = find_orphan_summary_ids(&roots, &files);
+    let orphan_ids = if project { Vec::new() } else { find_orphan_summary_ids(&roots, &files) };
     emit(
         &mut progress_cb,
         "done",
@@ -810,6 +891,7 @@ where
         files,
         sessions,
         orphan_summary_ids: orphan_ids,
+        project_dirs,
     }
 }
 
@@ -1046,6 +1128,9 @@ fn resolve_file_display_name(
     rec: &FileRecord,
     sessions: &HashMap<String, SessionMetadata>,
 ) -> String {
+    if rec.root_key == PROJECT_ROOT_KEY {
+        return raw_name.to_string();
+    }
     if let Some((sid, suffix)) = split_session_uuid_filename(raw_name) {
         let title = format_session_display_name(&sid, sessions);
         if suffix.is_empty() {
@@ -1056,7 +1141,6 @@ fn resolve_file_display_name(
     if uuid_re().is_match(raw_name) {
         return format_session_display_name(raw_name, sessions);
     }
-    let _ = rec;
     raw_name.to_string()
 }
 
@@ -1570,6 +1654,7 @@ fn build_session_view(snapshot: &StorageScanSnapshot, include_appdata: bool) -> 
 }
 
 fn build_type_view(snapshot: &StorageScanSnapshot, include_appdata: bool) -> StorageNode {
+    let project = snapshot.roots.first().is_some_and(|root| root.key == PROJECT_ROOT_KEY);
     let mut by_type: HashMap<String, Vec<&FileRecord>> = HashMap::new();
     for rec in &snapshot.files {
         if rec.is_appdata && !include_appdata {
@@ -1581,6 +1666,7 @@ fn build_type_view(snapshot: &StorageScanSnapshot, include_appdata: bool) -> Sto
     let mut cat_nodes: Vec<StorageNode> = Vec::new();
     for (ftype, mut recs) in by_type {
         let (label, _) = category_label_and_order(&ftype);
+        let label = if project && ftype == "conversations" { "数据库与数据文件" } else { label };
         recs.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
 
         let mut dir_groups: HashMap<String, Vec<&FileRecord>> = HashMap::new();
@@ -1622,7 +1708,7 @@ fn build_type_view(snapshot: &StorageScanSnapshot, include_appdata: bool) -> Sto
                         .file_name()
                         .map(|s| s.to_string_lossy().into_owned())
                         .unwrap_or_else(|| dir_str.clone());
-                    let is_uuid = uuid_re().is_match(&raw_dir_name);
+                    let is_uuid = !project && uuid_re().is_match(&raw_dir_name);
                     let dir_name = if is_uuid {
                         format_session_display_name(&raw_dir_name, &snapshot.sessions)
                     } else {
@@ -1777,7 +1863,69 @@ fn build_directory_view(snapshot: &StorageScanSnapshot, include_appdata: bool) -
     with_purpose(root, "")
 }
 
-fn filter_tree(node: StorageNode, q_lower: &str) -> Option<StorageNode> {
+fn build_project_directory_view(snapshot: &StorageScanSnapshot, root: &StorageRoot) -> StorageNode {
+    let mut children_by_dir = HashMap::<&Path, Vec<StorageNode>>::new();
+    for record in &snapshot.files {
+        let parent = record.path.parent().unwrap_or(&root.path);
+        let node_id = format!("project:file:{}", record.path.display());
+        children_by_dir.entry(parent).or_default().push(make_file_node(record, node_id, &snapshot.sessions));
+    }
+
+    // The scanner records each directory before visiting its children.
+    for (path, mtime) in snapshot.project_dirs.iter().rev() {
+        let mut children = children_by_dir.remove(path.as_path()).unwrap_or_default();
+        children.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes).then_with(|| a.name.cmp(&b.name)));
+        let path_text = path.to_string_lossy().into_owned();
+        let file_count = children.iter().map(|child| child.file_count).sum();
+        let node = StorageNode {
+            node_id: format!("project:dir:{path_text}"),
+            name: path.file_name().unwrap_or(path.as_os_str()).to_string_lossy().into_owned(),
+            kind: "dir".to_string(),
+            category: "other".to_string(),
+            size_bytes: children.iter().map(|child| child.size_bytes).sum(),
+            file_count,
+            path: path_text.clone(),
+            subtitle: format!("{file_count} 个文件"),
+            mtime: *mtime,
+            delete_targets: vec![path_text],
+            children,
+            ..Default::default()
+        };
+        if let Some(parent) = path.parent() {
+            children_by_dir.entry(parent).or_default().push(node);
+        }
+    }
+
+    let mut children = children_by_dir.remove(root.path.as_path()).unwrap_or_default();
+    children.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes).then_with(|| a.name.cmp(&b.name)));
+    StorageNode {
+        node_id: "root:project".to_string(),
+        name: root.label.clone(),
+        kind: "root".to_string(),
+        category: "other".to_string(),
+        size_bytes: children.iter().map(|child| child.size_bytes).sum(),
+        file_count: children.iter().map(|child| child.file_count).sum(),
+        path: root.path.to_string_lossy().into_owned(),
+        children,
+        ..Default::default()
+    }
+}
+
+fn describe_project_node(node: &mut StorageNode) {
+    let is_root = node.kind == "root";
+    node.purpose_desc = if is_root {
+        "所选项目文件夹中扫描到的文件和子目录。"
+    } else {
+        "用户项目中的文件或目录，清理前请确认内容。"
+    }.to_string();
+    node.deletability = "caution".to_string();
+    node.deletability_label = if is_root { "项目根目录" } else { "清理前确认" }.to_string();
+    for child in &mut node.children {
+        describe_project_node(child);
+    }
+}
+
+fn filter_tree(node: StorageNode, q_lower: &str, project: bool) -> Option<StorageNode> {
     if q_lower.is_empty() {
         return Some(node);
     }
@@ -1797,7 +1945,7 @@ fn filter_tree(node: StorageNode, q_lower: &str) -> Option<StorageNode> {
     let kept: Vec<StorageNode> = node
         .children
         .into_iter()
-        .filter_map(|c| filter_tree(c, q_lower))
+        .filter_map(|c| filter_tree(c, q_lower, project))
         .collect();
     if kept.is_empty() {
         return None;
@@ -1824,7 +1972,7 @@ fn filter_tree(node: StorageNode, q_lower: &str) -> Option<StorageNode> {
         is_archived: node.is_archived,
         is_unnamed: node.is_unnamed,
         is_subagent: node.is_subagent,
-        delete_targets: node.delete_targets,
+        delete_targets: if project { Vec::new() } else { node.delete_targets },
         children: kept,
     };
     if out.deletability.is_empty() {
@@ -1840,11 +1988,16 @@ pub fn build_storage_tree_response(
     query: Option<&str>,
     antigravity_running: bool,
 ) -> StorageTreeResponse {
-    let raw_tree = match view_mode {
-        "type" => build_type_view(snapshot, include_appdata),
-        "dir" => build_directory_view(snapshot, include_appdata),
+    let project = snapshot.roots.first().filter(|root| root.key == PROJECT_ROOT_KEY);
+    let mut raw_tree = match (view_mode, project) {
+        ("type", _) => build_type_view(snapshot, include_appdata),
+        (_, Some(root)) => build_project_directory_view(snapshot, root),
+        ("dir", None) => build_directory_view(snapshot, include_appdata),
         _ => build_session_view(snapshot, include_appdata),
     };
+    if project.is_some() {
+        describe_project_node(&mut raw_tree);
+    }
 
     let session_count = {
         let mut sids: HashSet<&str> = HashSet::new();
@@ -1860,7 +2013,7 @@ pub fn build_storage_tree_response(
     let tree = if q_lower.is_empty() {
         raw_tree
     } else {
-        filter_tree(raw_tree, &q_lower).unwrap_or_else(|| StorageNode {
+        filter_tree(raw_tree, &q_lower, project.is_some()).unwrap_or_else(|| StorageNode {
             node_id: "root:empty".to_string(),
             name: "没有匹配搜索条件的存储条目".to_string(),
             kind: "root".to_string(),
@@ -2633,6 +2786,134 @@ pub fn delete_storage_items(
     res
 }
 
+fn measure_project_target(target: &Path) -> Result<u64, String> {
+    let mut bytes = 0_u64;
+    let mut pending = vec![target.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let meta = fs::symlink_metadata(&path).map_err(|err| format!("{}：{err}", path.display()))?;
+        if is_link_or_reparse_point(&meta) {
+            return Err(format!("包含链接或目录联接点，已跳过：{}", path.display()));
+        }
+        if meta.is_dir() {
+            let entries = fs::read_dir(&path).map_err(|err| format!("{}：{err}", path.display()))?;
+            for entry in entries {
+                pending.push(entry.map_err(|err| err.to_string())?.path());
+            }
+        } else if meta.is_file() {
+            bytes = bytes.saturating_add(meta.len());
+        }
+    }
+    Ok(bytes)
+}
+
+#[cfg(windows)]
+fn recycle_project_target(target: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED, IBindCtx,
+    };
+    use windows::Win32::UI::Shell::{
+        FileOperation, IFileOperation, IFileOperationProgressSink, IShellItem,
+        SHCreateItemFromParsingName, FOFX_RECYCLEONDELETE, FOF_NO_CONNECTED_ELEMENTS,
+        FOF_WANTNUKEWARNING,
+    };
+
+    let target_wide: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
+        .ok()
+        .map_err(|err| err.to_string())?;
+    let result = (|| -> windows::core::Result<bool> {
+        unsafe {
+            let operation: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_INPROC_SERVER)?;
+            operation.SetOperationFlags(
+                FOFX_RECYCLEONDELETE | FOF_NO_CONNECTED_ELEMENTS | FOF_WANTNUKEWARNING | FOF_NOERRORUI,
+            )?;
+            let item: IShellItem = SHCreateItemFromParsingName(
+                PCWSTR(target_wide.as_ptr()), None::<&IBindCtx>,
+            )?;
+            operation.DeleteItem(&item, None::<&IFileOperationProgressSink>)?;
+            operation.PerformOperations()?;
+            Ok(operation.GetAnyOperationsAborted()?.as_bool())
+        }
+    })();
+    unsafe { CoUninitialize() };
+    match result {
+        Ok(false) => Ok(()),
+        Ok(true) => Err("Windows 已取消回收站操作".to_string()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+#[cfg(not(windows))]
+fn recycle_project_target(_: &Path) -> Result<(), String> {
+    Err("回收站操作仅支持 Windows".to_string())
+}
+
+pub fn delete_project_storage_items(
+    snapshot: &StorageScanSnapshot,
+    targets: &[String],
+    recycle_bin: bool,
+) -> Result<StorageDeleteResult, String> {
+    let root = snapshot.roots.first().filter(|root| root.key == PROJECT_ROOT_KEY)
+        .ok_or("请先扫描项目文件夹")?;
+    if resolve_project_storage_root(&root.path)? != root.path {
+        return Err("项目文件夹已变更，请重新选择".to_string());
+    }
+
+    let scanned_paths: HashSet<&Path> = snapshot.files.iter().map(|file| file.path.as_path())
+        .chain(snapshot.project_dirs.iter().map(|(dir, _)| dir.as_path()))
+        .collect();
+    let mut paths: Vec<&Path> = targets.iter().map(Path::new).collect();
+    paths.sort_unstable();
+    paths.dedup();
+    if paths.iter().any(|path| !scanned_paths.contains(path)) {
+        return Err("所选路径不属于当前项目扫描结果，请重新扫描".to_string());
+    }
+
+    let mut result = StorageDeleteResult {
+        permanent: !recycle_bin,
+        requested: paths.len(),
+        mode: "project".to_string(),
+        ..Default::default()
+    };
+    let mut removed = Vec::new();
+    for path in paths {
+        if removed.iter().any(|parent| path.starts_with(parent)) {
+            continue;
+        }
+        let item = (|| {
+            let canonical = clean_win_path(&fs::canonicalize(path).map_err(|err| err.to_string())?);
+            if canonical != path || !canonical.starts_with(&root.path) || canonical == root.path {
+                return Err("路径已变更或超出项目目录".to_string());
+            }
+            let bytes = measure_project_target(&canonical)?;
+            if recycle_bin {
+                recycle_project_target(&canonical)?;
+            } else {
+                remove_single_path(&canonical, true)?;
+            }
+            if fs::symlink_metadata(path).is_ok() {
+                return Err("文件仍在原位置".to_string());
+            }
+            Ok(bytes)
+        })();
+        match item {
+            Ok(bytes) => {
+                removed.push(path);
+                result.deleted_paths.push(path.display().to_string());
+                result.freed_bytes = result.freed_bytes.saturating_add(bytes);
+            }
+            Err(err) => {
+                result.locked_paths.push(path.display().to_string());
+                result.warnings.push(format!("{}：{err}", path.display()));
+            }
+        }
+    }
+    result.deleted_count = result.deleted_paths.len();
+    Ok(result)
+}
+
 pub fn clean_orphan_summaries(snapshot: &StorageScanSnapshot) -> StorageDeleteResult {
     let agy_running = is_antigravity_active_for_storage();
     let ids = validate_session_ids(&snapshot.orphan_summary_ids);
@@ -2675,6 +2956,73 @@ pub fn idle_age_days(mtime: f64, now_opt: Option<f64>) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_storage_lists_files_and_empty_dirs_and_limits_deletion() {
+        let tmp = std::env::temp_dir().join(format!("agy-project-scan-{}", std::process::id()));
+        let dir = tmp.join("项目");
+        fs::create_dir_all(dir.join("empty")).unwrap();
+        fs::create_dir_all(dir.join("docs")).unwrap();
+        fs::write(dir.join("docs").join("readme.md"), b"test").unwrap();
+        fs::write(dir.join("docs").join("keep.txt"), b"keep").unwrap();
+        let outside = tmp.join("outside.txt");
+        fs::write(&outside, b"outside").unwrap();
+
+        let root = resolve_project_storage_root(&dir).unwrap();
+        let snapshot = scan_project_storage_with_progress(&root, |_| {}).unwrap();
+        let full = build_storage_tree_response(&snapshot, "dir", false, None, false);
+        assert_eq!(full.total_bytes, 8);
+        assert_eq!(full.total_files, 2);
+        assert_eq!(full.session_count, 0);
+        assert!(full.tree.delete_targets.is_empty());
+        assert!(full.tree.children.iter().any(|node| node.name == "empty"));
+        let filtered = build_storage_tree_response(&snapshot, "dir", false, Some("readme"), false);
+        assert_eq!(filtered.total_files, 1);
+        let docs = &filtered.tree.children[0];
+        assert!(docs.delete_targets.is_empty());
+        let typed = build_storage_tree_response(&snapshot, "type", false, None, false);
+        assert_eq!(typed.total_bytes, 8);
+        assert_eq!(typed.tree.children.len(), 2);
+        assert!(delete_project_storage_items(&snapshot, &[outside.display().to_string()], false).is_err());
+        assert!(delete_project_storage_items(&snapshot, &[root.display().to_string()], false).is_err());
+        let result = delete_project_storage_items(&snapshot, &docs.children[0].delete_targets, false).unwrap();
+        assert_eq!(result.deleted_count, 1);
+        assert_eq!(result.freed_bytes, 4);
+        assert!(root.join("docs").join("keep.txt").is_file());
+        assert!(outside.is_file());
+        fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn project_storage_skips_junctions_and_refuses_to_delete_through_them() {
+        let tmp = std::env::temp_dir().join(format!("agy-project-junction-{}", std::process::id()));
+        let dir = tmp.join("project");
+        let containing_dir = dir.join("subdir");
+        let outside = tmp.join("outside");
+        fs::create_dir_all(&containing_dir).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("keep.txt"), b"keep").unwrap();
+        let junction = containing_dir.join("junction");
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/c", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&outside)
+            .output().unwrap();
+        assert!(status.status.success(), "{status:?}");
+
+        assert!(resolve_project_storage_root(&junction).is_err());
+        let root = resolve_project_storage_root(&dir).unwrap();
+        let snapshot = scan_project_storage_with_progress(&root, |_| {}).unwrap();
+        let tree = build_storage_tree_response(&snapshot, "dir", false, None, false);
+        assert_eq!(tree.total_files, 0);
+        let result = delete_project_storage_items(&snapshot, &tree.tree.children[0].delete_targets, false).unwrap();
+        assert_eq!(result.deleted_count, 0);
+        assert_eq!(result.warnings.len(), 1);
+        assert!(outside.join("keep.txt").is_file());
+        fs::remove_dir(&junction).unwrap();
+        fs::remove_dir_all(&tmp).unwrap();
+    }
 
     #[test]
     fn test_unescape_pbtxt_and_split_uuid() {

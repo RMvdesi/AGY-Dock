@@ -24,8 +24,8 @@ const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_BASE_DIR = path.resolve(__dirname, '..');
 export const DEFAULT_NO_PROXY = '127.0.0.1,localhost,::1';
-export const APP_VERSION = '2.4.0';
-export const DEFAULT_UPDATE_SITE_URL = 'https://ahmustudyhelper.xyz';
+export const APP_VERSION = '2.5.0';
+export const DEFAULT_UPDATE_SITE_URL = 'https://www.haoanlab.xyz';
 export const DEFAULT_PRODUCT_SLUG = 'agy-plugin-manager';
 const UPDATE_SEMVER_RE = /^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$/;
 const PRODUCT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -2377,6 +2377,9 @@ export function isNewerSemver(candidate, current) {
 export function validateUpdateSiteUrl(siteUrl) {
   const cleaned = String(siteUrl || DEFAULT_UPDATE_SITE_URL).trim().replace(/\/+$/, '');
   const parsed = new URL(cleaned);
+  if (parsed.origin === 'https://ahmustudyhelper.xyz' && parsed.href === parsed.origin + '/') {
+    return DEFAULT_UPDATE_SITE_URL;
+  }
   if (parsed.protocol === 'https:') return cleaned;
   if (parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')) {
     return cleaned;

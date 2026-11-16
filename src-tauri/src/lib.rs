@@ -8,6 +8,7 @@ pub mod paths;
 pub mod plugins;
 pub mod shortcuts;
 pub mod storage;
+mod storage_inventory;
 pub mod supervisor;
 pub mod tray;
 pub mod updater;
@@ -166,6 +167,9 @@ pub fn run() {
                 paths: paths.clone(),
                 force_quit: AtomicBool::new(false),
                 storage_cache: Mutex::new(None),
+                project_storage: Mutex::new(Default::default()),
+                automatic_checks_started: AtomicBool::new(false),
+                update_check_lock: Mutex::new(()),
                 marketplace_cache: Mutex::new(None),
             });
 
@@ -185,44 +189,6 @@ pub fn run() {
                         shortcuts::ensure_default_shortcuts_once(&p_sc)
                     })
                     .await;
-                });
-            }
-
-            // Startup: non-blocking HaoAn Lab update check
-            let auto_check = initial_cfg
-                .update
-                .as_ref()
-                .and_then(|u| u.auto_check_on_startup)
-                .unwrap_or(true);
-            if auto_check {
-                let app_upd = app.handle().clone();
-                let p_upd = paths.clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(450)).await;
-                    let res = updater::check_for_updates(&p_upd, 6.0).await;
-                    if res.status == "ok" && res.has_update {
-                        let _ = app_upd.emit(events::UPDATE_AVAILABLE, &res);
-                    }
-                });
-            }
-
-            // Startup: non-blocking GitHub Marketplace check
-            let auto_check_marketplace = initial_cfg
-                .marketplace
-                .as_ref()
-                .and_then(|m| m.auto_check_on_startup)
-                .unwrap_or(true);
-            if auto_check_marketplace {
-                let app_mkt = app.handle().clone();
-                let p_mkt = paths.clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(900)).await;
-                    let res = marketplace::fetch_remote_marketplace(&p_mkt).await;
-                    {
-                        let state = app_mkt.state::<AppState>();
-                        *state.marketplace_cache.lock().await = Some(res.clone());
-                    }
-                    let _ = app_mkt.emit(events::MARKETPLACE_UPDATED, &res);
                 });
             }
 
@@ -272,10 +238,14 @@ pub fn run() {
             commands::clear_log,
             commands::cleanup_antigravity_residuals,
             commands::create_all_shortcuts,
+            commands::start_automatic_update_checks,
             commands::check_for_updates,
             commands::open_external_url,
             commands::open_path_in_explorer,
             commands::pick_file,
+            commands::get_storage_inventory,
+            commands::pick_storage_project,
+            commands::remove_storage_project,
             commands::get_system_dark_mode,
             commands::scan_agy_storage,
             commands::get_storage_tree,

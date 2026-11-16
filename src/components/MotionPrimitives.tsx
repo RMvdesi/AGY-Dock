@@ -1,5 +1,6 @@
 import { Search, X } from "lucide-react";
-import { AnimatePresence, LayoutGroup, motion } from "motion/react";
+import type { MouseEvent } from "react";
+import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
 
 export const MOTION_EASE = [0.22, 1, 0.36, 1] as const;
 export const MOTION_SPRING = {
@@ -143,9 +144,12 @@ export function SegmentedControl<T extends string>({
 
 interface SpringSwitchProps {
   checked: boolean;
-  onChange: (checked: boolean) => void;
+  onChange: (checked: boolean, event: MouseEvent<HTMLButtonElement>) => void;
   disabled?: boolean;
   ariaLabel?: string;
+  compact?: boolean;
+  tone?: "default" | "danger";
+  role?: "switch" | "checkbox";
 }
 
 export function SpringSwitch({
@@ -153,33 +157,43 @@ export function SpringSwitch({
   onChange,
   disabled = false,
   ariaLabel,
+  compact = false,
+  tone = "default",
+  role = "switch",
 }: SpringSwitchProps) {
+  const reduceMotion = useReducedMotion();
+  const accent = tone === "danger" ? "var(--danger-solid)" : "var(--accent)";
   return (
     <button
       type="button"
-      role="switch"
+      role={role}
       aria-checked={checked}
       aria-label={ariaLabel}
       disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
-        if (!disabled) onChange(!checked);
+        onChange(!checked, e);
       }}
-      className="relative inline-flex h-[20px] w-[38px] shrink-0 cursor-pointer items-center rounded-full p-[2.5px] transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+      className={`relative inline-flex shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
+        compact ? "h-4 w-7 p-0.5" : "h-5 w-[38px] p-[2.5px]"
+      }`}
       style={{
-        backgroundColor: checked ? "var(--accent)" : "var(--switch-off)",
+        backgroundColor: checked ? accent : "var(--switch-off)",
+        outlineColor: accent,
       }}
     >
       <motion.span
         initial={false}
-        animate={{ x: checked ? 18 : 0 }}
-        transition={{
+        animate={{ x: checked ? (compact ? 12 : 18) : 0 }}
+        transition={reduceMotion ? { duration: 0 } : {
           type: "spring",
           stiffness: 560,
           damping: 32,
           mass: 0.7,
         }}
-        className="pointer-events-none block h-[15px] w-[15px] rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.22)]"
+        className={`pointer-events-none block shrink-0 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.22)] ${
+          compact ? "size-3" : "size-[15px]"
+        }`}
       />
     </button>
   );

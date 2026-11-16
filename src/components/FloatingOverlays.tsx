@@ -1,7 +1,8 @@
-import { AlertCircle, CheckCircle2, Info, Sparkles, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Download, Info, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { sanitizePlainText } from "../lib/format";
 import type { UpdateCheckResult } from "../types/ipc";
+import { ReleaseNotes } from "./ReleaseNotes";
 import { StatusPill } from "./MotionPrimitives";
 
 export interface ToastItem {
@@ -61,6 +62,7 @@ interface FloatingUpdateBannerProps {
   visible: boolean;
   onDismiss: () => void;
   onUpdateNow: (url: string) => void;
+  onOpenUrl: (url: string) => void;
 }
 
 export function FloatingUpdateBanner({
@@ -68,6 +70,7 @@ export function FloatingUpdateBanner({
   visible,
   onDismiss,
   onUpdateNow,
+  onOpenUrl,
 }: FloatingUpdateBannerProps) {
   if (!update) return null;
 
@@ -78,14 +81,7 @@ export function FloatingUpdateBanner({
   const baseBody =
     sanitizePlainText(update.prompt?.body) ||
     "前往 HaoAn Lab 官网查看更新日志并获取最新版本。";
-  const changelog = sanitizePlainText(update.changelog);
-  const changelogLines = changelog
-    ? changelog
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .slice(0, 2)
-    : [];
+  const changelog = update.changelog?.trim();
 
   return (
     <AnimatePresence>
@@ -96,38 +92,40 @@ export function FloatingUpdateBanner({
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -10, scale: 0.96 }}
           transition={{ type: "spring", stiffness: 400, damping: 30 }}
-          className="fixed top-[66px] right-8 z-40 w-[340px] rounded-[14px] border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-4 shadow-[var(--shadow-floating)]"
+          aria-labelledby="client-update-title"
+          className="fixed top-[66px] right-5 z-40 flex max-h-[calc(100dvh-86px)] w-[min(520px,calc(100vw-40px))] flex-col rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] shadow-[var(--shadow-floating)]"
         >
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--border-hairline)] px-5 py-3">
             <StatusPill tone="ok">
-              <Sparkles className="h-3 w-3" />
+              <Download className="h-3 w-3" />
               <span>{latest ? `新版本 v${latest}` : "发现新版本"}</span>
             </StatusPill>
             <button
               type="button"
               onClick={onDismiss}
-              title="关闭提示"
-              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-lg text-[var(--text-faint)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
+              aria-label="关闭更新提示"
+              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-4 w-4" />
             </button>
           </div>
 
-          <h4 className="mt-2.5 text-[13.5px] font-bold leading-snug text-[var(--text-primary)]">
-            {title}
-          </h4>
-
-          <p className="mt-1.5 whitespace-pre-line text-[12.5px] leading-relaxed text-[var(--text-muted)]">
-            {baseBody}
-          </p>
-
-          {changelogLines.length > 0 && !baseBody.includes(changelogLines[0]) && (
-            <p className="mt-1.5 rounded-lg bg-[var(--bg-surface-soft)] px-2.5 py-1.5 text-[11.5px] leading-relaxed text-[var(--text-muted)]">
-              {changelogLines.join(" · ")}
+          <div className="min-h-0 overflow-y-auto overscroll-contain px-5 py-4" tabIndex={0}>
+            <h4 id="client-update-title" className="text-[16px] font-bold leading-snug break-words text-[var(--text-primary)]">
+              {title}
+            </h4>
+            <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-[var(--text-muted)]">
+              {baseBody}
             </p>
-          )}
+            {changelog && (
+              <section className="mt-4 rounded-xl bg-[var(--bg-surface-soft)] px-3.5 py-3">
+                <h5 className="mb-2 text-[12px] font-semibold text-[var(--text-primary)]">更新日志</h5>
+                <ReleaseNotes text={changelog} onOpenUrl={onOpenUrl} />
+              </section>
+            )}
+          </div>
 
-          <div className="mt-3.5 flex items-center justify-between">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--border-hairline)] px-5 py-3">
             <button
               type="button"
               onClick={onDismiss}

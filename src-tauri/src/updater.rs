@@ -51,7 +51,7 @@ pub fn normalize_semver_str(raw: &str, fallback: &str) -> String {
     if let Some((maj, min, pat)) = parse_semver_tuple(fallback) {
         return format!("{maj}.{min}.{pat}");
     }
-    "2.4.0".to_string()
+    APP_VERSION.to_string()
 }
 
 pub fn is_newer_semver(candidate: &str, current: &str) -> bool {
@@ -75,6 +75,17 @@ pub fn validate_update_site_url(site_url: Option<&str>) -> Result<String, String
     let scheme = parsed.scheme();
     let host = parsed.host_str().unwrap_or("");
     if scheme == "https" && !host.is_empty() {
+        // Only the former built-in origin migrates. Custom base paths and ports remain usable.
+        if host == "ahmustudyhelper.xyz"
+            && parsed.port().is_none()
+            && parsed.path() == "/"
+            && parsed.username().is_empty()
+            && parsed.password().is_none()
+            && parsed.query().is_none()
+            && parsed.fragment().is_none()
+        {
+            return Ok(DEFAULT_UPDATE_SITE_URL.to_string());
+        }
         return Ok(base.to_string());
     }
     if scheme == "http" && (host == "localhost" || host == "127.0.0.1") {
@@ -452,13 +463,32 @@ mod tests {
         .unwrap();
         assert_eq!(
             manifest,
-            "https://ahmustudyhelper.xyz/api/v1/products/agy-plugin-manager/releases/latest?platform=windows&arch=x64&from=2.3.0"
+            "https://www.haoanlab.xyz/api/v1/products/agy-plugin-manager/releases/latest?platform=windows&arch=x64&from=2.3.0"
         );
         assert_eq!(
             landing,
-            "https://ahmustudyhelper.xyz/updates/agy-plugin-manager?platform=windows&arch=x64&from=2.3.0"
+            "https://www.haoanlab.xyz/updates/agy-plugin-manager?platform=windows&arch=x64&from=2.3.0"
         );
         assert!(validate_update_site_url(Some("http://evil.example.com")).is_err());
         assert!(validate_update_site_url(Some("http://127.0.0.1:3000")).is_ok());
+    }
+
+    #[test]
+    fn saved_legacy_default_moves_to_new_host_only() {
+        let old = " https://AHMUSTUDYHELPER.xyz/ ";
+        assert_eq!(validate_update_site_url(Some(old)).unwrap(), DEFAULT_UPDATE_SITE_URL);
+        for custom in [
+            "https://mirror.example.org",
+            "https://ahmustudyhelper.xyz/custom",
+            "https://ahmustudyhelper.xyz:8443",
+            "https://ahmustudyhelper.xyz.example.com",
+            "http://127.0.0.1:3000",
+        ] {
+            assert_eq!(validate_update_site_url(Some(custom)).unwrap(), custom);
+        }
+        let (manifest, landing) =
+            build_update_urls(Some(old), None, Some("2.4.0"), "windows", Some("arm64")).unwrap();
+        assert_eq!(manifest, format!("{DEFAULT_UPDATE_SITE_URL}/api/v1/products/agy-plugin-manager/releases/latest?platform=windows&arch=arm64&from=2.4.0"));
+        assert_eq!(landing, format!("{DEFAULT_UPDATE_SITE_URL}/updates/agy-plugin-manager?platform=windows&arch=arm64&from=2.4.0"));
     }
 }

@@ -1,3 +1,4 @@
+import { SpringSwitch } from "./MotionPrimitives";
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -271,22 +272,12 @@ export function PluginEditorModal({
 
                 <div className="flex flex-wrap items-center gap-6 pt-2">
                   <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[var(--text-primary)]">
-                    <input
-                      type="checkbox"
-                      checked={enabled}
-                      onChange={(e) => setEnabled(e.target.checked)}
-                      className="h-4 w-4 cursor-pointer accent-[var(--accent)]"
-                    />
+                    <SpringSwitch checked={enabled} onChange={setEnabled} />
                     <span>启用插件</span>
                   </label>
 
                   <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[var(--text-primary)]">
-                    <input
-                      type="checkbox"
-                      checked={autoAttach}
-                      onChange={(e) => setAutoAttach(e.target.checked)}
-                      className="h-4 w-4 cursor-pointer accent-[var(--accent)]"
-                    />
+                    <SpringSwitch checked={autoAttach} onChange={setAutoAttach} />
                     <span>随主程序自动附着</span>
                   </label>
                 </div>

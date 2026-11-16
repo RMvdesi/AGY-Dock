@@ -1,3 +1,4 @@
+import { SpringSwitch } from "./MotionPrimitives";
 import { useEffect } from "react";
 import { AlertTriangle, Check, Info, Loader2, Trash2, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -113,12 +114,12 @@ export function ConfirmModal({
                 </p>
                 {checkboxLabel && (
                   <label className="agy-inset mt-3.5 flex cursor-pointer items-start gap-2.5 px-3 py-2.5 transition-colors hover:border-[var(--border-strong)]">
-                    <input
-                      type="checkbox"
+                    <SpringSwitch
                       checked={Boolean(checkboxChecked)}
                       disabled={busy}
-                      onChange={(e) => onCheckboxChange?.(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-[var(--danger-solid)] disabled:cursor-not-allowed"
+                      onChange={(checked) => onCheckboxChange?.(checked)}
+                      ariaLabel={checkboxLabel}
+                      tone="danger"
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block text-[12.5px] font-medium text-[var(--text-primary)]">

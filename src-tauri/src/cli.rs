@@ -36,8 +36,9 @@ pub fn maybe_run_cli() -> Option<i32> {
     let is_cleanup = has_flag("--cleanup");
     let is_watch_exit = has_flag("--watch-exit");
     let is_shortcut = has_flag("--shortcut");
+    let is_finish_install = has_flag("--finish-install");
 
-    if !(is_quick_launch || is_attach || is_stop || is_cleanup || is_watch_exit || is_shortcut) {
+    if !(is_quick_launch || is_attach || is_stop || is_cleanup || is_watch_exit || is_shortcut || is_finish_install) {
         return None;
     }
 
@@ -111,6 +112,16 @@ pub fn maybe_run_cli() -> Option<i32> {
     if is_watch_exit {
         let after_gui_exit = has_flag("--after-gui-exit");
         return Some(supervisor::run_watch_exit(&paths, after_gui_exit));
+    }
+
+    if is_finish_install {
+        return Some(match shortcuts::apply_installer_shortcut_choice(&paths, has_flag("--create-agy-launcher")) {
+            Ok(()) => 0,
+            Err(err) => {
+                paths.log_error(&format!("应用安装器快捷方式选项失败: {err}"));
+                1
+            }
+        });
     }
 
     if is_shortcut {

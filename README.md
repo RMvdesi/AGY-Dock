@@ -60,16 +60,25 @@ Each package carries a root `agy-plugin.json` manifest (`schemaVersion: 1`). See
 
 ---
 
+## 储存管理与更新
+
+- 在「存储管理」顶部切换「AGY 本地数据」与「项目文件」。项目文件在同一张方框图或列表中显示已发现和手动添加的目录，方框里预览较大的一级文件及子目录。重叠目录在合计中只计一次。
+- 选择方框可查看并清理条目，双击目录在同一界面展开。列表沿用排序、勾选与清理操作。点「添加项目」保存其他目录，清理时保留已登记的项目根目录。
+- 客户端更新和插件市场在打开应用时检查一次，随后每 15 分钟检查。设置中的「检查更新」与插件市场的刷新按钮可随时使用。关闭客户端更新浮窗后，同一版本在本次运行期间可通过手动检查重新打开。
+- 客户端更新服务默认使用 `https://www.haoanlab.xyz`。配置中的旧默认站点 `https://ahmustudyhelper.xyz` 会在读取时兼容迁移，自定义站点及其他配置原样沿用。旧版客户端仍通过旧域名的清单和下载页获取正式版。
+- 发布与失败通知都向新域名提交。`.release.json` 的 `oidcAudience` 单独保留网站服务端当前的校验值，以兼容现有 GitHub Actions 身份校验和管理员域名。
+
 ## Development & Building from Source
 
 ### Prerequisites
-- Python 3.11+ with `PySide6` and `PyInstaller`
-- Node.js 22+ (for Node-based CDP plugins and CLI/daemon tests)
+- Node.js 22+ and npm
+- Rust stable with the Windows MSVC toolchain and Tauri's Windows build prerequisites
+- Python 3.11+ for the standalone plugin package builder
 
 ### Run from Source
 ```powershell
-cd AGY-Launcher
-python desktop_app.py
+npm ci
+npm run tauri:dev
 ```
 
 ### Build Unified Plugin Packages
@@ -80,16 +89,13 @@ python scripts/package_plugins.py
 
 ### Build Windows Desktop App & Setup Installer
 ```powershell
-cd AGY-Launcher
-python scripts/build_release.py
+node scripts/build.mjs windows x64
 ```
-Outputs under `AGY-Launcher/dist/`:
-- `AGY-Plugin-Manager/` — PyInstaller `--onedir` desktop bundle (`AGY Plugin Manager.exe`)
-- `AGY-Plugin-Manager-Setup-v2.0.0.exe` — Single-file GUI & `--silent` Windows Setup Installer
+The build writes `dist-release/AGY-Plugin-Manager-Setup-v<VERSION>.exe`.
 
 ### Run Tests
 ```powershell
-cd AGY-Launcher
-python -m unittest discover -s tests -v
-node --test tests\process-manager.test.mjs
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml
+node --test AGY-Launcher/tests/process-manager.test.mjs
 ```

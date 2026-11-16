@@ -265,9 +265,9 @@ export function MyPluginsPage({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  onOpenMarketplace();
+                                  onOpenDetail(p.id);
                                 }}
-                                title={`发现 GitHub 新版本 ${formatVersionText(remoteUpdate.version)}，点击前往市场更新`}
+                                title={`查看 ${formatVersionText(remoteUpdate.version)} 的更新日志`}
                                 className="shrink-0 cursor-pointer rounded-[10px] px-2 py-[1.5px] text-[11px] font-semibold whitespace-nowrap transition-opacity hover:opacity-85"
                                 style={{ backgroundColor: "var(--warn-bg)", color: "var(--warn)" }}
                               >

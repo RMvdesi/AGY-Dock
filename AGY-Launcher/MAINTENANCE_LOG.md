@@ -6,6 +6,78 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.5.0] - 2026-11-16 00:22
+
+### Summary
+- Align the three Window and Lifecycle switches at the right edge of their rows, with the setting names on the left.
+
+### Files Changed
+- `src/pages/SettingsPage.tsx` — Window and Lifecycle row layout.
+
+### Verification
+- `node scripts/build.mjs windows x64` passed the production frontend build, 30 Rust tests, and NSIS packaging. The local executable and installer checksums matched their respective build outputs, and the existing user configuration hash was preserved.
+- A screenshot and the accessibility tree from the installed Windows client confirmed all three switches share the same right alignment and show their saved states.
+
+## [v2.5.0] - 2026-11-16 00:17
+
+### Summary
+- Apply the active storage grouping and its data together, discard superseded tree requests, and keep the list and treemap mounted while switching groups. Keep row dividers stable during sorting.
+- Report actual cumulative file counts and bytes during project scans, with progress tied to the project roots being visited.
+- Add the Magic Injection switch in Settings. Proxy detection fills the draft parameters without changing the switch. Use animated capsule controls for client settings and selection, and remove the fixed Marketplace footer copy.
+
+### Files Changed
+- `src/pages/StoragePage.tsx`, `src/components/SpaceTreemap.tsx`, and `src/App.tsx` — grouping, dividers, and scan progress display.
+- `src-tauri/src/commands.rs` and `src-tauri/src/storage_inventory.rs` — blocking tree reads, scan progress, and inventory regression assertions.
+- `src/components/{MotionPrimitives,ConfirmModal,PluginEditorModal,StorageDeleteModal}.tsx` and `src/pages/{MarketplacePage,SettingsPage}.tsx` — shared switches, proxy control, and Marketplace footer.
+- `CHANGELOG.md` — changes to the unpublished 2.5.0 release notes.
+
+### Verification
+- `node scripts/build.mjs windows x64` completed the production frontend build, 30 Rust tests, and NSIS packaging. `node --test tests/*.test.mjs` passed all 9 legacy daemon tests from `AGY-Launcher`.
+- In the installed Windows client, 8 consecutive grouping clicks in the treemap settled on the directory view, and 9 in the list settled on the file-type view. Both sort directions changed the first row. The first project scan reported changing byte and file counts and finished with 7 directories.
+- Captured the settings layout and verified the Magic Injection switch state, proxy draft detection with the switch off, restoration of the original saved state on returning to Settings, and removal of the Marketplace footer copy. The user configuration was preserved during the local EXE replacement, the 2 desktop shortcuts point to the updated EXE, and the installer hash matches the manifest.
+- Both live domains returned HTTP 200 for the version manifest and update page and offered 2.4.0 for a 2.3.1 client. No remote release was created.
+
+## [v2.5.0] - 2026-11-15 20:23
+
+### Summary
+- Replaced the project overview and separate project detail pages with an AGY local-data / project-files switch in the existing storage browser. The project treemap places all registered folders together and previews their largest immediate entries. The shared list keeps sorting and selection, and the toolbar combines navigation, filters and totals in two rows.
+- Marketplace rows now display release notes only when the installed plugin has a newer version available. Plugin details continue showing the latest notes.
+- The installer finish page offers a separate, default-checked AGY Launcher shortcut. It respects both checkboxes and prevents first-run creation after opt-out. The installer and local build use the same main executable filename.
+
+### Files Changed
+- `src/pages/StoragePage.tsx`, `src/components/SpaceTreemap.tsx`, `src/lib/storage.ts`, `src/types/ipc.ts`, and `src/App.tsx` — storage switch, project treemap tiles, shared list and compact toolbar.
+- `src-tauri/src/{storage,storage_inventory,commands}.rs` — first-level project previews, on-demand folder scans and registered root protection during cleanup.
+- `src/pages/MarketplacePage.tsx` and `AGY-Launcher/PLUGIN_INTEGRATION.md` — release-note visibility for available plugin updates.
+- `src-tauri/nsis/hooks.nsh`, `src-tauri/tauri.conf.json`, `src-tauri/src/{cli,shortcuts}.rs`, `README.md` and `CHANGELOG.md` — installer options, common executable name and user docs.
+
+### Verification
+- `node scripts/build.mjs windows x64` passed the TypeScript/frontend build, 30 Rust tests, and NSIS packaging. The desktop test installer checksum matches the build manifest.
+- An isolated installer using the same finish-page hook confirmed that the default AGY Launcher checkbox works independently and that turning it off leaves the normal desktop shortcut and launch choices intact. The opt-out regression test also verified that first-run generation is suppressed.
+- In the Windows client, the isolated test plugin showed release notes at v1.0.0, upgraded to v1.1.0, and stopped displaying notes when marked current. The installed client displayed the project treemap with 7 project directories and 33.6 GB, and the same directories appeared in the shared list.
+- Reinstalled the package locally after the previous installation directory had been removed. The installed binary matches the build except for the expected NSIS bundle marker. Verified both desktop shortcut targets and the launcher argument. The deleted installation found in the Recycle Bin had no installed plugins. Cloud publishing was left pending acceptance.
+
+## [v2.5.0] - 2026-11-15 19:38
+
+### Summary
+- Added a storage overview showing AGY data, all discovered projects and workspace folders, and manually added folders together. Projects are measured independently and totals deduplicate overlapping folders. The overview links to the existing cleanup views and remembers manually added folders across launches.
+- Scheduled client and plugin checks at startup and every 15 minutes, preserving both manual check buttons. Full Markdown release notes are available in the client banner, plugin details, and expanded marketplace rows. The plugin details update button uses the existing verified installer.
+- Switched the client and release POST endpoints to `www.haoanlab.xyz`. The former built-in client URL is normalized at runtime, custom endpoints are retained, and CI keeps the current server-side OIDC audience separately from its destination. Maintained product and installer identity.
+
+### Files Changed
+- `src-tauri/src/storage_inventory.rs`, `src-tauri/src/storage.rs`, `src-tauri/src/commands.rs`, and `src-tauri/src/lib.rs` — project discovery, persisted folders, size aggregation, scoped cleanup and update scheduling.
+- `src/App.tsx`, `src/pages/StorageOverviewPage.tsx`, `src/pages/StoragePage.tsx`, `src/components/StorageDeleteModal.tsx`, `src/lib/ipc.ts`, and `src/types/ipc.ts` — overview, storage detail navigation and IPC.
+- `src/components/FloatingOverlays.tsx`, `src/components/ReleaseNotes.tsx`, `src/pages/{ExternalPluginDetailPage,MarketplacePage,MyPluginsPage,SettingsPage}.tsx`, `src/index.css`, and `package*.json` — update presentation, inline plugin notes and safe Markdown rendering.
+- `src-tauri/src/{models,updater}.rs`, `AGY-Launcher/lib/process-manager.mjs`, `AGY-Launcher/tests/process-manager.test.mjs`, `.release.json`, and `scripts/{publish,notify-failure}.mjs` — domain compatibility and CI request routing.
+- `VERSION`, `src-tauri/{Cargo.toml,Cargo.lock,tauri.conf.json}`, `AGY-Launcher/server.mjs`, `README.md`, `CHANGELOG.md`, and both `AGENTS.md` files — version parity, user instructions and delivery notes. `AGY-Launcher/PLUGIN_INTEGRATION.md` documents the existing `changelog` field's Markdown support.
+
+### Verification
+- `cargo test --manifest-path src-tauri/Cargo.toml` — 29 passed, including nested project accounting, manual directory persistence, scoped cleanup, 15-minute scheduling and saved URL migration.
+- `node --test AGY-Launcher/tests/process-manager.test.mjs` — 9 passed. `node --check scripts/publish.mjs` and `node --check scripts/notify-failure.mjs` passed.
+- Live Windows HTTPS checks confirmed the old and new manifest and update page each return v2.4.0 on their own host. Range downloads returned HTTP 206 from the published installer. New CI endpoints returned HTTP 401 to requests without a token. A v2.4.0 portable test instance completed a manual check with the old domain.
+- Local Windows QA with an isolated mock service confirmed both startup requests and the next automatic requests exactly 15 minutes later. Manual checks, scrolling to the last line of a long Markdown log, inline marketplace notes, plugin detail updates, and a D: project file's move into the Windows Recycle Bin were verified.
+- The final Windows executable displayed AGY storage alongside 9 Antigravity projects, 2 recorded workspaces, and 2 added D: project folders. Their test file totals were 62 B and 128 B. Both manual folder paths were persisted and the 128 B project opened its file details. The same executable completed a real website update check with a saved legacy default URL.
+- `node scripts/build.mjs windows x64` — production frontend build, 29 Rust tests and NSIS packaging passed. Copied `AGY-Plugin-Manager-Setup-v2.5.0.exe` to the Windows desktop and verified its version and SHA-256 against the local build manifest. Cloud publishing awaits approval.
+
 ## [v2.4.0] - 2026-11-14 21:59
 
 ### Summary

@@ -260,7 +260,7 @@ python AGY-Launcher/scripts/package_plugins.py
 
 ## 8. GitHub 远程插件市场规范 (`plugins-catalog.json` & 第三方插件封装指南)
 
-AGY Plugin Manager 通过仓库根目录的 `plugins-catalog.json`（优先）与 GitHub Releases API（自动兜底）接入远程插件市场（默认仓库：`haoan33/AGY-Plugin-Manager`），支持启动自动检查新插件与 SemVer 版本更新，以及一键下载安装/升级。
+AGY Plugin Manager 通过仓库根目录的 `plugins-catalog.json`（优先）与 GitHub Releases API（自动兜底）接入远程插件市场（默认仓库：`haoan33/AGY-Plugin-Manager`），支持启动时及每 15 分钟自动检查新插件与 SemVer 版本更新，以及一键下载安装/升级。
 
 ### 1. `plugins-catalog.json` 格式规范 (`schemaVersion: 1`)
 
@@ -285,10 +285,12 @@ AGY Plugin Manager 通过仓库根目录的 `plugins-catalog.json`（优先）�
 | `type` | `string` | No | 运行类型：`node-cdp`、`exe-cdp` 或 `custom-cdp`。 |
 | `downloadUrl` | `string` | **Yes** | HTTPS 下载地址（仅允许 `github.com` / `objects.githubusercontent.com` / `raw.githubusercontent.com` / `codeload.github.com`）。 |
 | `homepage` | `string` | No | 项目主页或上游开源仓库地址。 |
-| `changelog` | `string` | No | 当前版本更新说明（纯文本）。 |
+| `changelog` | `string` | No | 当前插件版本更新日志，接受纯文本或 GitHub Flavored Markdown。客户端禁用原生 HTML 和图片，外部链接仅支持 HTTP(S)。 |
 | `sha256` | `string` | Recommended | 对应 Release `.zip` 的小写 SHA-256 校验值；非空时安装器会强制校验摘要，未匹配新包上传前可留空 `""`。 |
 | `size` | `number` | No | 压缩包字节大小（用于 UI 展示）。 |
 | `releaseTag` | `string` | No | 资产所属的 GitHub Release Tag（如 `"v2.2.1"`）。 |
+
+提供 `changelog` 时，写该插件当前 `version` 的更新内容。市场会在有可用升级的插件条目下展示，已安装插件的详情页也会显示远程版本日志，并在有更新时提供更新按钮。使用 GitHub Releases 兜底时读取对应 Release 正文，单个 Release 含多个插件时建议按插件分段。
 
 ### 2. Release 资产命名与发布工作流
 

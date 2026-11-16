@@ -63,8 +63,8 @@ When developing, updating, or onboarding any AGY external plugin under `AGY-Laun
 
 ## 4. HaoAn Lab Website Update & Integration Specification
 
-All future releases of `AGY-Launcher` MUST continue to adhere to the `HaoAn Lab` official website (`https://ahmustudyhelper.xyz`) integration specification:
+All future releases of `AGY-Launcher` MUST continue to adhere to the `HaoAn Lab` official website (`https://www.haoanlab.xyz`) integration specification:
 - **Release & update mode**: `slug` is `agy-plugin-manager` with `distribution_mode = managed` and `runtime_mode = none` (non-forced update prompt only; never gate app launch, send user credentials, or call `/runtime/*` endpoints).
-- **Manifest query contract**: Startup auto-check and Settings manual update checks MUST query `GET https://ahmustudyhelper.xyz/api/v1/products/agy-plugin-manager/releases/latest?platform=windows&arch=<x64|arm64>&from=<X.Y.Z>` using bare SemVer without leading `v`, and the `"立即更新"` action MUST open `https://ahmustudyhelper.xyz/updates/agy-plugin-manager?from=<X.Y.Z>&platform=windows&arch=<arch>`.
-- **Website-managed copy**: Render `prompt.title`, `prompt.body`, and `release.changelog` strictly as sanitized plain text in the top-right floating banner, preserving non-blocking dismiss behavior and offline/404 fallbacks.
+- **Manifest query contract**: Startup, 15-minute automatic and Settings manual update checks MUST query `GET https://www.haoanlab.xyz/api/v1/products/agy-plugin-manager/releases/latest?platform=windows&arch=<x64|arm64>&from=<X.Y.Z>` using bare SemVer without leading `v`, and the `"立即更新"` action MUST open `https://www.haoanlab.xyz/updates/agy-plugin-manager?from=<X.Y.Z>&platform=windows&arch=<arch>`.
+- **Website-managed copy**: Render `prompt.title` and `prompt.body` as plain text and `release.changelog` as safe Markdown with raw HTML and external images disabled in the top-right floating banner, preserving non-blocking dismiss behavior and offline/404 fallbacks.
 - **Version & artifact parity**: Keep `APP_VERSION` in `AGY-Launcher/desktop/core.py` synchronized with `const VERSION = 'X.Y.Z';` in `AGY-Launcher/server.mjs` and Windows x64 installer naming (`AGY-Plugin-Manager-Setup-v<version>.exe`).

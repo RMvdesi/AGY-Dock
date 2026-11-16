@@ -14,20 +14,33 @@ use crate::paths::ManagerPaths;
 use crate::plugins;
 use crate::shortcuts;
 use crate::storage::{self, StorageScanSnapshot};
+use crate::storage_inventory::{self, StorageInventory};
 use crate::supervisor;
 use crate::tray::{apply_dwm_titlebar_theme, resolve_theme_is_dark};
 use crate::updater;
-use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tokio::sync::Mutex;
 use url::Url;
 
 pub struct AppState {
     pub paths: ManagerPaths,
     pub force_quit: AtomicBool,
-    pub storage_cache: Mutex<Option<StorageScanSnapshot>>,
+    pub storage_cache: Mutex<Option<Arc<StorageScanSnapshot>>>,
+    pub project_storage: Mutex<ProjectStorage>,
+    pub automatic_checks_started: AtomicBool,
+    pub update_check_lock: Mutex<()>,
     pub marketplace_cache: Mutex<Option<RemoteMarketplaceResult>>,
+}
+
+#[derive(Default)]
+pub struct ProjectStorage {
+    paths: HashSet<PathBuf>,
+    snapshot: Option<(PathBuf, Arc<StorageScanSnapshot>)>,
 }
 
 async fn emit_overview_bg(app: &AppHandle, paths: &ManagerPaths) {
@@ -420,18 +433,57 @@ pub async fn create_all_shortcuts(state: State<'_, AppState>) -> Result<Shortcut
         .map_err(|e| format!("创建桌面快捷方式失败: {e}"))?
 }
 
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
+fn automatic_update_timer() -> tokio::time::Interval {
+    let mut timer = tokio::time::interval(UPDATE_CHECK_INTERVAL);
+    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    timer
+}
+
 #[tauri::command]
-pub async fn check_for_updates(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    manual: Option<bool>,
-) -> Result<UpdateCheckResult, String> {
-    let _is_manual = manual.unwrap_or(true);
-    let res = updater::check_for_updates(&state.paths, 6.0).await;
-    if res.status == "ok" && res.has_update {
-        let _ = app.emit(events::UPDATE_AVAILABLE, &res);
+pub fn start_automatic_update_checks(app: AppHandle, state: State<'_, AppState>) {
+    if state.automatic_checks_started.swap(true, Ordering::SeqCst) {
+        return;
     }
-    Ok(res)
+    tauri::async_runtime::spawn(async move {
+        let mut timer = automatic_update_timer();
+        loop {
+            timer.tick().await;
+            let state = app.state::<AppState>();
+            tokio::join!(
+                async {
+                    let result = run_update_check(&state).await;
+                    let _ = app.emit(events::UPDATE_AVAILABLE, result);
+                },
+                refresh_remote_marketplace(&app, &state, true)
+            );
+        }
+    });
+}
+
+#[cfg(test)]
+mod update_schedule_tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn automatic_check_ticks_at_startup_and_every_fifteen_minutes() {
+        let started = tokio::time::Instant::now();
+        let mut timer = automatic_update_timer();
+        assert_eq!(timer.tick().await, started);
+        assert_eq!(timer.tick().await - started, Duration::from_secs(900));
+        assert_eq!(timer.tick().await - started, Duration::from_secs(1800));
+    }
+}
+
+async fn run_update_check(state: &AppState) -> UpdateCheckResult {
+    let _guard = state.update_check_lock.lock().await;
+    updater::check_for_updates(&state.paths, 6.0).await
+}
+
+#[tauri::command]
+pub async fn check_for_updates(state: State<'_, AppState>) -> Result<UpdateCheckResult, String> {
+    Ok(run_update_check(&state).await)
 }
 
 #[tauri::command]
@@ -499,28 +551,123 @@ pub async fn pick_file(
 }
 
 #[tauri::command]
+pub async fn get_storage_inventory(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    rescan: bool,
+) -> Result<StorageInventory, String> {
+    let mut projects = state.project_storage.lock().await;
+    let snapshot = storage_snapshot(&app, &state, rescan).await?;
+    let paths = state.paths.clone();
+    let inventory = tokio::task::spawn_blocking(move || {
+        storage_inventory::build_inventory(&paths, &snapshot, |progress| {
+            let _ = app.emit(events::STORAGE_SCAN_PROGRESS, progress);
+        })
+    }).await.map_err(|err| format!("无法统计项目存储：{err}"))??;
+    projects.paths = inventory.accessible_project_paths();
+    projects.snapshot = None;
+    Ok(inventory)
+}
+
+#[tauri::command]
+pub async fn pick_storage_project(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    let path = tokio::task::spawn_blocking(|| {
+        rfd::FileDialog::new().set_title("添加项目文件夹").pick_folder()
+    })
+    .await
+    .map_err(|err| format!("打开文件夹选择对话框失败：{err}"))?;
+    let Some(path) = path else {
+        return Ok(false);
+    };
+    let projects = state.project_storage.lock().await;
+    let snapshot = storage_snapshot(&app, &state, false).await?;
+    let paths = state.paths.clone();
+    // Keep saves serialized with removals and inventory refreshes.
+    tokio::task::spawn_blocking(move || {
+        let root = storage_inventory::valid_project_root(&path, &snapshot)?;
+        storage_inventory::update_saved_project(&paths, &root, true)
+    }).await.map_err(|err| format!("无法添加项目文件夹：{err}"))??;
+    drop(projects);
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn remove_storage_project(state: State<'_, AppState>, project_path: String) -> Result<(), String> {
+    let mut projects = state.project_storage.lock().await;
+    let path = PathBuf::from(project_path);
+    storage_inventory::update_saved_project(&state.paths, &path, false)?;
+    projects.paths.remove(&path);
+    if projects.snapshot.as_ref().is_some_and(|(active, _)| active == &path) {
+        projects.snapshot = None;
+    }
+    Ok(())
+}
+
+async fn project_storage_tree(
+    app: &AppHandle,
+    state: &AppState,
+    project_path: &str,
+    view_mode: String,
+    query: Option<String>,
+    rescan: bool,
+) -> Result<StorageTreeResponse, String> {
+    let mut projects = state.project_storage.lock().await;
+    let snapshot = project_snapshot(app, &mut projects, Path::new(project_path), rescan).await?;
+    tokio::task::spawn_blocking(move || {
+        storage::build_storage_tree_response(&snapshot, &view_mode, false, query.as_deref(), false)
+    }).await.map_err(|err| format!("无法读取项目存储：{err}"))
+}
+
+async fn project_snapshot(
+    app: &AppHandle,
+    projects: &mut ProjectStorage,
+    path: &Path,
+    rescan: bool,
+) -> Result<Arc<StorageScanSnapshot>, String> {
+    if !projects.paths.contains(path) {
+        return Err("请先扫描项目文件".to_string());
+    }
+
+    if let Some((_, snapshot)) = projects.snapshot.as_ref()
+        .filter(|(cached_path, _)| !rescan && cached_path == path)
+    {
+        return Ok(Arc::clone(snapshot));
+    }
+    projects.snapshot = None;
+    let root = path.to_path_buf();
+    let app = app.clone();
+    let snapshot = Arc::new(tokio::task::spawn_blocking(move || {
+        storage::scan_project_storage_with_progress(&root, |progress| {
+            let _ = app.emit(events::STORAGE_SCAN_PROGRESS, progress);
+        })
+    }).await.map_err(|err| format!("无法扫描项目文件夹：{err}"))??);
+    projects.snapshot = Some((path.to_path_buf(), Arc::clone(&snapshot)));
+    Ok(snapshot)
+}
+
+#[tauri::command]
 pub async fn get_system_dark_mode() -> Result<bool, String> {
     Ok(detector::get_system_dark_mode())
 }
 
-async fn get_or_scan_storage_snapshot(
+async fn storage_snapshot(
     app: &AppHandle,
-    state: &State<'_, AppState>,
-) -> Result<StorageScanSnapshot, String> {
-    if let Some(cached) = state.storage_cache.lock().await.clone() {
-        return Ok(cached);
+    state: &AppState,
+    rescan: bool,
+) -> Result<Arc<StorageScanSnapshot>, String> {
+    let mut cache = state.storage_cache.lock().await;
+    if let Some(cached) = cache.as_ref().filter(|_| !rescan) {
+        return Ok(Arc::clone(cached));
     }
     let paths = state.paths.clone();
-    let app_handle = app.clone();
-    let snap = tokio::task::spawn_blocking(move || {
-        storage::scan_agy_storage_with_progress(&paths, |prog| {
-            let _ = app_handle.emit(events::STORAGE_SCAN_PROGRESS, &prog);
+    let app = app.clone();
+    let snapshot = Arc::new(tokio::task::spawn_blocking(move || {
+        storage::scan_agy_storage_with_progress(&paths, |progress| {
+            let _ = app.emit(events::STORAGE_SCAN_PROGRESS, progress);
         })
-    })
-    .await
-    .map_err(|e| format!("存储扫描任务失败: {e}"))?;
-    *state.storage_cache.lock().await = Some(snap.clone());
-    Ok(snap)
+    }).await.map_err(|err| format!("存储扫描任务失败：{err}"))?);
+    *cache = Some(Arc::clone(&snapshot));
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -530,27 +677,13 @@ pub async fn scan_agy_storage(
     view_mode: String,
     include_appdata: bool,
     query: Option<String>,
+    project_path: Option<String>,
 ) -> Result<StorageTreeResponse, String> {
-    let paths = state.paths.clone();
-    let app_handle = app.clone();
-    let (snap, agy_running) = tokio::task::spawn_blocking(move || {
-        let s = storage::scan_agy_storage_with_progress(&paths, |prog| {
-            let _ = app_handle.emit(events::STORAGE_SCAN_PROGRESS, &prog);
-        });
-        let running = storage::is_antigravity_active_for_storage();
-        (s, running)
-    })
-    .await
-    .map_err(|e| format!("扫描本地存储失败: {e}"))?;
-
-    *state.storage_cache.lock().await = Some(snap.clone());
-    Ok(storage::build_storage_tree_response(
-        &snap,
-        &view_mode,
-        include_appdata,
-        query.as_deref(),
-        agy_running,
-    ))
+    if let Some(path) = project_path.as_deref() {
+        return project_storage_tree(&app, &state, path, view_mode, query, true).await;
+    }
+    let snap = storage_snapshot(&app, &state, true).await?;
+    local_storage_tree(snap, view_mode, include_appdata, query).await
 }
 
 #[tauri::command]
@@ -560,18 +693,32 @@ pub async fn get_storage_tree(
     view_mode: String,
     include_appdata: bool,
     query: Option<String>,
+    project_path: Option<String>,
 ) -> Result<StorageTreeResponse, String> {
-    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
-    let agy_running = tokio::task::spawn_blocking(storage::is_antigravity_active_for_storage)
-        .await
-        .unwrap_or(false);
-    Ok(storage::build_storage_tree_response(
-        &snap,
-        &view_mode,
-        include_appdata,
-        query.as_deref(),
-        agy_running,
-    ))
+    if let Some(path) = project_path.as_deref() {
+        return project_storage_tree(&app, &state, path, view_mode, query, false).await;
+    }
+    let snap = storage_snapshot(&app, &state, false).await?;
+    local_storage_tree(snap, view_mode, include_appdata, query).await
+}
+
+async fn local_storage_tree(
+    snapshot: Arc<StorageScanSnapshot>,
+    view_mode: String,
+    include_appdata: bool,
+    query: Option<String>,
+) -> Result<StorageTreeResponse, String> {
+    tokio::task::spawn_blocking(move || {
+        storage::build_storage_tree_response(
+            &snapshot,
+            &view_mode,
+            include_appdata,
+            query.as_deref(),
+            storage::is_antigravity_active_for_storage(),
+        )
+    })
+    .await
+    .map_err(|err| format!("无法读取本地存储：{err}"))
 }
 
 #[tauri::command]
@@ -579,7 +726,7 @@ pub async fn clean_orphan_storage_summaries(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<StorageDeleteResult, String> {
-    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    let snap = storage_snapshot(&app, &state, false).await?;
     tokio::task::spawn_blocking(move || storage::clean_orphan_summaries(&snap))
         .await
         .map_err(|e| format!("清理失效记录失败: {e}"))
@@ -592,7 +739,7 @@ pub async fn delete_storage_session_files(
     session_ids: Vec<String>,
     recycle_bin: bool,
 ) -> Result<StorageDeleteResult, String> {
-    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    let snap = storage_snapshot(&app, &state, false).await?;
     tokio::task::spawn_blocking(move || {
         storage::delete_session_files(&snap, &session_ids, recycle_bin)
     })
@@ -607,7 +754,7 @@ pub async fn delete_storage_sessions(
     session_ids: Vec<String>,
     recycle_bin: bool,
 ) -> Result<StorageDeleteResult, String> {
-    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    let snap = storage_snapshot(&app, &state, false).await?;
     tokio::task::spawn_blocking(move || {
         storage::delete_sessions(&snap, &session_ids, recycle_bin)
     })
@@ -621,8 +768,23 @@ pub async fn delete_storage_items(
     state: State<'_, AppState>,
     targets: Vec<String>,
     recycle_bin: bool,
+    project_path: Option<String>,
 ) -> Result<StorageDeleteResult, String> {
-    let snap = get_or_scan_storage_snapshot(&app, &state).await?;
+    if let Some(path) = project_path.as_deref() {
+        let mut projects = state.project_storage.lock().await;
+        if targets.iter().any(|target| projects.paths.iter().any(|root| root.starts_with(Path::new(target)))) {
+            return Err("所选目录包含已登记的项目根目录，请选择其中的文件清理".to_string());
+        }
+        let snapshot = project_snapshot(&app, &mut projects, Path::new(path), false).await?;
+        let result = tokio::task::spawn_blocking(move || {
+            storage::delete_project_storage_items(&snapshot, &targets, recycle_bin)
+        }).await.map_err(|err| format!("清理项目文件失败：{err}"))?;
+        if result.is_ok() {
+            projects.snapshot = None;
+        }
+        return result;
+    }
+    let snap = storage_snapshot(&app, &state, false).await?;
     tokio::task::spawn_blocking(move || {
         storage::delete_storage_items(&snap, &targets, recycle_bin)
     })
@@ -643,20 +805,28 @@ pub async fn fetch_remote_marketplace(
     state: State<'_, AppState>,
     force: Option<bool>,
 ) -> Result<RemoteMarketplaceResult, String> {
-    if !force.unwrap_or(false) {
-        let mut guard = state.marketplace_cache.lock().await;
-        if let Some(cached) = guard.as_mut() {
-            if cached.status == "ok" {
-                marketplace::refresh_marketplace_snapshot_status(&state.paths, cached);
-                return Ok(cached.clone());
-            }
+    Ok(refresh_remote_marketplace(&app, &state, force.unwrap_or(false)).await)
+}
+
+async fn refresh_remote_marketplace(
+    app: &AppHandle,
+    state: &AppState,
+    force: bool,
+) -> RemoteMarketplaceResult {
+    let mut cache = state.marketplace_cache.lock().await;
+    if !force {
+        if let Some(cached) = cache.as_mut().filter(|result| result.status == "ok") {
+            marketplace::refresh_marketplace_snapshot_status(&state.paths, cached);
+            return cached.clone();
         }
     }
 
-    let res = marketplace::fetch_remote_marketplace(&state.paths).await;
-    *state.marketplace_cache.lock().await = Some(res.clone());
-    let _ = app.emit(events::MARKETPLACE_UPDATED, &res);
-    Ok(res)
+    let result = marketplace::fetch_remote_marketplace(&state.paths).await;
+    if result.status == "ok" || cache.as_ref().is_none_or(|cached| cached.status != "ok") {
+        *cache = Some(result.clone());
+        let _ = app.emit(events::MARKETPLACE_UPDATED, &result);
+    }
+    result
 }
 
 #[tauri::command]

@@ -67,7 +67,7 @@ const assets=targets.map(({asset})=>{
 });
 const payload={product:config.product,version,sourceCommit,githubReleaseId:String(release.id),changelog,instructions:'',assets};
 const site=config.siteUrl.replace(/\/$/,'');
-const oidcUrl=new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL);oidcUrl.searchParams.set('audience',site);
+const oidcUrl=new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL);oidcUrl.searchParams.set('audience',config.oidcAudience || site);
 const tokenResponse=await fetch(oidcUrl,{headers:{Authorization:`Bearer ${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}`},signal:AbortSignal.timeout(15000)});
 if(!tokenResponse.ok)throw new Error('无法取得 GitHub Actions 身份');
 const identity=(await tokenResponse.json()).value;

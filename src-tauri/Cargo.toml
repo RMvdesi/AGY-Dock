@@ -1,6 +1,6 @@
 [package]
 name = "agy-plugin-manager"
-version = "2.4.0"
+version = "2.5.0"
 description = "AGY Plugin Manager — Antigravity launcher, CDP process supervisor, and external plugin studio"
 authors = ["HaoAn"]
 edition = "2021"
@@ -42,6 +42,9 @@ windows = { version = "0.59", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 
 [profile.release]
 panic = "abort"

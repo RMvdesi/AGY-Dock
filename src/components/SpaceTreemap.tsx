@@ -263,6 +263,7 @@ interface SpaceTreemapProps {
   isDark: boolean;
   scanning: boolean;
   scanProgress: StorageScanProgress | null;
+  projectSource: boolean;
   zoomDirection?: "in" | "out" | "none";
   onHoverNode: (node: StorageNode | null) => void;
   onSelectNode: (node: StorageNode) => void;
@@ -277,6 +278,7 @@ export function SpaceTreemap({
   isDark,
   scanning,
   scanProgress,
+  projectSource,
   zoomDirection = "none",
   onHoverNode,
   onSelectNode,
@@ -434,7 +436,7 @@ export function SpaceTreemap({
                   }}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
-                    if (node.children.length > 0) {
+                    if (node.lazyChildren || node.children.length > 0) {
                       onActivateNode(node);
                     }
                   }}
@@ -557,7 +559,9 @@ export function SpaceTreemap({
                   <FolderSearch className="h-4.5 w-4.5" />
                 </div>
                 <div className="text-[13.5px] font-semibold text-[var(--text-primary)]">
-                  {scanning ? "正在深度扫描 Antigravity 存储空间..." : "当前筛选条件下暂无可显示条目"}
+                  {scanning
+                    ? projectSource ? "正在扫描项目文件…" : "正在扫描 Antigravity 本地数据…"
+                    : "当前筛选条件下暂无可显示条目"}
                 </div>
                 {scanning ? (
                   <>
@@ -569,7 +573,7 @@ export function SpaceTreemap({
                     </div>
                     <div className="mt-2 truncate font-mono-code text-[11px] tabular-nums text-[var(--text-muted)]">
                       {scanProgress?.rootLabel
-                        ? `${scanProgress.rootLabel} · ${scanProgress.scannedFiles} 文件 · ${formatBytes(scanProgress.scannedBytes)}`
+                        ? `${scanProgress.rootLabel} · ${scanProgress.scannedFiles.toLocaleString()} 文件 · ${formatBytes(scanProgress.scannedBytes)}`
                         : "准备扫描目录..."}
                     </div>
                   </>

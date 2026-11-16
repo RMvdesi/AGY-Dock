@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownWideNarrow,
   ArrowLeft,
@@ -6,6 +6,7 @@ import {
   ChevronRight,
   FileX2,
   FolderOpen,
+  FolderPlus,
   HardDrive,
   Info,
   Layers,
@@ -19,15 +20,17 @@ import {
 } from "lucide-react";
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { ConfirmModal } from "../components/ConfirmModal";
-import { StatusPill } from "../components/MotionPrimitives";
+import { SpringSwitch, StatusPill } from "../components/MotionPrimitives";
 import { SpaceTreemap } from "../components/SpaceTreemap";
 import { StorageDeleteModal, type StorageDeleteDialogState } from "../components/StorageDeleteModal";
 import { formatBytes, formatErrorMessage, formatIdleAge, formatMtime, idleAgeDays } from "../lib/format";
 import { ipc, isTauriRuntime } from "../lib/ipc";
+import { buildProjectStorageTree, canDrillStorageNode } from "../lib/storage";
 import type {
   StorageAgeFilter,
   StorageAttrFilter,
   StorageDeleteResult,
+  StorageInventory,
   StorageDisplayStyle,
   StorageListSortKey,
   StorageNode,
@@ -39,13 +42,17 @@ import type {
 interface StoragePageProps {
   isDark: boolean;
   scanProgress: StorageScanProgress | null;
+  onScanStart: () => void;
   onToast: (message: string, tone?: "info" | "ok" | "warn" | "error") => void;
 }
+
+type StorageSource = "local" | "projects";
 
 const KIND_LABELS: Record<string, string> = {
   root: "根目录",
   category: "分类",
   dir: "目录",
+  project: "项目目录",
   session: "会话",
   session_files: "会话产出",
   session_pb: "对话库",
@@ -130,14 +137,31 @@ function findNodeDeep(root: StorageNode, nodeId: string): StorageNode | null {
   return null;
 }
 
-export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps) {
-  const [viewMode, setViewMode] = useState<StorageViewMode>("session");
+export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: StoragePageProps) {
+  const [source, setSource] = useState<StorageSource>("local");
+  const isProjectSource = source === "projects";
+  const [localViewMode, setLocalViewMode] = useState<StorageViewMode>("session");
   const [displayStyle, setDisplayStyle] = useState<StorageDisplayStyle>("treemap");
-  const [includeAppdata, setIncludeAppdata] = useState<boolean>(false);
-  const [query, setQuery] = useState<string>("");
+  const [includeAppdata, setIncludeAppdata] = useState(false);
+  const [query, setQuery] = useState("");
 
-  const [scanning, setScanning] = useState<boolean>(false);
-  const [snapshotResp, setSnapshotResp] = useState<StorageTreeResponse | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [editingProjects, setEditingProjects] = useState(false);
+  const [localView, setLocalView] = useState<{
+    snapshot: StorageTreeResponse;
+    mode: StorageViewMode;
+    appdata: boolean;
+    search: string;
+  } | null>(null);
+  const [inventory, setInventory] = useState<StorageInventory | null>(null);
+  const [activeProject, setActiveProject] = useState<StorageNode | null>(null);
+  const [projectSnapshot, setProjectSnapshot] = useState<StorageTreeResponse | null>(null);
+  const snapshotResp = isProjectSource ? projectSnapshot : localView?.snapshot;
+  const viewMode = isProjectSource ? "dir" : localView?.mode ?? localViewMode;
+  const initialScanStarted = useRef(false);
+  const scanGeneration = useRef(0);
+  const inventoryDirty = useRef(false);
+  const treeReadQueue = useRef(Promise.resolve());
 
   // Navigation & Treemap selection state
   const [pathIds, setPathIds] = useState<string[]>([]);
@@ -165,49 +189,104 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
   const [orphanBusy, setOrphanBusy] = useState<boolean>(false);
   const [noticeModal, setNoticeModal] = useState<{ title: string; body: string } | null>(null);
 
-  const runFullScan = useCallback(
-    async (mode = viewMode, appdata = includeAppdata, q = query) => {
-      if (!isTauriRuntime() || scanning) return;
-      setScanning(true);
-      try {
-        const res = await ipc.scanAgyStorage(mode, appdata, q);
-        setSnapshotResp(res);
-      } catch (err) {
-        onToast(`扫描存储失败：${formatErrorMessage(err)}`, "error");
-      } finally {
-        setScanning(false);
-      }
-    },
-    [viewMode, includeAppdata, query, scanning, onToast],
-  );
-
-  // Initial scan on mount
-  useEffect(() => {
-    if (!snapshotResp && !scanning && isTauriRuntime()) {
-      runFullScan(viewMode, includeAppdata, query);
+  const applyLocalView = useCallback((
+    snapshot: StorageTreeResponse,
+    mode: StorageViewMode,
+    appdata: boolean,
+    search: string,
+  ) => {
+    if (localView && (localView.mode !== mode || localView.appdata !== appdata)) {
+      setPathIds([]);
+      setAggMembers({});
+      setSelectedId("");
+      setHoveredNode(null);
+      setContextMenu(null);
+      setCheckedIds(new Set());
+      setLastCheckedIdx(null);
+      setZoomDir("none");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    setLocalView({ snapshot, mode, appdata, search });
+  }, [localView?.mode, localView?.appdata]);
 
-  // Re-build tree from cached Rust snapshot when viewMode / includeAppdata / query change
-  useEffect(() => {
-    if (!isTauriRuntime() || !snapshotResp) return;
-    let cancelled = false;
-    ipc
-      .getStorageTree(viewMode, includeAppdata, query)
-      .then((res) => {
-        if (!cancelled) {
-          setSnapshotResp(res);
+  const runFullScan = useCallback(async ({
+    scope = source,
+    project = activeProject,
+    mode = localViewMode,
+    appdata = includeAppdata,
+    search = query,
+    rescan = true,
+  }: {
+    scope?: StorageSource;
+    project?: StorageNode | null;
+    mode?: StorageViewMode;
+    appdata?: boolean;
+    search?: string;
+    rescan?: boolean;
+  } = {}) => {
+    if (!isTauriRuntime()) return;
+    const request = ++scanGeneration.current;
+    setScanning(true);
+    onScanStart();
+    try {
+      if (scope === "projects" && !project) {
+        const result = await ipc.getStorageInventory(rescan);
+        if (scanGeneration.current === request) {
+          setInventory(result);
+          inventoryDirty.current = false;
         }
-      })
-      .catch(() => {
-        // non-fatal during fast typing
-      });
-    return () => {
-      cancelled = true;
-    };
+      } else {
+        const fetchTree = rescan ? ipc.scanAgyStorage : ipc.getStorageTree;
+        const result = await fetchTree(scope === "projects" ? "dir" : mode, appdata, search, project?.path);
+        if (scanGeneration.current === request) {
+          if (scope === "projects") {
+            setProjectSnapshot(result);
+            if (rescan) inventoryDirty.current = true;
+          } else {
+            applyLocalView(result, mode, appdata, search);
+          }
+        }
+      }
+    } catch (err) {
+      if (scanGeneration.current === request) onToast(`扫描存储失败：${formatErrorMessage(err)}`, "error");
+    } finally {
+      if (scanGeneration.current === request) setScanning(false);
+    }
+  }, [source, activeProject, localViewMode, includeAppdata, query, onToast, onScanStart, applyLocalView]);
+
+  useEffect(() => {
+    if (initialScanStarted.current) return;
+    initialScanStarted.current = true;
+    void runFullScan({ rescan: false });
+  }, [runFullScan]);
+
+  useEffect(() => {
+    if (!isTauriRuntime() || !snapshotResp || scanning || (isProjectSource && !activeProject)) return;
+    if (!isProjectSource && localView?.mode === localViewMode
+      && localView.appdata === includeAppdata && localView.search === query) return;
+
+    let cancelled = false;
+    const generation = scanGeneration.current;
+    // Queue one tree read at a time. Requests superseded before they start skip IPC.
+    treeReadQueue.current = treeReadQueue.current.then(async () => {
+      if (cancelled || generation !== scanGeneration.current) return;
+      try {
+        const mode = isProjectSource ? "dir" : localViewMode;
+        const result = await ipc.getStorageTree(mode, includeAppdata, query, activeProject?.path);
+        if (cancelled || generation !== scanGeneration.current) return;
+        if (isProjectSource) setProjectSnapshot(result);
+        else applyLocalView(result, mode, includeAppdata, query);
+      } catch (err) {
+        if (!cancelled && generation === scanGeneration.current && !isProjectSource
+          && localView && localView.mode !== localViewMode) {
+          setLocalViewMode(localView.mode);
+          onToast(`切换分组失败：${formatErrorMessage(err)}`, "error");
+        }
+      }
+    });
+    return () => { cancelled = true; };
+    // Use the requested data, rather than re-reading whenever the response object changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, includeAppdata, query]);
+  }, [localViewMode, includeAppdata, query, activeProject, isProjectSource, scanning]);
 
   // Dismiss context menu on click/scroll/escape
   useEffect(() => {
@@ -224,7 +303,12 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
     };
   }, [contextMenu]);
 
-  const rootTree = snapshotResp?.tree ?? null;
+  const rootTree = useMemo(() => {
+    if (!isProjectSource) return localView?.snapshot.tree ?? null;
+    return inventory
+      ? buildProjectStorageTree(inventory, query, activeProject?.nodeId ?? null, projectSnapshot?.tree ?? null)
+      : null;
+  }, [isProjectSource, localView, inventory, query, activeProject, projectSnapshot]);
   const { focus: focusNode, trail } = useMemo(() => {
     if (!rootTree) {
       return { focus: null as StorageNode | null, trail: [] as StorageNode[] };
@@ -311,19 +395,74 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
     });
   }, [listItems]);
 
-  const handleViewModeChange = (mode: StorageViewMode) => {
-    if (mode === viewMode) return;
-    setViewMode(mode);
+  const changeSource = (next: StorageSource) => {
+    if (next === source) return;
+    setSource(next);
+    setActiveProject(null);
+    setProjectSnapshot(null);
+    setQuery("");
     setPathIds([]);
     setAggMembers({});
     setSelectedId("");
     setCheckedIds(new Set());
     setLastCheckedIdx(null);
+    setHoveredNode(null);
+    setContextMenu(null);
     setZoomDir("none");
+    if (next === "projects" && inventory && !inventoryDirty.current) {
+      scanGeneration.current++;
+      setScanning(false);
+    } else {
+      void runFullScan({ scope: next, project: null, mode: localViewMode, search: "", rescan: false });
+    }
+  };
+
+  const changeProjectRegistry = async (path?: string) => {
+    setEditingProjects(true);
+    try {
+      if (path) await ipc.removeStorageProject(path);
+      else if (!await ipc.pickStorageProject()) return;
+      inventoryDirty.current = true;
+      setPathIds([]);
+      setActiveProject(null);
+      setProjectSnapshot(null);
+      setSelectedId("");
+      setHoveredNode(null);
+      setQuery("");
+      await runFullScan({ project: null, search: "", rescan: false });
+    } catch (err) {
+      onToast(formatErrorMessage(err), "error");
+    } finally {
+      setEditingProjects(false);
+    }
+  };
+
+  const leaveProject = () => {
+    scanGeneration.current++;
+    setScanning(false);
+    setActiveProject(null);
+    setProjectSnapshot(null);
+    setQuery("");
+    setPathIds([]);
+    setHoveredNode(null);
+    if (inventoryDirty.current) void runFullScan({ project: null, search: "", rescan: false });
   };
 
   const handleDrillNode = (node: StorageNode) => {
-    if (!focusNode || !node.children || node.children.length === 0) return;
+    if (!focusNode || !canDrillStorageNode(node) || scanning) return;
+    if (isProjectSource && !activeProject && node.projectRootPath && node.lazyChildren) {
+      const folder = rootTree?.children.find((item) => item.path === node.projectRootPath);
+      if (!folder) return;
+      setActiveProject(folder);
+      setProjectSnapshot(null);
+      setQuery("");
+      setPathIds(node.nodeId === folder.nodeId ? [folder.nodeId] : [folder.nodeId, node.nodeId]);
+      setZoomDir("in");
+      setSelectedId("");
+      setHoveredNode(null);
+      void runFullScan({ project: folder, search: "", rescan: false });
+      return;
+    }
     if (node.kind === "aggregate") {
       setAggMembers((prev) => ({
         ...prev,
@@ -359,7 +498,8 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
   const handleNavigateUp = () => {
     if (pathIds.length === 0) return;
     setZoomDir("out");
-    setPathIds((prev) => prev.slice(0, -1));
+    if (activeProject && pathIds.length === 1) leaveProject();
+    else setPathIds((prev) => prev.slice(0, -1));
     setSelectedId("");
   };
 
@@ -367,7 +507,8 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
     if (depthIndex <= 0) {
       if (pathIds.length === 0) return;
       setZoomDir("out");
-      setPathIds([]);
+      if (activeProject) leaveProject();
+      else setPathIds([]);
       setSelectedId("");
       return;
     }
@@ -488,7 +629,9 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
       onToast("所选条目没有可直接删除的磁盘路径", "warn");
       return;
     }
-    const agyRunning = await ipc.isAntigravityRunningForStorage().catch(() => false);
+    const projectPath = activeProject?.path ?? nodes[0]?.projectRootPath ?? null;
+    if (isProjectSource && !projectPath) return;
+    const agyRunning = !isProjectSource && await ipc.isAntigravityRunningForStorage().catch(() => false);
     setDeleteDialog({
       open: true,
       mode: "items",
@@ -498,6 +641,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
       hasProtected: hasProt,
       antigravityRunning: agyRunning,
       targets,
+      projectPath,
     });
   };
 
@@ -511,7 +655,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
       } else if (deleteDialog.mode === "session") {
         res = await ipc.deleteStorageSessions(deleteDialog.sessionIds ?? [], recycleBin);
       } else {
-        res = await ipc.deleteStorageItems(deleteDialog.targets ?? [], recycleBin);
+        res = await ipc.deleteStorageItems(deleteDialog.targets ?? [], recycleBin, deleteDialog.projectPath);
       }
       setDeleteDialog(null);
 
@@ -520,18 +664,18 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
       if (res.lockedPaths.length > 0 || res.warnings.length > 0) {
         if (cnt > 0) {
           onToast(
-            `部分清理：释放 ${freed}，${res.lockedPaths.length || res.warnings.length} 项正被占用未删`,
+            `部分清理：释放 ${freed}，${res.lockedPaths.length || res.warnings.length} 项未清理`,
             "warn",
           );
         } else {
-          onToast("文件正被占用，未能删除（请先关闭 Antigravity）", "warn");
+          onToast(isProjectSource ? "所选项目文件未能清理" : "文件正被占用，未能删除（请先关闭 Antigravity）", "warn");
         }
         const items = res.warnings.length > 0 ? res.warnings : res.lockedPaths;
         const preview = items.slice(0, 6).map((w) => `• ${w}`).join("\n");
         const more = items.length > 6 ? `\n... 以及其余 ${items.length - 6} 项` : "";
         setNoticeModal({
-          title: "部分文件正被程序占用",
-          body:
+          title: isProjectSource ? "有项目条目未清理" : "部分文件正被程序占用",
+          body: isProjectSource ? preview + more :
             "以下文件正被运行中的 Antigravity 或其他程序占用，暂时无法删除；其余未占用文件已完成清理。\n\n" +
             "如需彻底删除这些会话并同步更新 Antigravity 对话列表，请先退出 Antigravity 后重试：\n" +
             preview +
@@ -551,7 +695,8 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
       setCheckedIds(new Set());
       setLastCheckedIdx(null);
       setSelectedId("");
-      await runFullScan(viewMode, includeAppdata, query);
+      if (isProjectSource) inventoryDirty.current = true;
+      await runFullScan({ rescan: !isProjectSource || Boolean(activeProject) });
     } catch (err) {
       setDeleteDialog(null);
       onToast(`清理失败：${formatErrorMessage(err)}`, "error");
@@ -585,7 +730,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
       } else {
         onToast("未能写入历史索引（可能仍被占用），请确认 Antigravity 已完全退出", "warn");
       }
-      await runFullScan(viewMode, includeAppdata, query);
+      await runFullScan();
     } catch (err) {
       setOrphanConfirmOpen(false);
       onToast(`清理失效记录失败：${formatErrorMessage(err)}`, "error");
@@ -624,7 +769,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
     : { duration: 0.18, ease: [0.22, 1, 0.36, 1] as const };
 
   const orphanCount = snapshotResp?.orphanSummaryCount ?? 0;
-  const totalRootBytes = Math.max(1, snapshotResp?.totalBytes ?? rootTree?.sizeBytes ?? 1);
+  const totalRootBytes = Math.max(1, rootTree?.sizeBytes ?? 1);
 
   type InspectorAction = {
     key: string;
@@ -639,7 +784,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
     if (!inspectorNode) return [];
     const actions: InspectorAction[] = [];
 
-    if (inspectorNode.children.length > 0) {
+    if (canDrillStorageNode(inspectorNode) && (!isProjectSource || inspectorNode.nodeId !== focusNode?.nodeId)) {
       actions.push({
         key: "drill",
         label: "深入查看",
@@ -700,9 +845,41 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
       });
     }
 
+    if (inspectorNode.manuallyAdded && !activeProject) {
+      actions.push({
+        key: "remove-project",
+        label: "移出项目列表",
+        icon: <X className="h-3.5 w-3.5 shrink-0" />,
+        variant: "secondary",
+        disabled: scanning || editingProjects,
+        onClick: () => void changeProjectRegistry(inspectorNode.path),
+      });
+    }
+
     return actions;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inspectorNode, focusNode, pathIds]);
+  }, [inspectorNode, focusNode, pathIds, scanning, editingProjects]);
+
+  const changeSearch = (value: string) => {
+    setQuery(value);
+    setPathIds(activeProject ? [activeProject.nodeId] : []);
+    setSelectedId("");
+    setHoveredNode(null);
+  };
+
+  const activeSize = isProjectSource ? focusNode?.sizeBytes ?? 0 : snapshotResp?.totalBytes ?? 0;
+  const activeFileCount = isProjectSource ? focusNode?.fileCount ?? 0 : snapshotResp?.totalFiles ?? 0;
+  const storageSummary = displayStyle === "list" && viewMode === "session"
+    ? `${listItems.length} 个会话 · ${formatBytes(listTotalBytes)}`
+    : `${formatBytes(activeSize)} · ${activeFileCount.toLocaleString()} 文件${
+        isProjectSource
+          ? activeProject ? "" : ` · ${rootTree?.children.length ?? 0} 个目录`
+          : ` · ${snapshotResp?.sessionCount ?? 0} 会话`
+      }`;
+
+  const visibleScanProgress = (isProjectSource && !activeProject)
+    ? scanProgress?.phase === "projects" ? scanProgress : null
+    : scanProgress?.phase !== "projects" ? scanProgress : null;
 
   const hintTarget = hoveredNode || inspectorNode;
   const hintDelTone = hintTarget ? DEL_TONE_MAP[hintTarget.deletability] ?? "warn" : "muted";
@@ -710,11 +887,31 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
   return (
     <LayoutGroup id="storage-toolbar-controls">
       <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
-        {/* Toolbar Card */}
-        <section className="agy-card shrink-0 px-4 py-3">
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* Grouping Switcher */}
-            <div className="inline-flex h-8 items-center rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-subtle)] p-0.5">
+        <section className="agy-card shrink-0 px-3 py-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <div role="group" aria-label="存储范围" className="inline-flex h-7 shrink-0 items-center rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)] p-0.5">
+              {([["local", "AGY 本地数据"], ["projects", "项目文件"]] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={Boolean(deleteDialog) || editingProjects || orphanBusy}
+                  aria-pressed={source === value}
+                  onClick={() => changeSource(value)}
+                  className="relative h-full cursor-pointer rounded-md px-2 text-[11.5px] whitespace-nowrap text-[var(--text-muted)] aria-pressed:font-semibold aria-pressed:text-[var(--text-primary)]"
+                >
+                  {source === value && (
+                    <motion.span
+                      layoutId="storage-source-pill"
+                      transition={pillTransition}
+                      className="absolute inset-0 rounded-md border border-[var(--border-hairline)] bg-[var(--bg-surface)] shadow-xs"
+                    />
+                  )}
+                  <span className="relative">{label}</span>
+                </button>
+              ))}
+            </div>
+            {!isProjectSource && (
+            <div className="inline-flex h-7 shrink-0 items-center rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-subtle)] p-0.5">
               {(
                 [
                   ["session", "按会话"],
@@ -722,13 +919,13 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                   ["dir", "按目录结构"],
                 ] as Array<[StorageViewMode, string]>
               ).map(([m, label]) => {
-                const active = viewMode === m;
+                const active = localViewMode === m;
                 return (
                   <button
                     key={m}
                     type="button"
-                    onClick={() => handleViewModeChange(m)}
-                    className={`relative inline-flex h-full cursor-pointer items-center justify-center rounded-[9px] px-2.5 text-[12px] whitespace-nowrap transition-colors ${
+                    onClick={() => setLocalViewMode(m)}
+                    className={`relative inline-flex h-full cursor-pointer items-center justify-center rounded-[9px] px-2 text-[11.5px] whitespace-nowrap transition-colors ${
                       active
                         ? "font-semibold text-[var(--text-primary)]"
                         : "font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -746,9 +943,8 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                 );
               })}
             </div>
-
-            {/* Display Style Switcher */}
-            <div className="inline-flex h-8 items-center rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-subtle)] p-0.5">
+            )}
+            <div className="inline-flex h-7 shrink-0 items-center rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-subtle)] p-0.5">
               {(
                 [
                   ["treemap", "方框", Layers],
@@ -761,7 +957,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                     key={styleKey}
                     type="button"
                     onClick={() => setDisplayStyle(styleKey)}
-                    className={`relative inline-flex h-full cursor-pointer items-center justify-center gap-1.5 rounded-[9px] px-2.5 text-[12px] whitespace-nowrap transition-colors ${
+                    className={`relative inline-flex h-full cursor-pointer items-center justify-center gap-1.5 rounded-[9px] px-2 text-[11.5px] whitespace-nowrap transition-colors ${
                       active
                         ? "font-semibold text-[var(--text-primary)]"
                         : "font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -781,160 +977,101 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
               })}
             </div>
 
-            {/* Search */}
-            <div className="relative min-w-[190px] max-w-[280px] flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-faint)]" />
+            <div className="relative min-w-[96px] max-w-[260px] flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-faint)]" />
               <input
-                type="text"
+                type="search"
                 value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setPathIds([]);
-                  setSelectedId("");
-                }}
-                placeholder="搜索会话名 / UUID / 文件..."
-                className="agy-input agy-search-input h-8 w-full pl-9 pr-8 text-[12px]"
+                onChange={(e) => changeSearch(e.target.value)}
+                aria-label="搜索存储内容"
+                placeholder={isProjectSource && !activeProject ? "搜索项目或路径…" : isProjectSource ? "搜索文件或目录…" : "搜索会话或文件…"}
+                className="agy-input agy-search-input h-7 w-full pl-8 pr-2 text-[11.5px]"
               />
-              <AnimatePresence>
-                {query.length > 0 && (
-                  <motion.button
-                    type="button"
-                    aria-label="清空搜索"
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.8 }}
-                    transition={{ duration: prefersReduced ? 0.04 : 0.12 }}
-                    onClick={() => {
-                      setQuery("");
-                      setPathIds([]);
-                      setSelectedId("");
-                    }}
-                    className="absolute right-2 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-[var(--text-faint)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
-                  >
-                    <X className="h-3 w-3" />
-                  </motion.button>
-                )}
-              </AnimatePresence>
             </div>
 
-            {/* Include AppData Checkbox */}
-            <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-2.5 text-[12px] font-medium text-[var(--text-muted)] select-none transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]">
-              <input
-                type="checkbox"
-                checked={includeAppdata}
-                onChange={(e) => {
-                  setIncludeAppdata(e.target.checked);
-                  setPathIds([]);
-                  setSelectedId("");
-                }}
-                className="h-3.5 w-3.5 accent-[var(--accent)]"
-              />
-              <span className="whitespace-nowrap">含应用缓存</span>
-            </label>
-
-            <div className="ml-auto flex items-center gap-2">
+            {!isProjectSource && (
+              <label className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-[var(--border-hairline)] px-1.5 text-[11.5px] whitespace-nowrap text-[var(--text-muted)]">
+                <SpringSwitch checked={includeAppdata} onChange={setIncludeAppdata} compact />
+                含应用缓存
+              </label>
+            )}
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              {isProjectSource && !activeProject && (
+                <button
+                  type="button"
+                  disabled={scanning || editingProjects}
+                  onClick={() => changeProjectRegistry()}
+                  className="agy-btn h-7 gap-1.5 px-2 text-[11.5px]"
+                >
+                  <FolderPlus className="h-3.5 w-3.5" />
+                  添加项目
+                </button>
+              )}
               {orphanCount > 0 && (
                 <button
                   type="button"
                   onClick={handleClickOrphanButton}
-                  title="清理本地文件已删除但仍残留在 Antigravity 对话列表索引中的失效记录"
-                  className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[9px] border border-[var(--warn)]/40 bg-[var(--warn-bg)] px-3 text-[12px] font-semibold whitespace-nowrap text-[var(--warn)] transition-all hover:brightness-95 active:scale-[0.98]"
+                  title={`清理失效记录（${orphanCount}）`}
+                  aria-label={`清理失效记录（${orphanCount}）`}
+                  className="agy-btn h-7 gap-1.5 px-2 text-[11.5px] text-[var(--warn)]"
                 >
-                  <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                  <span>清理失效记录 ({orphanCount})</span>
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span className="hidden min-[1120px]:inline">清理失效记录</span>
                 </button>
               )}
-
               <button
                 type="button"
-                disabled={scanning}
-                onClick={() => runFullScan(viewMode, includeAppdata, query)}
-                className="agy-btn h-8 px-3 text-[12px]"
+                disabled={scanning || editingProjects}
+                onClick={() => runFullScan()}
+                aria-label="重新扫描"
+                title="重新扫描"
+                className="agy-btn h-7 gap-1.5 px-2 text-[11.5px]"
               >
-                <RefreshCw className={`h-3.5 w-3.5 shrink-0 ${scanning ? "animate-spin" : ""}`} />
-                <span>{scanning ? "扫描中..." : "重新扫描"}</span>
+                <RefreshCw className={`h-3.5 w-3.5 ${scanning ? "animate-spin" : ""}`} />
+                <span className="hidden min-[1040px]:inline">{scanning ? "扫描中" : "重新扫描"}</span>
               </button>
             </div>
           </div>
 
-          {/* Sub-row: Treemap Breadcrumbs OR List Sort & Filters */}
-          <AnimatePresence mode="wait" initial={false}>
-            {displayStyle === "treemap" ? (
-              <motion.div
-                key="subrow-treemap"
-                initial={{ opacity: 0, y: prefersReduced ? 0 : 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: prefersReduced ? 0 : -4 }}
-                transition={{ duration: prefersReduced ? 0.05 : 0.14 }}
-                className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-hairline)] pt-2.5"
-              >
-                <div className="flex min-w-0 flex-wrap items-center gap-1">
-                  {pathIds.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleNavigateUp}
-                      className="mr-1 inline-flex h-6 cursor-pointer items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)] px-2 text-[11.5px] font-medium whitespace-nowrap text-[var(--text-primary)] transition-colors hover:border-[var(--border-strong)]"
-                    >
-                      <ArrowLeft className="h-3 w-3" />
-                      <span>返回上级</span>
-                    </button>
-                  )}
-                  {trail.map((node, idx) => {
-                    const isLast = idx === trail.length - 1;
-                    return (
-                      <div key={`${idx}:${node.nodeId}`} className="flex items-center gap-1">
-                        {idx > 0 && <ChevronRight className="h-3 w-3 text-[var(--text-faint)]" />}
-                        <button
-                          type="button"
-                          disabled={isLast}
-                          onClick={() => handleJumpCrumb(idx)}
-                          className={`max-w-[200px] truncate rounded-md px-1.5 py-0.5 text-[12px] transition-colors ${
-                            isLast
-                              ? "bg-[var(--bg-subtle)]/80 font-semibold text-[var(--text-primary)]"
-                              : "cursor-pointer font-medium text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
-                          }`}
-                        >
-                          {node.name}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)]/65 px-2.5 py-1 font-mono-code text-[11.5px] tabular-nums text-[var(--text-muted)]">
-                  <HardDrive className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
-                  <span>
-                    共 {formatBytes(snapshotResp?.totalBytes ?? 0)} · {snapshotResp?.totalFiles ?? 0} 文件 ·{" "}
-                    {snapshotResp?.sessionCount ?? 0} 会话
-                  </span>
-                </div>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="subrow-list"
-                initial={{ opacity: 0, y: prefersReduced ? 0 : 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: prefersReduced ? 0 : -4 }}
-                transition={{ duration: prefersReduced ? 0.05 : 0.14 }}
-                className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-[var(--border-hairline)] pt-2.5"
-              >
-                {viewMode !== "session" && pathIds.length > 0 && (
+          <div className="mt-1.5 flex min-w-0 items-center gap-2 border-t border-[var(--border-hairline)] pt-1.5">
+            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto whitespace-nowrap [scrollbar-width:none]">
+              {pathIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleNavigateUp}
+                  aria-label="返回上级"
+                  title="返回上级"
+                  className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                </button>
+              )}
+              {(displayStyle === "treemap" || pathIds.length > 0) && trail.map((node, idx) => (
+                <div key={node.nodeId} className="flex shrink-0 items-center gap-1">
+                  {idx > 0 && <ChevronRight className="h-3 w-3 text-[var(--text-faint)]" />}
                   <button
                     type="button"
-                    onClick={handleNavigateUp}
-                    className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)] px-2.5 text-[11.5px] font-medium whitespace-nowrap text-[var(--text-primary)] transition-colors hover:border-[var(--border-strong)]"
+                    disabled={idx === trail.length - 1}
+                    onClick={() => handleJumpCrumb(idx)}
+                    title={node.name}
+                    className={`max-w-[160px] truncate rounded-md px-1.5 py-0.5 text-[11.5px] ${
+                      idx === trail.length - 1
+                        ? "bg-[var(--bg-subtle)] font-semibold text-[var(--text-primary)]"
+                        : "cursor-pointer text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                    }`}
                   >
-                    <ArrowLeft className="h-3 w-3" />
-                    <span>返回上级</span>
+                    {node.name}
                   </button>
-                )}
-
+                </div>
+              ))}
+              {displayStyle === "list" && (
+                <>
                 {/* Sort pills */}
-                <div className="flex items-center gap-1">
+                <div className="flex shrink-0 items-center gap-1">
                   <button
                     type="button"
                     onClick={() => handleToggleSort("time")}
-                    className={`inline-flex h-7 cursor-pointer items-center gap-1 rounded-lg border px-2.5 text-[11.5px] whitespace-nowrap transition-colors ${
+                    className={`inline-flex h-6 cursor-pointer items-center gap-1 rounded-lg border px-2.5 text-[11.5px] whitespace-nowrap transition-colors ${
                       sortKey === "time"
                         ? "border-[var(--accent)]/40 bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
                         : "border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
@@ -945,19 +1082,13 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                     ) : (
                       <ArrowUpNarrowWide className="h-3 w-3" />
                     )}
-                    <span>
-                      {sortKey === "time"
-                        ? sortAsc
-                          ? "最近更新 ↑ 最久未用"
-                          : "最近更新 ↓ 最新在前"
-                        : "最近更新"}
-                    </span>
+                    <span>最近更新</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => handleToggleSort("size")}
-                    className={`inline-flex h-7 cursor-pointer items-center gap-1 rounded-lg border px-2.5 text-[11.5px] whitespace-nowrap transition-colors ${
+                    className={`inline-flex h-6 cursor-pointer items-center gap-1 rounded-lg border px-2.5 text-[11.5px] whitespace-nowrap transition-colors ${
                       sortKey === "size"
                         ? "border-[var(--accent)]/40 bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
                         : "border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
@@ -968,20 +1099,14 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                     ) : (
                       <ArrowDownWideNarrow className="h-3 w-3" />
                     )}
-                    <span>
-                      {sortKey === "size"
-                        ? sortAsc
-                          ? "占用空间 ↑ 最小在前"
-                          : "占用空间 ↓ 最大在前"
-                        : "占用空间"}
-                    </span>
+                    <span>占用空间</span>
                   </button>
                 </div>
 
                 {viewMode === "session" && (
                   <>
                     <span className="h-4 w-px bg-[var(--border-hairline)]" />
-                    <div className="inline-flex h-7 items-center rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)]/70 p-0.5">
+                    <div className="inline-flex h-6 shrink-0 items-center rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)]/70 p-0.5">
                       {(
                         [
                           ["all", "全部时间"],
@@ -1018,7 +1143,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                     </div>
 
                     <span className="h-4 w-px bg-[var(--border-hairline)]" />
-                    <div className="flex items-center gap-1">
+                    <div className="flex shrink-0 items-center gap-1">
                       {(
                         [
                           ["archived", "已归档"],
@@ -1032,7 +1157,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                             key={fk}
                             type="button"
                             onClick={() => toggleAttrFilter(fk)}
-                            className={`inline-flex h-7 cursor-pointer items-center rounded-lg border px-2 text-[11.5px] whitespace-nowrap transition-colors ${
+                            className={`inline-flex h-6 cursor-pointer items-center rounded-lg border px-2 text-[11.5px] whitespace-nowrap transition-colors ${
                               active
                                 ? "border-[var(--accent)]/40 bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
                                 : "border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
@@ -1045,30 +1170,22 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                     </div>
                   </>
                 )}
-
-                <span className="ml-auto inline-flex items-center rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)]/65 px-2.5 py-1 font-mono-code text-[11.5px] tabular-nums text-[var(--text-muted)]">
-                  {viewMode === "session"
-                    ? `共 ${listItems.length} 个会话 · ${formatBytes(listTotalBytes)}`
-                    : `当前 ${listItems.length} 项 · ${formatBytes(focusNode?.sizeBytes ?? 0)}`}
-                </span>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Thin Scan Progress Strip */}
-          {scanning && (
-            <div className="mt-2.5 flex items-center gap-2.5">
-              <div className="h-1 flex-1 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-                <div
-                  style={{ width: `${Math.round((scanProgress?.fraction ?? 0.05) * 100)}%` }}
-                  className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-150"
-                />
-              </div>
-              <span className="max-w-[320px] truncate font-mono-code text-[10.5px] text-[var(--text-faint)]">
-                {scanProgress?.currentPath || "正在扫描存储根目录..."}
-              </span>
+                </>
+              )}
             </div>
-          )}
+            <div className="inline-flex h-6 min-w-0 shrink-0 items-center gap-1.5 rounded-md bg-[var(--bg-subtle)]/65 px-2 text-[11px] whitespace-nowrap tabular-nums text-[var(--text-muted)]">
+              <HardDrive className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
+              {scanning ? (
+                <span role="status" className="max-w-[190px] truncate" title={visibleScanProgress?.currentPath}>
+                  {visibleScanProgress?.phase === "projects"
+                    ? `统计项目 ${visibleScanProgress.rootIndex}/${visibleScanProgress.rootCount}`
+                    : "正在扫描…"}
+                </span>
+              ) : (
+                <span>{storageSummary}</span>
+              )}
+            </div>
+          </div>
         </section>
 
         {/* Workspace Body */}
@@ -1087,11 +1204,12 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                 <div className="min-h-0 flex-1">
                   <SpaceTreemap
                     rootNode={focusNode}
-                    viewKey={`${viewMode}:${includeAppdata ? "1" : "0"}:${focusNode?.nodeId || "root"}`}
+                    viewKey={`${source}:${trail.length > 1 ? focusNode?.nodeId : "root"}`}
                     selectedId={selectedId}
                     isDark={isDark}
                     scanning={scanning}
-                    scanProgress={scanProgress}
+                    scanProgress={visibleScanProgress}
+                    projectSource={isProjectSource}
                     zoomDirection={zoomDir}
                     onHoverNode={setHoveredNode}
                     onSelectNode={(n) => setSelectedId(n.nodeId)}
@@ -1243,7 +1361,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                                 type="button"
                                 onClick={() => setSelectedId(ch.nodeId)}
                                 onDoubleClick={() => {
-                                  if (ch.children.length > 0) handleDrillNode(ch);
+                                  if (canDrillStorageNode(ch)) handleDrillNode(ch);
                                 }}
                                 className={`w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transition-colors ${
                                   active
@@ -1282,7 +1400,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
           ) : (
             /* List Workspace */
             <motion.section
-              key={`workspace-list:${viewMode}:${focusNode?.nodeId || "root"}`}
+              key="workspace-list"
               initial={{ opacity: 0, y: prefersReduced ? 0 : 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: prefersReduced ? 0 : -5 }}
@@ -1291,19 +1409,20 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
             >
               {/* Table Header */}
               <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border-hairline)] bg-[var(--bg-subtle)]/70 px-4 py-2.5 text-[11.5px] font-semibold text-[var(--text-muted)]">
-                <input
-                  type="checkbox"
+                <SpringSwitch
+                  role="checkbox"
+                  compact
+                  ariaLabel="全选当前列表"
                   checked={allListChecked}
                   disabled={listItems.length === 0}
-                  onChange={(e) => {
-                    if (e.target.checked) {
+                  onChange={(checked) => {
+                    if (checked) {
                       setCheckedIds(new Set(listItems.map((i) => i.nodeId)));
                     } else {
                       setCheckedIds(new Set());
                     }
                     setLastCheckedIdx(null);
                   }}
-                  className="h-3.5 w-3.5 cursor-pointer accent-[var(--accent)]"
                 />
                 <span className="min-w-0 flex-1">
                   {viewMode === "session" ? "会话名称 / 产物与对话库详情" : "名称 / 路径"}
@@ -1314,7 +1433,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
               </div>
 
               {/* Scrollable Rows */}
-              <div className="min-h-0 flex-1 divide-y divide-[var(--border-hairline)] overflow-y-auto">
+              <div className="min-h-0 flex-1 overflow-y-auto">
                 {listItems.length === 0 ? (
                   <div className="flex h-full items-center justify-center py-12 text-[13px] text-[var(--text-faint)]">
                     当前筛选条件下没有可清理的会话或存储条目
@@ -1340,18 +1459,16 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                     return (
                       <div
                         key={node.nodeId}
-                        className={`flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--bg-row-hover)] ${
+                        className={`flex items-center gap-3 border-b border-[var(--border-hairline)] px-4 py-2.5 transition-[background-color] hover:bg-[var(--bg-row-hover)] ${
                           isChecked ? "bg-[var(--accent-soft)]/55" : ""
                         }`}
                       >
-                        <input
-                          type="checkbox"
+                        <SpringSwitch
+                          role="checkbox"
+                          compact
+                          ariaLabel={`选择 ${node.name}`}
                           checked={isChecked}
-                          onChange={(e) => {
-                            const native = e.nativeEvent as MouseEvent;
-                            handleRowCheck(node.nodeId, idx, e.target.checked, Boolean(native.shiftKey));
-                          }}
-                          className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[var(--accent)]"
+                          onChange={(checked, event) => handleRowCheck(node.nodeId, idx, checked, event.shiftKey)}
                         />
 
                         {/* Name + Badges */}
@@ -1405,7 +1522,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
 
                         {/* Row Quick Actions */}
                         <div className="flex w-[156px] shrink-0 items-center justify-end gap-1.5">
-                          {!isSessionMode && node.children.length > 0 && (
+                          {!isSessionMode && canDrillStorageNode(node) && (
                             <button
                               type="button"
                               onClick={() => handleDrillNode(node)}
@@ -1442,6 +1559,18 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                                 清理
                               </button>
                             )
+                          )}
+                          {node.manuallyAdded && !activeProject && (
+                            <button
+                              type="button"
+                              disabled={scanning || editingProjects}
+                              onClick={() => changeProjectRegistry(node.path)}
+                              aria-label={`移出项目列表 ${node.name}`}
+                              title="移出项目列表"
+                              className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
                           )}
                           {node.path && (
                             <button
@@ -1616,7 +1745,7 @@ export function StoragePage({ isDark, scanProgress, onToast }: StoragePageProps)
                   </button>
                 )}
 
-              {contextMenu.node.children.length > 0 && (
+              {canDrillStorageNode(contextMenu.node) && (
                 <button
                   type="button"
                   onClick={() => {

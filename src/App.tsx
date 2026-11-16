@@ -72,7 +72,7 @@ const PAGE_VARIANTS = {
 };
 
 const THEME_MODES: ThemeMode[] = ["auto", "light", "dark"];
-const DEFAULT_SITE_URL = "https://ahmustudyhelper.xyz";
+const DEFAULT_SITE_URL = "https://www.haoanlab.xyz";
 
 export default function App() {
   const [view, setView] = useState<ViewState>({ kind: "tab", tab: "status" });
@@ -91,6 +91,7 @@ export default function App() {
 
   const [selectedLogId, setSelectedLogId] = useState<string>("launcher");
   const [storageScanProgress, setStorageScanProgress] = useState<StorageScanProgress | null>(null);
+  const resetStorageScanProgress = useCallback(() => setStorageScanProgress(null), []);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
@@ -98,7 +99,7 @@ export default function App() {
   const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
 
   const [remoteMarketplace, setRemoteMarketplace] = useState<RemoteMarketplaceResult | null>(null);
-  const [loadingMarketplace, setLoadingMarketplace] = useState<boolean>(false);
+  const [loadingMarketplace, setLoadingMarketplace] = useState(isTauriRuntime);
   const [installingRemoteId, setInstallingRemoteId] = useState<string | null>(null);
   const [updatingAllRemote, setUpdatingAllRemote] = useState<boolean>(false);
 
@@ -127,6 +128,8 @@ export default function App() {
   const [tauriDragActive, setTauriDragActive] = useState(false);
 
   const toastTimersRef = useRef<Map<string, number>>(new Map());
+  const dismissedVersionRef = useRef<string | null>(null);
+  const remoteInstallInFlightRef = useRef(false);
   const themeInitializedRef = useRef(false);
   const seenIdsInFlightRef = useRef<Set<string>>(new Set());
 
@@ -213,7 +216,12 @@ export default function App() {
     setLoadingMarketplace(true);
     try {
       const res = await ipc.fetchRemoteMarketplace(force);
-      setRemoteMarketplace(res);
+      if (res.status === "ok") {
+        setRemoteMarketplace(res);
+      } else {
+        setRemoteMarketplace((previous) => previous?.status === "ok" ? previous : res);
+        if (force) pushToast(res.message || "暂无法连接远程插件市场", "warn");
+      }
     } catch (err) {
       if (force) {
         pushToast(`远程市场刷新失败：${formatErrorMessage(err)}`, "warn");
@@ -258,10 +266,14 @@ export default function App() {
   // Initial load & Tauri event subscriptions
   useEffect(() => {
     refreshAll(false);
-    refreshRemoteMarketplace(false);
 
     if (!isTauriRuntime()) return;
     const unlisteners: Array<() => void> = [];
+    let disposed = false;
+    const register = (fn: () => void) => {
+      if (disposed) fn();
+      else unlisteners.push(fn);
+    };
 
     events
       .onOverviewUpdated((ov) => {
@@ -272,32 +284,31 @@ export default function App() {
         }
         refreshMarketplace(ov.plugins);
       })
-      .then((fn) => unlisteners.push(fn))
+      .then(register)
       .catch(() => {});
 
     events
       .onNativeUpdated((natives) => {
         setNativePlugins(natives);
       })
-      .then((fn) => unlisteners.push(fn))
+      .then(register)
       .catch(() => {});
 
-    events
-      .onUpdateAvailable((res) => {
+    Promise.all([
+      events.onUpdateAvailable((res) => {
+        if (res.status === "error") return;
         setUpdateResult(res);
-        if (res.hasUpdate) {
-          setUpdateBannerVisible(true);
-        }
-      })
-      .then((fn) => unlisteners.push(fn))
-      .catch(() => {});
-
-    events
-      .onMarketplaceUpdated((res) => {
+        setUpdateBannerVisible(res.hasUpdate && dismissedVersionRef.current !== res.latestVersion);
+      }).then(register),
+      events.onMarketplaceUpdated((res) => {
         setRemoteMarketplace(res);
-      })
-      .then((fn) => unlisteners.push(fn))
-      .catch(() => {});
+        setLoadingMarketplace(false);
+      }).then(register),
+    ]).then(() => {
+      if (!disposed) return ipc.startAutomaticUpdateChecks();
+    }).catch(() => {
+      if (!disposed) setLoadingMarketplace(false);
+    });
 
     events
       .onToastMessage((payload) => {
@@ -305,14 +316,14 @@ export default function App() {
           pushToast(payload.message, payload.tone ?? "info");
         }
       })
-      .then((fn) => unlisteners.push(fn))
+      .then(register)
       .catch(() => {});
 
     events
       .onStorageScanProgress((prog) => {
         setStorageScanProgress(prog);
       })
-      .then((fn) => unlisteners.push(fn))
+      .then(register)
       .catch(() => {});
 
     // Fallback refresh interval in case background loop is paused/delayed
@@ -321,10 +332,11 @@ export default function App() {
     }, 6000);
 
     return () => {
+      disposed = true;
       window.clearInterval(poll);
       for (const fn of unlisteners) fn();
     };
-  }, [pushToast, refreshAll, refreshMarketplace, refreshRemoteMarketplace]);
+  }, [pushToast, refreshAll, refreshMarketplace]);
 
   // Acknowledge newly discovered remote plugins once user visits the Marketplace tab
   useEffect(() => {
@@ -642,7 +654,8 @@ export default function App() {
 
   const handleInstallRemotePlugin = useCallback(
     async (pkg: RemotePluginInfo) => {
-      if (!pkg?.id || !pkg?.downloadUrl) return;
+      if (!pkg?.id || !pkg?.downloadUrl || remoteInstallInFlightRef.current) return;
+      remoteInstallInFlightRef.current = true;
       setInstallingRemoteId(pkg.id);
       const label = pkg.name || pkg.id;
       pushToast(`正在从 GitHub 下载并安装 ${label}...`, "info");
@@ -681,6 +694,7 @@ export default function App() {
       } catch (err) {
         pushToast(`远程安装失败：${formatErrorMessage(err)}`, "error");
       } finally {
+        remoteInstallInFlightRef.current = false;
         setInstallingRemoteId(null);
       }
     },
@@ -689,7 +703,8 @@ export default function App() {
 
   const handleUpdateAllRemotePlugins = useCallback(async () => {
     const updates = (remoteMarketplace?.plugins ?? []).filter((p) => p.hasUpdate);
-    if (updates.length === 0) return;
+    if (updates.length === 0 || remoteInstallInFlightRef.current) return;
+    remoteInstallInFlightRef.current = true;
     setUpdatingAllRemote(true);
     pushToast(`正在一键更新 ${updates.length} 个插件...`, "info");
 
@@ -719,6 +734,7 @@ export default function App() {
     }
     setInstallingRemoteId(null);
     setUpdatingAllRemote(false);
+    remoteInstallInFlightRef.current = false;
 
     await Promise.all([refreshAll(false), refreshRemoteMarketplace(false)]);
     if (failCount === 0) {
@@ -785,14 +801,15 @@ export default function App() {
     if (checkingUpdate) return;
     setCheckingUpdate(true);
     try {
-      const res = await ipc.checkForUpdates(true);
-      setUpdateResult(res);
+      const res = await ipc.checkForUpdates();
+      if (res.status !== "error") setUpdateResult(res);
       if (res.hasUpdate) {
         setUpdateBannerVisible(true);
       } else if (res.status === "ok") {
         setUpdateBannerVisible(false);
         pushToast(res.message || "当前已是最新版本", "ok");
       } else if (res.status === "unpublished") {
+        setUpdateBannerVisible(false);
         pushToast(res.message || "官网暂未发布新版本", "info");
       } else {
         pushToast(res.message || "暂无法连接更新服务", "warn");
@@ -820,12 +837,11 @@ export default function App() {
     view.kind === "ext-detail"
       ? plugins.find((p) => p.id === view.pluginId) ?? null
       : null;
-  const selectedExternalRemoteUpdate =
+  const selectedExternalRemoteRelease =
     selectedExternalPlugin && remoteMarketplace
       ? remoteMarketplace.plugins.find(
           (item) =>
-            item.id.toLowerCase() === selectedExternalPlugin.id.toLowerCase() &&
-            item.hasUpdate,
+            item.id.toLowerCase() === selectedExternalPlugin.id.toLowerCase(),
         ) ?? null
       : null;
   const selectedNativePlugin =
@@ -982,6 +998,7 @@ export default function App() {
               <StoragePage
                 isDark={resolvedDark}
                 scanProgress={storageScanProgress}
+                onScanStart={resetStorageScanProgress}
                 onToast={pushToast}
               />
             )}
@@ -1015,7 +1032,7 @@ export default function App() {
               (selectedExternalPlugin ? (
                 <ExternalPluginDetailPage
                   plugin={selectedExternalPlugin}
-                  remoteUpdate={selectedExternalRemoteUpdate}
+                  remoteRelease={selectedExternalRemoteRelease}
                   updatingRemote={
                     updatingAllRemote || installingRemoteId === selectedExternalPlugin.id
                   }
@@ -1145,8 +1162,12 @@ export default function App() {
       <FloatingUpdateBanner
         update={updateResult}
         visible={updateBannerVisible}
-        onDismiss={() => setUpdateBannerVisible(false)}
+        onDismiss={() => {
+          dismissedVersionRef.current = updateResult?.latestVersion ?? null;
+          setUpdateBannerVisible(false);
+        }}
         onUpdateNow={(url) => handleOpenUpdateUrl(url)}
+        onOpenUrl={(url) => handleOpenUpdateUrl(url)}
       />
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />

@@ -27,6 +27,7 @@ import {
   type SaveExeResult,
   type ShortcutResult,
   type StorageDeleteResult,
+  type StorageInventory,
   type StorageScanProgress,
   type StorageTreeResponse,
   type StorageViewMode,
@@ -135,8 +136,9 @@ export const ipc = {
 
   createAllShortcuts: () => callCommand<ShortcutResult>(TAURI_COMMANDS.CREATE_ALL_SHORTCUTS),
 
-  checkForUpdates: (manual = false) =>
-    callCommand<UpdateCheckResult>(TAURI_COMMANDS.CHECK_FOR_UPDATES, { manual }),
+  startAutomaticUpdateChecks: () => callCommand<void>(TAURI_COMMANDS.START_AUTOMATIC_UPDATE_CHECKS),
+
+  checkForUpdates: () => callCommand<UpdateCheckResult>(TAURI_COMMANDS.CHECK_FOR_UPDATES),
 
   openExternalUrl: (url: string) =>
     callCommand<void>(TAURI_COMMANDS.OPEN_EXTERNAL_URL, { url }),
@@ -149,18 +151,28 @@ export const ipc = {
 
   getSystemDarkMode: () => callCommand<boolean>(TAURI_COMMANDS.GET_SYSTEM_DARK_MODE),
 
-  scanAgyStorage: (viewMode: StorageViewMode, includeAppdata: boolean, query?: string) =>
+  getStorageInventory: (rescan: boolean) =>
+    callCommand<StorageInventory>(TAURI_COMMANDS.GET_STORAGE_INVENTORY, { rescan }),
+
+  pickStorageProject: () => callCommand<boolean>(TAURI_COMMANDS.PICK_STORAGE_PROJECT),
+
+  removeStorageProject: (projectPath: string) =>
+    callCommand<void>(TAURI_COMMANDS.REMOVE_STORAGE_PROJECT, { projectPath }),
+
+  scanAgyStorage: (viewMode: StorageViewMode, includeAppdata: boolean, query?: string, projectPath?: string | null) =>
     callCommand<StorageTreeResponse>(TAURI_COMMANDS.SCAN_AGY_STORAGE, {
       viewMode,
       includeAppdata,
       query: query?.trim() ? query.trim() : null,
+      projectPath: projectPath ?? null,
     }),
 
-  getStorageTree: (viewMode: StorageViewMode, includeAppdata: boolean, query?: string) =>
+  getStorageTree: (viewMode: StorageViewMode, includeAppdata: boolean, query?: string, projectPath?: string | null) =>
     callCommand<StorageTreeResponse>(TAURI_COMMANDS.GET_STORAGE_TREE, {
       viewMode,
       includeAppdata,
       query: query?.trim() ? query.trim() : null,
+      projectPath: projectPath ?? null,
     }),
 
   cleanOrphanStorageSummaries: () =>
@@ -178,10 +190,11 @@ export const ipc = {
       recycleBin,
     }),
 
-  deleteStorageItems: (targets: string[], recycleBin: boolean) =>
+  deleteStorageItems: (targets: string[], recycleBin: boolean, projectPath?: string | null) =>
     callCommand<StorageDeleteResult>(TAURI_COMMANDS.DELETE_STORAGE_ITEMS, {
       targets,
       recycleBin,
+      projectPath: projectPath ?? null,
     }),
 
   isAntigravityRunningForStorage: () =>

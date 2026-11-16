@@ -1,3 +1,4 @@
+import { SpringSwitch } from "./MotionPrimitives";
 import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, ShieldAlert, Trash2, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -12,6 +13,7 @@ export interface StorageDeleteDialogState {
   mode: "session_files" | "session" | "items";
   sessionIds?: string[];
   targets?: string[];
+  projectPath?: string | null;
   busy?: boolean;
 }
 
@@ -157,13 +159,7 @@ export function StorageDeleteModal({
                     : "border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] text-[var(--text-primary)] hover:border-[var(--border-strong)]"
                 } ${state.busy ? "cursor-not-allowed opacity-60" : ""}`}
               >
-                <input
-                  type="checkbox"
-                  checked={permanent}
-                  disabled={state.busy}
-                  onChange={(e) => setPermanent(e.target.checked)}
-                  className="h-4 w-4 shrink-0 cursor-pointer accent-[var(--danger)] disabled:cursor-not-allowed"
-                />
+                <SpringSwitch checked={permanent} disabled={state.busy} onChange={setPermanent} tone="danger" />
                 <span>彻底删除（跳过 Windows 回收站，不可恢复）</span>
               </label>
             </div>

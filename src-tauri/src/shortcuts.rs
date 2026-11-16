@@ -122,15 +122,11 @@ fn find_manager_icon(paths: &ManagerPaths, launcher_exe: &str) -> String {
 
 pub fn create_all_shortcuts(paths: &ManagerPaths) -> Result<ShortcutResult, String> {
     let config = load_config(paths)?;
-    let launcher_exe = std::env::current_exe()
-        .map_err(|e| format!("无法获取当前程序路径: {e}"))?
-        .to_string_lossy()
-        .into_owned();
+    let launcher_exe = current_launcher_exe()?;
 
     let desktop_dir = resolve_desktop_dir();
     let working_dir = paths.data_dir.to_string_lossy().into_owned();
     let app_icon = find_manager_icon(paths, &launcher_exe);
-    let agy_icon = config.antigravity_exe.trim().to_string();
 
     let manager_lnk = desktop_dir.join("AGY Plugin Manager.lnk");
     create_shortcut_com(
@@ -143,14 +139,34 @@ pub fn create_all_shortcuts(paths: &ManagerPaths) -> Result<ShortcutResult, Stri
     )?;
     paths.log_info(&format!("已生成桌面快捷方式: {}", manager_lnk.display()));
 
-    let agy_lnk = desktop_dir.join("Antigravity (AGY-Launcher).lnk");
+    let agy_lnk = create_agy_launcher_shortcut(paths, &launcher_exe, &config.antigravity_exe)?;
+    Ok(ShortcutResult {
+        manager_shortcut: manager_lnk.to_string_lossy().into_owned(),
+        agy_shortcut: agy_lnk.to_string_lossy().into_owned(),
+    })
+}
+
+fn current_launcher_exe() -> Result<String, String> {
+    std::env::current_exe()
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|err| format!("无法获取当前程序路径: {err}"))
+}
+
+fn create_agy_launcher_shortcut(
+    paths: &ManagerPaths,
+    launcher_exe: &str,
+    antigravity_exe: &str,
+) -> Result<PathBuf, String> {
+    let agy_lnk = resolve_desktop_dir().join("Antigravity (AGY-Launcher).lnk");
+    let agy_icon = antigravity_exe.trim();
+    let app_icon = find_manager_icon(paths, launcher_exe);
     create_shortcut_com(
         &agy_lnk,
-        &launcher_exe,
+        launcher_exe,
         "--quick-launch",
-        &working_dir,
+        &paths.data_dir.to_string_lossy(),
         if !agy_icon.is_empty() && Path::new(&agy_icon).exists() {
-            &agy_icon
+            agy_icon
         } else {
             &app_icon
         },
@@ -158,10 +174,20 @@ pub fn create_all_shortcuts(paths: &ManagerPaths) -> Result<ShortcutResult, Stri
     )?;
     paths.log_info(&format!("已生成桌面快捷方式: {}", agy_lnk.display()));
 
-    Ok(ShortcutResult {
-        manager_shortcut: manager_lnk.to_string_lossy().into_owned(),
-        agy_shortcut: agy_lnk.to_string_lossy().into_owned(),
-    })
+    Ok(agy_lnk)
+}
+
+pub fn apply_installer_shortcut_choice(paths: &ManagerPaths, create_launcher: bool) -> Result<(), String> {
+    let mut config = load_config(paths)?;
+    // Either installer choice takes precedence over legacy first-run shortcut generation.
+    if config.ui.shortcuts_initialized != Some(true) {
+        config.ui.shortcuts_initialized = Some(true);
+        save_config(paths, &config)?;
+    }
+    if create_launcher {
+        create_agy_launcher_shortcut(paths, &current_launcher_exe()?, &config.antigravity_exe)?;
+    }
+    Ok(())
 }
 
 pub fn ensure_default_shortcuts_once(paths: &ManagerPaths) -> Result<bool, String> {
@@ -189,4 +215,35 @@ pub fn ensure_default_shortcuts_once(paths: &ManagerPaths) -> Result<bool, Strin
     save_config(paths, &cfg)?;
     paths.log_info("已首次自动补充生成 Antigravity (AGY-Launcher) 与控制中心桌面快捷方式");
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::load_config_raw;
+    use crate::models::AppConfig;
+    use crate::paths::RuntimeDirs;
+
+    #[test]
+    fn installer_opt_out_prevents_first_run_from_creating_shortcuts() {
+        let dir = std::env::temp_dir().join(format!("agy-shortcut-opt-out-{}", std::process::id()));
+        let paths = ManagerPaths::from_runtime_dirs(RuntimeDirs {
+            data_dir: dir.clone(),
+            assets_dir: dir.clone(),
+            is_portable: true,
+        });
+        let antigravity = dir.join("Antigravity.exe");
+        std::fs::write(&antigravity, []).unwrap();
+        let config = AppConfig {
+            antigravity_exe: antigravity.to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        save_config(&paths, &config).unwrap();
+
+        apply_installer_shortcut_choice(&paths, false).unwrap();
+        let saved = load_config_raw(&paths).unwrap();
+        assert_eq!(saved.antigravity_exe, config.antigravity_exe);
+        assert_eq!(saved.ui.shortcuts_initialized, Some(true));
+        assert!(!ensure_default_shortcuts_once(&paths).unwrap());
+    }
 }

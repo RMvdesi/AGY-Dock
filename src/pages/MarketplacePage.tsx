@@ -1,3 +1,4 @@
+import { ReleaseNotes } from "../components/ReleaseNotes";
 import { useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -271,7 +272,7 @@ export function MarketplacePage({
                         const authorName = sanitizePlainText(pkg.author) || "未知";
                         const descText =
                           sanitizePlainText(pkg.description) || `${pkg.id} 远程扩展包`;
-                        const changelogText = sanitizePlainText(pkg.changelog);
+                        const changelogText = pkg.hasUpdate ? pkg.changelog.trim() : "";
 
                         return (
                           <motion.div
@@ -281,106 +282,113 @@ export function MarketplacePage({
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, scale: 0.98 }}
                             transition={{ duration: 0.15, ease: MOTION_EASE }}
-                            title={changelogText ? `更新说明：${changelogText}` : undefined}
-                            className="flex items-center gap-3.5 rounded-xl px-3.5 py-3 transition-colors hover:bg-[var(--bg-row-hover)]"
+                            className="rounded-xl px-3.5 py-3 transition-colors hover:bg-[var(--bg-row-hover)]"
                           >
-                            <PluginMonogram
-                              pluginId={pkg.id}
-                              pluginType={pkg.type}
-                              label={displayName}
-                              size={36}
-                              isDark={isDark}
-                            />
+                            <div className="flex items-center gap-3.5">
+                              <PluginMonogram
+                                pluginId={pkg.id}
+                                pluginType={pkg.type}
+                                label={displayName}
+                                size={36}
+                                isDark={isDark}
+                              />
 
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="truncate text-[13.5px] font-semibold text-[var(--text-primary)]">
-                                  {displayName}
-                                </span>
-                                <span className="shrink-0 rounded-md bg-[var(--bg-subtle)] px-1.5 py-[1px] font-mono-code text-[11px] font-medium text-[var(--text-muted)]">
-                                  {formatVersionText(pkg.version)}
-                                </span>
-                                <AuthorBadge author={authorName} />
-                                <span className="hidden shrink-0 font-mono-code text-[11px] text-[var(--text-faint)] sm:inline">
-                                  {pkg.type || "custom-cdp"}
-                                </span>
-                                {pkg.size > 0 && (
-                                  <span className="hidden shrink-0 text-[11px] tabular-nums text-[var(--text-faint)] lg:inline">
-                                    · {formatBytes(pkg.size)}
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="truncate text-[13.5px] font-semibold text-[var(--text-primary)]">
+                                    {displayName}
                                   </span>
-                                )}
-                                {pkg.homepage && (
-                                  <button
-                                    type="button"
-                                    onClick={() => onOpenExternalUrl(pkg.homepage)}
-                                    title={`打开主页：${pkg.homepage}`}
-                                    className="inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--text-faint)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--link)]"
-                                  >
-                                    <ExternalLink className="h-3 w-3" />
-                                  </button>
+                                  <span className="shrink-0 rounded-md bg-[var(--bg-subtle)] px-1.5 py-[1px] font-mono-code text-[11px] font-medium text-[var(--text-muted)]">
+                                    {formatVersionText(pkg.version)}
+                                  </span>
+                                  <AuthorBadge author={authorName} />
+                                  <span className="hidden shrink-0 font-mono-code text-[11px] text-[var(--text-faint)] sm:inline">
+                                    {pkg.type || "custom-cdp"}
+                                  </span>
+                                  {pkg.size > 0 && (
+                                    <span className="hidden shrink-0 text-[11px] tabular-nums text-[var(--text-faint)] lg:inline">
+                                      · {formatBytes(pkg.size)}
+                                    </span>
+                                  )}
+                                  {pkg.homepage && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onOpenExternalUrl(pkg.homepage)}
+                                      title={`打开主页：${pkg.homepage}`}
+                                      className="inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--text-faint)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--link)]"
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
+                                    </button>
+                                  )}
+                                </div>
+                                <p className="mt-0.5 truncate text-[12.5px] text-[var(--text-muted)]">
+                                  {descText}
+                                </p>
+                              </div>
+
+                              <div className="flex shrink-0 items-center gap-2">
+                                {pkg.hasUpdate || pkg.status === "update-available" ? (
+                                  <>
+                                    <StatusPill tone="warn">
+                                      可更新 {formatVersionText(pkg.installedVersion)} →{" "}
+                                      {formatVersionText(pkg.version)}
+                                    </StatusPill>
+                                    <button
+                                      type="button"
+                                      disabled={busyAny}
+                                      onClick={() => onInstallRemote(pkg)}
+                                      className="agy-btn-primary px-3 py-1.5 text-[12.5px]"
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                      <span>{isInstalling ? "更新中..." : "立即更新"}</span>
+                                    </button>
+                                  </>
+                                ) : pkg.installed ? (
+                                  <>
+                                    <StatusPill tone="ok">已是最新</StatusPill>
+                                    <button
+                                      type="button"
+                                      onClick={() => onManageInstalled(pkg.id)}
+                                      className="agy-btn px-3 py-1.5 text-[12.5px]"
+                                    >
+                                      管理
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={busyAny}
+                                      onClick={() => onInstallRemote(pkg)}
+                                      className="agy-btn px-3 py-1.5 text-[12.5px]"
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                      <span>{isInstalling ? "安装中..." : "重装"}</span>
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    {pkg.isNew || pkg.status === "new" ? (
+                                      <StatusPill tone="info">新插件</StatusPill>
+                                    ) : (
+                                      <StatusPill tone="muted">未安装</StatusPill>
+                                    )}
+                                    <button
+                                      type="button"
+                                      disabled={busyAny}
+                                      onClick={() => onInstallRemote(pkg)}
+                                      className="agy-btn-primary px-3.5 py-1.5 text-[12.5px]"
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                      <span>{isInstalling ? "下载中..." : "下载安装"}</span>
+                                    </button>
+                                  </>
                                 )}
                               </div>
-                              <p className="mt-0.5 truncate text-[12.5px] text-[var(--text-muted)]">
-                                {descText}
-                              </p>
                             </div>
-
-                            <div className="flex shrink-0 items-center gap-2">
-                              {pkg.hasUpdate || pkg.status === "update-available" ? (
-                                <>
-                                  <StatusPill tone="warn">
-                                    可更新 {formatVersionText(pkg.installedVersion)} →{" "}
-                                    {formatVersionText(pkg.version)}
-                                  </StatusPill>
-                                  <button
-                                    type="button"
-                                    disabled={busyAny}
-                                    onClick={() => onInstallRemote(pkg)}
-                                    className="agy-btn-primary px-3 py-1.5 text-[12.5px]"
-                                  >
-                                    <Download className="h-3.5 w-3.5" />
-                                    <span>{isInstalling ? "更新中..." : "立即更新"}</span>
-                                  </button>
-                                </>
-                              ) : pkg.installed ? (
-                                <>
-                                  <StatusPill tone="ok">已是最新</StatusPill>
-                                  <button
-                                    type="button"
-                                    onClick={() => onManageInstalled(pkg.id)}
-                                    className="agy-btn px-3 py-1.5 text-[12.5px]"
-                                  >
-                                    管理
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={busyAny}
-                                    onClick={() => onInstallRemote(pkg)}
-                                    className="agy-btn px-3 py-1.5 text-[12.5px]"
-                                  >
-                                    <Download className="h-3.5 w-3.5" />
-                                    <span>{isInstalling ? "安装中..." : "重装"}</span>
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  {pkg.isNew || pkg.status === "new" ? (
-                                    <StatusPill tone="info">新插件</StatusPill>
-                                  ) : (
-                                    <StatusPill tone="muted">未安装</StatusPill>
-                                  )}
-                                  <button
-                                    type="button"
-                                    disabled={busyAny}
-                                    onClick={() => onInstallRemote(pkg)}
-                                    className="agy-btn-primary px-3.5 py-1.5 text-[12.5px]"
-                                  >
-                                    <Download className="h-3.5 w-3.5" />
-                                    <span>{isInstalling ? "下载中..." : "下载安装"}</span>
-                                  </button>
-                                </>
-                              )}
-                            </div>
+                            {changelogText && (
+                              <section className="mt-2.5 ml-[50px] rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-3 py-2.5">
+                                <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--text-primary)]">更新日志</h3>
+                                <ReleaseNotes text={changelogText} onOpenUrl={onOpenExternalUrl} />
+                              </section>
+                            )}
                           </motion.div>
                         );
                       })}
@@ -513,10 +521,7 @@ export function MarketplacePage({
       </div>
 
       {/* Footer note */}
-      <footer className="flex items-center justify-between px-0.5 text-[11.5px] text-[var(--text-faint)]">
-        <span>
-          已接入 GitHub 仓库 {repoName} · 支持自动检查新插件、一键更新与本地目录管理
-        </span>
+      <footer className="flex items-center justify-end px-0.5 text-[11.5px] text-[var(--text-faint)]">
         {remoteMarketplace?.checkedAt && (
           <span className="hidden tabular-nums sm:inline">
             {remoteMarketplace.source === "github-release"

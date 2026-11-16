@@ -669,15 +669,24 @@ test('HaoAn Lab update check parses release manifests, handles 404/up-to-date, a
   assert.equal(isNewerSemver('2.1.0', '2.1.0'), false);
   assert.equal(isNewerSemver('2.0.5', '2.1.0'), false);
   assert.throws(() => validateUpdateSiteUrl('http://untrusted.example.com'), /HTTPS/);
+  assert.equal(validateUpdateSiteUrl(' https://AHMUSTUDYHELPER.xyz/ '), 'https://www.haoanlab.xyz');
+  for (const custom of [
+    'https://mirror.example.org',
+    'https://ahmustudyhelper.xyz/custom',
+    'https://ahmustudyhelper.xyz:8443',
+    'https://ahmustudyhelper.xyz.example.com',
+  ]) {
+    assert.equal(validateUpdateSiteUrl(custom), custom);
+  }
 
   const urls = buildUpdateUrls({ currentVersion: APP_VERSION, arch: 'x64' });
   assert.equal(
     urls.manifestUrl,
-    `https://ahmustudyhelper.xyz/api/v1/products/agy-plugin-manager/releases/latest?platform=windows&arch=x64&from=${APP_VERSION}`
+    `https://www.haoanlab.xyz/api/v1/products/agy-plugin-manager/releases/latest?platform=windows&arch=x64&from=${APP_VERSION}`
   );
   assert.equal(
     urls.landingUrl,
-    `https://ahmustudyhelper.xyz/updates/agy-plugin-manager?platform=windows&arch=x64&from=${APP_VERSION}`
+    `https://www.haoanlab.xyz/updates/agy-plugin-manager?platform=windows&arch=x64&from=${APP_VERSION}`
   );
 
   let mode = 'upgrade';

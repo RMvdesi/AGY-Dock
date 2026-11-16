@@ -9,13 +9,14 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
+import { ReleaseNotes } from "../components/ReleaseNotes";
 import { PluginMonogram } from "../components/BrandMark";
 import { formatBytes, formatVersionText } from "../lib/format";
 import type { PluginRuntimeStatus, RemotePluginInfo } from "../types/ipc";
 
 interface ExternalPluginDetailPageProps {
   plugin: PluginRuntimeStatus;
-  remoteUpdate?: RemotePluginInfo | null;
+  remoteRelease?: RemotePluginInfo | null;
   updatingRemote?: boolean;
   isDark: boolean;
   busy?: boolean;
@@ -30,7 +31,7 @@ interface ExternalPluginDetailPageProps {
 
 export function ExternalPluginDetailPage({
   plugin,
-  remoteUpdate = null,
+  remoteRelease = null,
   updatingRemote = false,
   isDark,
   busy = false,
@@ -162,22 +163,35 @@ export function ExternalPluginDetailPage({
             <ScrollText className="h-3.5 w-3.5" />
             <span>实时日志</span>
           </button>
-          {remoteUpdate && onUpdateRemote && (
+          {remoteRelease?.hasUpdate && onUpdateRemote && (
             <button
               type="button"
               disabled={busy || updatingRemote}
-              onClick={() => onUpdateRemote(remoteUpdate)}
+              onClick={() => onUpdateRemote(remoteRelease)}
               className="agy-btn-primary"
             >
               <Download className="h-3.5 w-3.5" />
               <span>
                 {updatingRemote
                   ? "更新中..."
-                  : `更新到 ${formatVersionText(remoteUpdate.version)}`}
+                  : `更新到 ${formatVersionText(remoteRelease.version)}`}
               </span>
             </button>
           )}
         </div>
+
+        {remoteRelease && (remoteRelease.hasUpdate || remoteRelease.changelog.trim()) && (
+          <section className="agy-inset space-y-2.5 p-5">
+            <h3 className="text-[13px] font-semibold text-[var(--text-primary)]">
+              {formatVersionText(remoteRelease.version)} 更新日志
+            </h3>
+            {remoteRelease.changelog.trim() ? (
+              <ReleaseNotes text={remoteRelease.changelog} onOpenUrl={onOpenUrl} />
+            ) : (
+              <p className="text-[13px] text-[var(--text-muted)]">此版本暂无更新日志</p>
+            )}
+          </section>
+        )}
 
         {/* Spec Grid */}
         <div className="agy-inset space-y-3 p-5">

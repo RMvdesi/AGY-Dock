@@ -13,7 +13,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { MOTION_EASE } from "../components/MotionPrimitives";
+import { MOTION_EASE, SpringSwitch } from "../components/MotionPrimitives";
 import { formatErrorMessage } from "../lib/format";
 import { ipc } from "../lib/ipc";
 import type {
@@ -147,21 +147,16 @@ export function SettingsPage({
     setDetectingProxy(true);
     setProxyStatus({ tone: "muted", text: "正在检测..." });
     try {
-      const res = await ipc.autoDetectAndSaveProxy();
-      if (res.detected) {
-        setProxyEnabled(Boolean(res.proxy.enabled));
-        setHttpProxy(res.proxy.httpProxy || "");
-        setHttpsProxy(res.proxy.httpsProxy || "");
-        setAllProxy(res.proxy.allProxy || "");
-        setNoProxy(res.proxy.noProxy || "127.0.0.1,localhost,::1");
-        setElectronProxy(res.proxy.electronProxyServer || "");
-        setDirty(false);
-        const src = res.detection.source || "auto";
-        const proc = res.detection.processName?.trim();
-        const label = proc ? `${src}: ${proc}` : src;
-        setProxyStatus({ tone: "ok", text: `已自动配置 (${label})` });
-        onToast(`已自动配置 (${label})`, "ok");
-        onRefresh();
+      const detection = await ipc.detectSystemProxy();
+      if (detection.detected) {
+        setHttpProxy(detection.httpProxy || "");
+        setHttpsProxy(detection.httpsProxy || "");
+        setAllProxy(detection.allProxy || "");
+        setNoProxy(detection.noProxy || "127.0.0.1,localhost,::1");
+        setElectronProxy(detection.electronProxyServer || "");
+        setDirty(true);
+        setProxyStatus({ tone: "ok", text: "已填入代理参数" });
+        onToast("已填入代理参数，保存配置后生效", "ok");
       } else {
         setProxyStatus({
           tone: "muted",
@@ -217,7 +212,8 @@ export function SettingsPage({
   };
 
   let updateStatusTone: "ok" | "warn" | "muted" = "muted";
-  let updateStatusText = "每次启动自动检查更新（非强制）";
+  const currentVersion = overview?.version || updateResult?.currentVersion;
+  let updateStatusText = "等待检查更新";
   if (checkingUpdate) {
     updateStatusText = "正在连接官网检查更新...";
   } else if (updateResult) {
@@ -261,7 +257,7 @@ export function SettingsPage({
 
         <button
           type="button"
-          disabled={saving}
+          disabled={saving || detectingProxy}
           onClick={handleSave}
           className="agy-btn-primary"
         >
@@ -304,9 +300,11 @@ export function SettingsPage({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2.5">
               <h3 className="text-[13.5px] font-semibold text-[var(--text-primary)]">版本与更新</h3>
-              <span className="rounded-md bg-[var(--bg-subtle)] px-2 py-0.5 font-mono-code text-[11.5px] font-medium text-[var(--text-muted)]">
-                v{overview?.version || "2.4.0"}
-              </span>
+              {currentVersion && (
+                <span className="rounded-md bg-[var(--bg-subtle)] px-2 py-0.5 font-mono-code text-[11.5px] font-medium text-[var(--text-muted)]">
+                  v{currentVersion}
+                </span>
+              )}
               <StatusDot tone={updateStatusTone} text={updateStatusText} />
             </div>
 
@@ -328,7 +326,7 @@ export function SettingsPage({
           </div>
 
           <p className="mt-2.5 text-[12.5px] text-[var(--text-muted)]">
-            更新检测与文案由 HaoAn Lab 官网统一提供，发现新版本时将在右上角悬浮提示，可随时忽略继续使用。
+            启动时及每 15 分钟检查更新。发现新版本时在右上角显示更新日志。
           </p>
         </section>
 
@@ -393,8 +391,17 @@ export function SettingsPage({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2.5">
               <h3 className="text-[13.5px] font-semibold text-[var(--text-primary)]">
-                按需代理注入
+                魔法注入
               </h3>
+              <SpringSwitch
+                checked={proxyEnabled}
+                onChange={(checked) => {
+                  setProxyEnabled(checked);
+                  setDirty(true);
+                }}
+                disabled={saving}
+                ariaLabel="魔法注入"
+              />
               <AnimatePresence mode="wait" initial={false}>
                 {proxyStatus.text && (
                   <motion.span
@@ -421,18 +428,9 @@ export function SettingsPage({
             </button>
           </div>
 
-          <label className="mt-3 flex cursor-pointer items-center gap-2 text-[13px] text-[var(--text-primary)]">
-            <input
-              type="checkbox"
-              checked={proxyEnabled}
-              onChange={(e) => {
-                setProxyEnabled(e.target.checked);
-                setDirty(true);
-              }}
-              className="h-4 w-4 cursor-pointer accent-[var(--accent)]"
-            />
-            <span>仅在启动 Antigravity 时传入代理参数</span>
-          </label>
+          <p className="mt-2.5 text-[12px] text-[var(--text-muted)]">
+            开启并保存后，在下次启动 Antigravity 时传入代理参数。
+          </p>
 
           <div className="mt-3.5 space-y-2.5">
             <ProxyField
@@ -487,43 +485,40 @@ export function SettingsPage({
         <section className="agy-card p-5">
           <h3 className="text-[13.5px] font-semibold text-[var(--text-primary)]">窗口与生命周期</h3>
           <div className="mt-3 space-y-2.5">
-            <label className="flex cursor-pointer items-center gap-2.5 text-[13px] text-[var(--text-primary)]">
-              <input
-                type="checkbox"
-                checked={minimizeToTray}
-                onChange={(e) => {
-                  setMinimizeToTray(e.target.checked);
-                  setDirty(true);
-                }}
-                className="h-4 w-4 cursor-pointer accent-[var(--accent)]"
-              />
+            <label className="flex cursor-pointer items-center justify-between gap-4 text-[13px] text-[var(--text-primary)]">
               <span>关闭窗口时最小化到系统托盘</span>
-            </label>
-
-            <label className="flex cursor-pointer items-center gap-2.5 text-[13px] text-[var(--text-primary)]">
-              <input
-                type="checkbox"
-                checked={autoCleanupOnExit}
-                onChange={(e) => {
-                  setAutoCleanupOnExit(e.target.checked);
+              <SpringSwitch
+                checked={minimizeToTray}
+                onChange={(checked) => {
+                  setMinimizeToTray(checked);
                   setDirty(true);
                 }}
-                className="h-4 w-4 cursor-pointer accent-[var(--accent)]"
+                disabled={saving}
               />
+            </label>
+
+            <label className="flex cursor-pointer items-center justify-between gap-4 text-[13px] text-[var(--text-primary)]">
               <span>Antigravity 退出后自动清理残留伴生进程 (Sidecar / language_server)</span>
-            </label>
-
-            <label className="flex cursor-pointer items-center gap-2.5 text-[13px] text-[var(--text-primary)]">
-              <input
-                type="checkbox"
-                checked={stopPluginsOnExit}
-                onChange={(e) => {
-                  setStopPluginsOnExit(e.target.checked);
+              <SpringSwitch
+                checked={autoCleanupOnExit}
+                onChange={(checked) => {
+                  setAutoCleanupOnExit(checked);
                   setDirty(true);
                 }}
-                className="h-4 w-4 cursor-pointer accent-[var(--accent)]"
+                disabled={saving}
               />
+            </label>
+
+            <label className="flex cursor-pointer items-center justify-between gap-4 text-[13px] text-[var(--text-primary)]">
               <span>Antigravity 退出时同步停止全部托管插件</span>
+              <SpringSwitch
+                checked={stopPluginsOnExit}
+                onChange={(checked) => {
+                  setStopPluginsOnExit(checked);
+                  setDirty(true);
+                }}
+                disabled={saving}
+              />
             </label>
           </div>
         </section>

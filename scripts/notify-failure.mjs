@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import {execFileSync} from 'node:child_process';
 const config=JSON.parse(fs.readFileSync('.release.json','utf8'));
 const site=config.siteUrl.replace(/\/$/,'');
-const url=new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL);url.searchParams.set('audience',site);
+const url=new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL);url.searchParams.set('audience',config.oidcAudience || site);
 const response=await fetch(url,{headers:{Authorization:`Bearer ${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}`},signal:AbortSignal.timeout(15000)});
 if(!response.ok)throw new Error('无法获取构建身份');
 const {value}=await response.json();
