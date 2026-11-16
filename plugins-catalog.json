@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Plugin-Manager",
-  "updatedAt": "2026-11-16T14:14:13Z",
+  "updatedAt": "2026-11-16T17:50:44Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -44,6 +44,20 @@
       "sha256": "80ee91816bc56bd6c71db5a6c52a59566073eb91d483af95137c536e344c68da",
       "size": 24520,
       "releaseTag": "v2.4.0"
+    },
+    {
+      "id": "agy-quota-badge",
+      "name": "Antigravity Quota Badge",
+      "version": "1.0.0",
+      "author": "HaoAn",
+      "description": "在模型选择器旁显示 5 小时与周额度，悬停查看原生剩余额度和重置倒计时。",
+      "type": "node-cdp",
+      "downloadUrl": "https://github.com/haoan33/agy-quota-badge/releases/download/v1.0.0/agy-quota-badge-v1.0.0.zip",
+      "homepage": "https://github.com/haoan33/agy-quota-badge",
+      "changelog": "首发紫色额度圆标，支持原型的逐弧、中心和 Argon 三点悬停、低额度警示与事件刷新。",
+      "sha256": "c1982e6a178e387d7378d3b8f52da69fa5b6410a785872f51aac8be6381ea2d6",
+      "size": 19144,
+      "releaseTag": "v1.0.0"
     }
   ]
 }
