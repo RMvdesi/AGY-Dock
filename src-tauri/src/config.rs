@@ -286,6 +286,12 @@ pub fn save_plugin_entry(
     let homepage = Some(payload.homepage.trim().to_string()).filter(|s| !s.is_empty());
     let health_url = Some(payload.health_url.trim().to_string()).filter(|s| !s.is_empty());
     let process_match = Some(payload.process_match.trim().to_string()).filter(|s| !s.is_empty());
+    let settings_entry = payload
+        .settings_entry
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
 
     let idx = cfg.plugins.iter().position(|p| p.id == plugin_id);
     let saved_entry = if mode == "create" {
@@ -308,6 +314,8 @@ pub fn save_plugin_entry(
             stop_args,
             health_url,
             process_match,
+            has_settings: payload.has_settings,
+            settings_entry,
             env: None,
             extra: HashMap::new(),
         };
@@ -333,6 +341,8 @@ pub fn save_plugin_entry(
             stop_args,
             health_url,
             process_match,
+            has_settings: payload.has_settings.or(prev.has_settings),
+            settings_entry: settings_entry.or(prev.settings_entry),
             env: prev.env,
             extra: prev.extra,
         };

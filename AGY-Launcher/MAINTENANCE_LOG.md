@@ -6,6 +6,33 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.6.0] - 2026-11-17 21:10
+
+### Summary
+
+- Unify the action button in `My Plugins` from `详情 >` to `管理` to match `Plugin Marketplace`, and remove the `编辑配置` button from the top-right bar of the plugin management page.
+- Add support for plugin-bundled settings pages (`plugins/<id>/settings.html` + `plugins/<id>/settings.json`) hosted inside `ExternalPluginDetailPage` via a sandboxed iframe and `window.AGYPluginSettings` `postMessage` bridge:
+  - Plugins with `hasSettings` enabled and a valid `settingsEntry` (default `settings.html`) display a `插件设置 / 插件详情` segmented slider below the plugin header and action buttons, defaulting to `插件设置`.
+  - Plugins without a settings page (or with `hasSettings: false`) hide the slider and display `插件详情` directly.
+  - Preserve user `settings.json` across plugin package upgrades/reinstalls and automatically hot-restart running plugins when settings are saved with `restartIfRunning: true`.
+- Document the unified plugin settings interface, UI theme token consistency guidelines, and `changelog` release notes specifications in `AGY-Launcher/PLUGIN_INTEGRATION.md` and `maintain and create agy plugins/AGENTS.md`.
+
+### Files Changed
+
+- `src/pages/MyPluginsPage.tsx` — change row button from `详情 >` to `管理`.
+- `src/pages/ExternalPluginDetailPage.tsx` and `src/App.tsx` — remove `编辑配置` button, add `插件设置 / 插件详情` segmented slider, and host plugin `settings.html` with theme variable injection and `window.AGYPluginSettings` `postMessage` bridge.
+- `src/types/ipc.ts` and `src/lib/ipc.ts` — add `hasSettings`, `settingsEntry`, `loadPluginSettingsPage`, and `savePluginSettings` IPC types and bindings.
+- `src-tauri/src/{models,config,plugins,supervisor,commands,lib,detector}.rs` and `AGY-Launcher/scripts/package_plugins.py` — parse `hasSettings` / `settingsEntry`, preserve `settings.json` on package upgrade, implement `load_plugin_settings_page` and `save_plugin_settings`, and add unit test `plugin_settings_meta_and_persistence_work_and_respect_opt_out`.
+- `AGY-Launcher/PLUGIN_INTEGRATION.md` — add Section 9 covering the plugin settings contract, `window.AGYPluginSettings` SDK, and UI visual consistency rules.
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/{Cargo.toml,Cargo.lock,tauri.conf.json}`, `AGY-Launcher/server.mjs`, `AGY-Launcher/lib/process-manager.mjs`, `scripts/build-local.mjs`, and `CHANGELOG.md` — bump version to `2.6.0` and sync local hot-update to `D:\AGY Plugin Manager`.
+
+### Verification
+
+- `npm run build` -> passed `tsc --noEmit` and `vite build` (`dist/assets/index-Cch5OjJa.js`).
+- `cargo test --manifest-path src-tauri/Cargo.toml` -> 32 passed, 0 failed (including `plugins::tests::plugin_settings_meta_and_persistence_work_and_respect_opt_out`).
+- `node --test AGY-Launcher/tests/process-manager.test.mjs` -> 9 passed, 0 failed.
+- `npm run build:local` -> built `src-tauri/target/release/AGY Plugin Manager.exe` (`7.91 MB`) and hot-updated `D:\AGY Plugin Manager\AGY Plugin Manager.exe` (and `%LOCALAPPDATA%\AGY-Plugin-Manager\AGY Plugin Manager.exe`) while preserving user `plugins.json` and `plugins/`.
+
 ## [v2.5.2] - 2026-11-17 18:01
 
 ### Summary

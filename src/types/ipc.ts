@@ -38,6 +38,8 @@ export interface PluginConfigEntry {
   stopArgs: string[];
   healthUrl?: string;
   processMatch?: string;
+  hasSettings?: boolean;
+  settingsEntry?: string;
   env?: Record<string, string>;
 }
 
@@ -83,6 +85,23 @@ export interface PluginRuntimeStatus {
   health: Record<string, unknown> | null;
   executableExists: boolean;
   logs: PluginLogInfo;
+  hasSettings?: boolean;
+  settingsEntry?: string | null;
+}
+
+export interface PluginSettingsPageData {
+  pluginId: string;
+  hasSettings: boolean;
+  settingsEntry?: string | null;
+  html: string;
+  settings: Record<string, unknown>;
+  running: boolean;
+}
+
+export interface SavePluginSettingsResult {
+  pluginId: string;
+  settings: Record<string, unknown>;
+  restarted: boolean;
 }
 
 export interface OverviewSnapshot {
@@ -199,6 +218,8 @@ export interface PluginPayload {
   processMatch: string;
   enabled: boolean;
   autoAttach: boolean;
+  hasSettings?: boolean;
+  settingsEntry?: string;
 }
 
 export interface InstallPackageResult {
@@ -437,6 +458,8 @@ export const TAURI_COMMANDS = {
   FETCH_REMOTE_MARKETPLACE: "fetch_remote_marketplace",
   INSTALL_REMOTE_PLUGIN: "install_remote_plugin",
   MARK_MARKETPLACE_SEEN: "mark_marketplace_seen",
+  LOAD_PLUGIN_SETTINGS_PAGE: "load_plugin_settings_page",
+  SAVE_PLUGIN_SETTINGS: "save_plugin_settings",
   DETECT_ANTIGRAVITY: "detect_antigravity",
   SAVE_ANTIGRAVITY_EXE: "save_antigravity_exe",
   DETECT_SYSTEM_PROXY: "detect_system_proxy",

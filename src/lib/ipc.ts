@@ -22,9 +22,11 @@ import {
   type PluginConfigEntry,
   type PluginPayload,
   type PluginRuntimeStatus,
+  type PluginSettingsPageData,
   type ProxyConfig,
   type RemoteMarketplaceResult,
   type SaveExeResult,
+  type SavePluginSettingsResult,
   type ShortcutResult,
   type StorageDeleteResult,
   type StorageInventory,
@@ -106,6 +108,20 @@ export const ipc = {
 
   markMarketplaceSeen: (pluginIds: string[]) =>
     callCommand<void>(TAURI_COMMANDS.MARK_MARKETPLACE_SEEN, { pluginIds }),
+
+  loadPluginSettingsPage: (pluginId: string) =>
+    callCommand<PluginSettingsPageData>(TAURI_COMMANDS.LOAD_PLUGIN_SETTINGS_PAGE, { pluginId }),
+
+  savePluginSettings: (
+    pluginId: string,
+    settings: Record<string, unknown>,
+    restartIfRunning = true,
+  ) =>
+    callCommand<SavePluginSettingsResult>(TAURI_COMMANDS.SAVE_PLUGIN_SETTINGS, {
+      pluginId,
+      settings,
+      restartIfRunning,
+    }),
 
   detectAntigravity: () => callCommand<AntigravityDetectResult>(TAURI_COMMANDS.DETECT_ANTIGRAVITY),
 

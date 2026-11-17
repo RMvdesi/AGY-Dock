@@ -1350,6 +1350,8 @@ mod tests {
             stop_args: Vec::new(),
             health_url: None,
             process_match: process_match.map(|s| s.to_string()),
+            has_settings: None,
+            settings_entry: None,
             env: None,
             extra: HashMap::new(),
         }

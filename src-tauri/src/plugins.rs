@@ -1,12 +1,12 @@
 use crate::config::{
     load_config, read_text_strip_bom, save_config, save_plugin_entry, strip_utf8_bom,
-    valid_log_id_re, valid_plugin_id_re,
+    valid_log_id_re, valid_plugin_id_re, write_json_atomic,
 };
-use crate::detector::resolve_process_match_needle;
+use crate::detector::{match_plugin_processes, resolve_process_match_needle, snapshot_processes};
 use crate::models::{
     BundledPackageInfo, ClearLogResult, DeleteLocalDirResult, InstallPackageResult,
     LocalPluginPackage, LogTailResult, NativePluginInfo, NativeSidecar, PluginConfigEntry,
-    PluginLogInfo, PluginPayload,
+    PluginLogInfo, PluginPayload, PluginSettingsPageData, SavePluginSettingsResult,
 };
 use crate::paths::ManagerPaths;
 use crate::supervisor;
@@ -206,6 +206,13 @@ pub fn normalize_plugin_package_manifest(manifest: &Value) -> Result<PluginConfi
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+    let has_settings = obj.get("hasSettings").and_then(|v| v.as_bool());
+    let settings_entry = obj
+        .get("settingsEntry")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
 
     let entry = PluginConfigEntry {
         id: plugin_id,
@@ -223,6 +230,8 @@ pub fn normalize_plugin_package_manifest(manifest: &Value) -> Result<PluginConfi
         stop_args,
         health_url,
         process_match,
+        has_settings,
+        settings_entry,
         env: None,
         extra: HashMap::new(),
     };
@@ -241,6 +250,8 @@ pub struct PluginDirManifest {
     pub description: String,
     pub author: String,
     pub homepage: String,
+    pub has_settings: Option<bool>,
+    pub settings_entry: Option<String>,
 }
 
 pub fn read_plugin_dir_manifest(plugin_dir: Option<&Path>) -> PluginDirManifest {
@@ -248,7 +259,7 @@ pub fn read_plugin_dir_manifest(plugin_dir: Option<&Path>) -> PluginDirManifest 
         return PluginDirManifest::default();
     };
     let mut out = PluginDirManifest::default();
-    for filename in ["package.json", "plugin.json", "manifest.json", "version.json"] {
+    for filename in ["agy-plugin.json", "package.json", "plugin.json", "manifest.json", "version.json"] {
         let path = dir.join(filename);
         if !path.is_file() {
             continue;
@@ -284,6 +295,17 @@ pub fn read_plugin_dir_manifest(plugin_dir: Option<&Path>) -> PluginDirManifest 
                 out.homepage = h;
             }
         }
+        if out.has_settings.is_none() {
+            out.has_settings = obj.get("hasSettings").and_then(|v| v.as_bool());
+        }
+        if out.settings_entry.is_none() {
+            out.settings_entry = obj
+                .get("settingsEntry")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+        }
     }
     if out.version.is_empty() {
         let ver_file = dir.join("VERSION");
@@ -296,6 +318,67 @@ pub fn read_plugin_dir_manifest(plugin_dir: Option<&Path>) -> PluginDirManifest 
         }
     }
     out
+}
+
+pub fn validate_settings_entry_rel_path(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.contains('\0') {
+        return Err("非法的设置页路径".to_string());
+    }
+    let normalized = validate_zip_member_name(trimmed)?;
+    let lower = normalized.to_ascii_lowercase();
+    if !lower.ends_with(".html") && !lower.ends_with(".htm") {
+        return Err("插件设置页入口文件必须为 .html 或 .htm".to_string());
+    }
+    Ok(normalized)
+}
+
+pub fn resolve_plugin_settings_meta(
+    plugin: Option<&PluginConfigEntry>,
+    dir_manifest: &PluginDirManifest,
+    plugin_dir: Option<&Path>,
+) -> (bool, Option<String>, Option<PathBuf>) {
+    let has_settings_opt = plugin
+        .and_then(|p| p.has_settings)
+        .or(dir_manifest.has_settings);
+    if has_settings_opt == Some(false) {
+        return (false, None, None);
+    }
+
+    let raw_entry = plugin
+        .and_then(|p| p.settings_entry.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            dir_manifest
+                .settings_entry
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("settings.html");
+
+    let Ok(clean_rel) = validate_settings_entry_rel_path(raw_entry) else {
+        return (false, None, None);
+    };
+    let Some(dir) = plugin_dir.filter(|d| d.is_dir()) else {
+        return (false, None, None);
+    };
+    let Ok(dir_canon) = fs::canonicalize(dir) else {
+        return (false, None, None);
+    };
+    let candidate = dir.join(&clean_rel);
+    if !candidate.is_file() {
+        return (false, None, None);
+    }
+    let Ok(file_canon) = fs::canonicalize(&candidate) else {
+        return (false, None, None);
+    };
+    if !file_canon.starts_with(&dir_canon) {
+        return (false, None, None);
+    }
+
+    (true, Some(clean_rel), Some(file_canon))
 }
 
 pub fn resolve_plugin_dir(base_dir: &Path, plugin: Option<&PluginConfigEntry>) -> Option<PathBuf> {
@@ -553,6 +636,31 @@ pub fn install_plugin_package(
         }
 
         if dest_dir.exists() {
+            let old_settings = dest_dir.join("settings.json");
+            if old_settings.is_file() {
+                if let Ok(raw_settings) = read_text_strip_bom(&old_settings) {
+                    if let Ok(Value::Object(user_map)) = serde_json::from_str::<Value>(&raw_settings) {
+                        let staged_settings = staging_dir.join("settings.json");
+                        let merged = if staged_settings.is_file() {
+                            if let Ok(staged_raw) = read_text_strip_bom(&staged_settings) {
+                                if let Ok(Value::Object(mut base_map)) = serde_json::from_str::<Value>(&staged_raw) {
+                                    for (k, v) in user_map {
+                                        base_map.insert(k, v);
+                                    }
+                                    Value::Object(base_map)
+                                } else {
+                                    Value::Object(user_map)
+                                }
+                            } else {
+                                Value::Object(user_map)
+                            }
+                        } else {
+                            Value::Object(user_map)
+                        };
+                        let _ = write_json_atomic(&staged_settings, &merged);
+                    }
+                }
+            }
             fs::rename(&dest_dir, &backup_dir)
                 .map_err(|e| format!("备份旧版本插件目录失败: {e}"))?;
         }
@@ -598,6 +706,8 @@ pub fn install_plugin_package(
         process_match: entry.process_match.clone().unwrap_or_default(),
         enabled: entry.enabled,
         auto_attach: entry.auto_attach,
+        has_settings: entry.has_settings.or(dir_manifest.has_settings),
+        settings_entry: entry.settings_entry.clone().or(dir_manifest.settings_entry),
     };
     let mode = if existing_idx.is_some() { "edit" } else { "create" };
     let saved = save_plugin_entry(paths, mode, payload)?;
@@ -1086,6 +1196,157 @@ pub fn delete_local_plugin_dir(
     })
 }
 
+pub fn read_plugin_settings_json(plugin_dir: &Path) -> Value {
+    let settings_path = plugin_dir.join("settings.json");
+    if settings_path.is_file() {
+        if let Ok(raw) = read_text_strip_bom(&settings_path) {
+            if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+                if val.is_object() {
+                    return val;
+                }
+            }
+        }
+    }
+    Value::Object(serde_json::Map::new())
+}
+
+pub fn load_plugin_settings_page(
+    paths: &ManagerPaths,
+    plugin_id: &str,
+) -> Result<PluginSettingsPageData, String> {
+    let clean_id = plugin_id.trim();
+    if !valid_plugin_id_re().is_match(clean_id) {
+        return Err("非法的插件 ID".to_string());
+    }
+    let cfg = load_config(paths)?;
+    let plugin = cfg.plugins.iter().find(|p| p.id == clean_id);
+    let plugin_dir = if let Some(p) = plugin {
+        resolve_plugin_dir(&paths.base_dir, Some(p))
+    } else {
+        let cand = paths.plugins_dir.join(clean_id);
+        if cand.is_dir() {
+            Some(cand)
+        } else {
+            None
+        }
+    };
+
+    let Some(dir) = plugin_dir else {
+        return Ok(PluginSettingsPageData {
+            plugin_id: clean_id.to_string(),
+            has_settings: false,
+            settings_entry: None,
+            html: String::new(),
+            settings: Value::Object(serde_json::Map::new()),
+            running: false,
+        });
+    };
+
+    let dir_manifest = read_plugin_dir_manifest(Some(&dir));
+    let (has_settings, settings_entry, html_path) =
+        resolve_plugin_settings_meta(plugin, &dir_manifest, Some(&dir));
+
+    let running = if let Some(p) = plugin {
+        let processes = snapshot_processes();
+        !match_plugin_processes(&processes, p, None).is_empty()
+    } else {
+        false
+    };
+
+    if !has_settings {
+        return Ok(PluginSettingsPageData {
+            plugin_id: clean_id.to_string(),
+            has_settings: false,
+            settings_entry: None,
+            html: String::new(),
+            settings: Value::Object(serde_json::Map::new()),
+            running,
+        });
+    }
+
+    let Some(target_html) = html_path else {
+        return Ok(PluginSettingsPageData {
+            plugin_id: clean_id.to_string(),
+            has_settings: false,
+            settings_entry: None,
+            html: String::new(),
+            settings: Value::Object(serde_json::Map::new()),
+            running,
+        });
+    };
+
+    let html = read_text_strip_bom(&target_html)?;
+    let settings = read_plugin_settings_json(&dir);
+
+    Ok(PluginSettingsPageData {
+        plugin_id: clean_id.to_string(),
+        has_settings: true,
+        settings_entry,
+        html,
+        settings,
+        running,
+    })
+}
+
+pub fn save_plugin_settings(
+    paths: &ManagerPaths,
+    plugin_id: &str,
+    settings: Value,
+    restart_if_running: bool,
+) -> Result<SavePluginSettingsResult, String> {
+    let clean_id = plugin_id.trim();
+    if !valid_plugin_id_re().is_match(clean_id) {
+        return Err("非法的插件 ID".to_string());
+    }
+    if !settings.is_object() {
+        return Err("插件设置必须为 JSON 对象".to_string());
+    }
+    let cfg = load_config(paths)?;
+    let plugin = cfg
+        .plugins
+        .iter()
+        .find(|p| p.id == clean_id)
+        .cloned()
+        .ok_or_else(|| format!("未找到插件: {clean_id}"))?;
+    let plugin_dir = resolve_plugin_dir(&paths.base_dir, Some(&plugin))
+        .unwrap_or_else(|| paths.plugins_dir.join(clean_id));
+    if !plugin_dir.is_dir() {
+        return Err(format!("插件目录不存在: {}", plugin_dir.display()));
+    }
+    let root = fs::canonicalize(&paths.plugins_dir)
+        .map_err(|e| format!("解析 plugins 目录失败: {e}"))?;
+    let dir_canon = fs::canonicalize(&plugin_dir)
+        .map_err(|e| format!("解析目标插件目录失败: {e}"))?;
+    if dir_canon == root || dir_canon.parent() != Some(root.as_path()) {
+        return Err("安全限制：仅允许写入 plugins 目录下的直接子目录".to_string());
+    }
+
+    let settings_path = dir_canon.join("settings.json");
+    write_json_atomic(&settings_path, &settings)?;
+
+    let mut restarted = false;
+    if restart_if_running {
+        let processes = snapshot_processes();
+        let is_running = !match_plugin_processes(&processes, &plugin, None).is_empty();
+        if is_running {
+            if supervisor::restart_plugin(paths, clean_id).is_ok() {
+                restarted = true;
+            }
+        }
+    }
+
+    paths.log_info(&format!(
+        "已保存插件 {} 的自定义设置 (restarted={restarted})",
+        clean_id
+    ));
+
+    Ok(SavePluginSettingsResult {
+        plugin_id: clean_id.to_string(),
+        settings,
+        restarted,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1215,6 +1476,8 @@ mod tests {
             stop_args: vec![],
             health_url: None,
             process_match: None,
+            has_settings: None,
+            settings_entry: None,
             env: None,
             extra: HashMap::new(),
         });
@@ -1235,6 +1498,102 @@ mod tests {
 
         let reloaded = load_config(&paths).unwrap();
         assert!(reloaded.plugins.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn plugin_settings_meta_and_persistence_work_and_respect_opt_out() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("agy-settings-test-{}-{nanos}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let p_dir = root.join("plugins").join("agy-quota-badge");
+        fs::create_dir_all(&p_dir).unwrap();
+        fs::create_dir_all(root.join("logs")).unwrap();
+        fs::write(p_dir.join("index.js"), b"console.log(1);").unwrap();
+        fs::write(
+            p_dir.join("package.json"),
+            r#"{"name":"agy-quota-badge","version":"1.1.0","hasSettings":true,"settingsEntry":"settings.html"}"#,
+        )
+        .unwrap();
+
+        let paths = ManagerPaths::from_runtime_dirs(crate::paths::RuntimeDirs {
+            data_dir: root.clone(),
+            assets_dir: root.clone(),
+            is_portable: true,
+        });
+        let mut cfg = crate::models::AppConfig::default();
+        cfg.plugins.push(PluginConfigEntry {
+            id: "agy-quota-badge".to_string(),
+            name: "Antigravity Quota Badge".to_string(),
+            version: Some("1.1.0".to_string()),
+            author: Some("HaoAn".to_string()),
+            homepage: None,
+            description: String::new(),
+            enabled: true,
+            auto_attach: true,
+            plugin_type: "node-cdp".to_string(),
+            command: "node".to_string(),
+            launch_args: vec![r"plugins\agy-quota-badge\index.js".to_string()],
+            attach_args: vec![],
+            stop_args: vec![],
+            health_url: None,
+            process_match: Some(r"agy-quota-badge\index.js".to_string()),
+            has_settings: None,
+            settings_entry: None,
+            env: None,
+            extra: HashMap::new(),
+        });
+        save_config(&paths, &cfg).unwrap();
+
+        // 1. Missing settings.html -> has_settings = false
+        let dm = read_plugin_dir_manifest(Some(&p_dir));
+        let (has_set, _, _) = resolve_plugin_settings_meta(cfg.plugins.first(), &dm, Some(&p_dir));
+        assert!(!has_set);
+
+        // 2. Write settings.html -> has_settings = true
+        fs::write(p_dir.join("settings.html"), "<div>Theme Settings</div>").unwrap();
+        let (has_set2, entry_rel, _) = resolve_plugin_settings_meta(cfg.plugins.first(), &dm, Some(&p_dir));
+        assert!(has_set2);
+        assert_eq!(entry_rel.as_deref(), Some("settings.html"));
+
+        let loaded = load_plugin_settings_page(&paths, "agy-quota-badge").unwrap();
+        assert!(loaded.has_settings);
+        assert_eq!(loaded.html, "<div>Theme Settings</div>");
+        assert_eq!(loaded.settings, json!({}));
+
+        // 3. Save settings.json and reload
+        let saved = save_plugin_settings(
+            &paths,
+            "agy-quota-badge",
+            json!({ "colorScheme": "emerald", "warningThreshold": 20 }),
+            false,
+        )
+        .unwrap();
+        assert_eq!(saved.settings["colorScheme"], "emerald");
+        assert!(!saved.restarted);
+
+        let loaded_after = load_plugin_settings_page(&paths, "agy-quota-badge").unwrap();
+        assert_eq!(loaded_after.settings["colorScheme"], "emerald");
+        assert_eq!(loaded_after.settings["warningThreshold"], 20);
+
+        // 4. Explicit opt-out via hasSettings: false disables settings even if settings.html exists
+        cfg.plugins[0].has_settings = Some(false);
+        save_config(&paths, &cfg).unwrap();
+        let opted_out = load_plugin_settings_page(&paths, "agy-quota-badge").unwrap();
+        assert!(!opted_out.has_settings);
+        assert!(opted_out.html.is_empty());
+
+        // 5. Reject path traversal in settingsEntry
+        assert!(validate_settings_entry_rel_path("../secret.html").is_err());
+        assert!(validate_settings_entry_rel_path("settings.js").is_err());
+        assert_eq!(
+            validate_settings_entry_rel_path("ui\\settings.html").unwrap(),
+            "ui/settings.html"
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import {
-  ChevronRight,
   PackagePlus,
   Play,
   Plus,
   RotateCw,
+  SlidersHorizontal,
   Square,
   Store,
   Upload,
@@ -252,6 +252,15 @@ export function MyPluginsPage({
                             <span className="shrink-0 rounded-md bg-[var(--bg-subtle)] px-1.5 py-[1px] font-mono-code text-[11px] font-medium text-[var(--text-muted)]">
                               {formatVersionText(p.version)}
                             </span>
+                            {p.hasSettings && (
+                              <span
+                                title="此插件提供自定义设置页"
+                                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-1.5 py-[1px] text-[11px] font-medium whitespace-nowrap text-[var(--text-muted)]"
+                              >
+                                <SlidersHorizontal className="h-2.5 w-2.5 text-[var(--accent)]" />
+                                <span>可设置</span>
+                              </span>
+                            )}
                             {p.author?.trim() && (
                               <span
                                 title={p.author.trim()}
@@ -343,10 +352,9 @@ export function MyPluginsPage({
                             e.stopPropagation();
                             onOpenDetail(p.id);
                           }}
-                          className="agy-btn shrink-0 px-2.5 py-1 text-[12px]"
+                          className="agy-btn shrink-0 px-3 py-1.5 text-[12.5px]"
                         >
-                          <span>详情</span>
-                          <ChevronRight className="h-3.5 w-3.5 opacity-60 transition-transform duration-150 group-hover:translate-x-0.5" />
+                          管理
                         </button>
                       </motion.div>
                     );

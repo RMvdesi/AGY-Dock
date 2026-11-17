@@ -47,6 +47,8 @@ Managed external plugins are registered inside the top-level `"plugins"` array o
 | `stopArgs` | `string[]` | No | Graceful shutdown arguments invoked before process-matching fallback termination. |
 | `healthUrl` | `string` | No | Optional localhost HTTP JSON health check URL (e.g., `http://127.0.0.1:12399/health`). |
 | `processMatch` | `string` | Recommended | Case-insensitive substring matched against `Win32_Process.CommandLine` to detect running PIDs and clean up residuals on stop. |
+| `hasSettings` | `boolean` | No | Whether the plugin exposes a self-contained settings page in the manager (`true` / `false`). Setting `false` explicitly disables the settings tab and hides the switcher even if `settings.html` exists; omitting defaults to `true` when `settingsEntry` (default `"settings.html"`) exists in `plugins/<id>/`. |
+| `settingsEntry` | `string` | No (default `"settings.html"`) | Relative path inside `plugins/<id>/` to the plugin's self-contained HTML settings page (must end with `.html` or `.htm` and contain no `..` traversal). |
 
 ### Author & Upstream Attribution Convention
 Clear `author` and `homepage` metadata is required across `plugins.json`, `package.json`, and `agy-plugin.json` so users can immediately verify plugin provenance in **My Plugins** and **Plugin Marketplace**:
@@ -213,6 +215,8 @@ my-plugin-v1.0.0.zip
 | `processMatch` | `string` | Recommended | Distinct substring in `CommandLine` (never a bare generic runtime from `GENERIC_RUNTIMES`). |
 | `enabled` | `boolean` | No (default `true`) | Initial enabled state written to `plugins.json`. |
 | `autoAttach` | `boolean` | No (default `true`) | Whether the plugin auto-attaches when Antigravity CDP becomes ready. |
+| `hasSettings` | `boolean` | No | Whether to enable the plugin's custom settings page in the manager (`true` / `false`). Set `false` (or omit `settings.html`) for plugins that do not require settings. |
+| `settingsEntry` | `string` | No (default `"settings.html"`) | Relative path to the plugin's bundled HTML settings page inside the package (e.g. `"settings.html"`). |
 
 Example `agy-plugin.json`:
 
@@ -242,7 +246,7 @@ Example `agy-plugin.json`:
 When installing or removing a package via `install_plugin_package()` / `delete_local_plugin_dir()` (Rust) or `installPluginPackage()` (Node):
 1. **Zip-Slip Protection**: Archives containing `..` traversal segments, leading `/` or `\`, or Windows drive letters (`C:`) are rejected before any extraction occurs.
 2. **Safe Process Validation**: `processMatch` / `command` are validated against `GENERIC_RUNTIMES` before registration.
-3. **Graceful Upgrade / Overwrite**: If a plugin with the same `id` is already installed and `overwrite=True`, the manager stops the running plugin instance first, replaces `plugins/<id>/` cleanly, and upserts its configuration entry in `plugins.json`.
+3. **Graceful Upgrade / Overwrite & User Settings Preservation**: If a plugin with the same `id` is already installed and `overwrite=True`, the manager stops the running plugin instance first, preserves any existing user `plugins/<id>/settings.json` (merging user keys over package defaults), replaces `plugins/<id>/` cleanly, and upserts its configuration entry in `plugins.json`.
 4. **Safe Local Deletion**: Deleting a plugin entry in **My Plugins** offers an optional `deleteFiles` checkbox to remove `plugins/<id>/`, and **Plugin Marketplace** (`本地目录`) supports deleting local plugin directories directly (jailed strictly to direct subdirectories of `plugins/`, stopping and unregistering any linked config entries first).
 5. **Drag-and-Drop & One-Click Install**: Users can drop any `.zip`, `.agypkg`, or `.agy-plugin` file directly onto **我的插件** or click **`安装插件包`** (or install/update directly from the GitHub Remote Marketplace) without editing JSON manually.
 
@@ -313,3 +317,92 @@ AGY Plugin Manager 通过仓库根目录的 `plugins-catalog.json`（优先）�
 - [ ] **`processMatch` 安全校验**：绝不使用裸通用运行时（`node`、`python`、`powershell`、`cmd` 等）作为 `processMatch`，必须指定唯一脚本子串（如 `"my-plugin\\index.js"`）或独立可执行文件名。
 - [ ] **根目录 `agy-plugin.json` (`schemaVersion: 1`)**：确认压缩包根目录包含合法的 `agy-plugin.json`（含 `id`、`version`、`author`、`command`、`launchArgs`、`attachArgs`、`stopArgs`、`processMatch`）。
 - [ ] **Zip-Slip 与本地安装回归验证**：通过 `python AGY-Launcher/scripts/package_plugins.py` 完成压缩包完整性与路径穿越检查，并在 **我的插件** 中实际拖入安装，验证 `Attach`、`Health`、`Logs` 与 `Stop` 全链路正常。
+
+---
+
+## 9. 插件自包含设置页接口与 UI 统一性规范 (`settings.html` + `window.AGYPluginSettings`)
+
+AGY Plugin Manager 采用**插件本体集成设置页**的解耦架构：插件管理器本身不硬编码任何具体插件的设置项（如配色方案、阈值、快捷键等），而是统一在插件管理页提供容器区域与通信桥；具体的设置界面由各插件在自身目录内提供 `settings.html` 自行实现。
+
+### 1. 开启与关闭插件设置页
+
+管理器通过**清单声明 + 文件存在性**双重判定插件是否启用设置页：
+- **开启设置页**：
+  1. 在插件目录 `plugins/<id>/` 下提供自包含的 `settings.html`（或在 `agy-plugin.json` / `package.json` / `plugins.json` 中通过 `"settingsEntry": "settings.html"` 指定相对路径，必须为 `.html` / `.htm` 且不得包含 `..`）；
+  2. 在 `agy-plugin.json` / `package.json` 中设置 `"hasSettings": true`（若未显式设置 `hasSettings`，只要 `settings.html` 文件存在也会默认开启）。
+  3. 开启后，用户点击「管理」进入该插件页面时，操作栏右侧会显示与「存储管理」同款的 **`插件设置` / `插件详情` 选择滑块**，且默认展示 **`插件设置`** 页。
+- **关闭设置页（无需设置的插件）**：
+  1. 在 `agy-plugin.json` / `package.json` / `plugins.json` 中设置 `"hasSettings": false`，或直接不在插件目录中放置 `settings.html`；
+  2. 关闭后，插件管理页会自动隐藏选择滑块，并直接展示 **`插件详情`** 页（版本更新日志与运行规格信息），不会出现空白或禁用标签页。
+
+### 2. 配置持久化契约 (`plugins/<id>/settings.json`)
+
+- **存储位置**：插件的所有用户自定义设置统一以 JSON 对象格式持久化在插件自身目录下的 `plugins/<id>/settings.json`。
+- **插件未运行时离线可配**：由于 `settings.html` 与 `settings.json` 均由管理器宿主桥接读写，即使插件进程当前处于「待命（未运行）」状态，用户依然可以打开并修改保存插件设置。
+- **插件升级自动保留设置**：当用户通过「插件市场」升级或重新拖入安装新版 `.zip` 插件包时，管理器会自动读取旧目录中的 `settings.json` 并将用户配置合并写回新版本目录，不会因升级丢失用户个性化配置。
+- **插件运行时读取方式**：插件后端（如 `index.js`）启动或重新挂载时，直接读取 `path.join(__dirname, 'settings.json')`（建议做好文件不存在或字段缺省时的默认值兜底）。
+
+### 3. 前端通信桥接口 (`window.AGYPluginSettings`)
+
+管理器在加载 `settings.html` 时，会自动向页面 `<head>` 注入宿主样式变量与 `window.AGYPluginSettings` SDK（基于 `window.parent.postMessage` 通信）。插件设置页脚本可直接调用以下统一接口：
+
+```js
+// 1. 页面就绪与初始数据获取（推荐入口）
+window.AGYPluginSettings.onReady(({ settings, theme, running }) => {
+  // settings: 当前 plugins/<id>/settings.json 中的 JSON 对象（若无文件则为 {}）
+  // theme: "light" | "dark"（当前管理器主题）
+  // running: boolean（当前插件进程是否正在运行）
+  renderUI(settings);
+});
+
+// 2. 同步或异步读取当前设置
+const current = window.AGYPluginSettings.getSync(); // 同步返回浅拷贝对象
+const asyncCurrent = await window.AGYPluginSettings.get();
+
+// 3. 保存完整设置对象（原子写入 settings.json）
+// options.restartIfRunning 默认为 true：若插件当前正在运行，保存后管理器会自动重启该插件使新设置立即在 Antigravity 中生效
+// options.silent 默认为 false：保存成功后管理器右上角自动弹出 Toast 提示
+await window.AGYPluginSettings.save(
+  { colorScheme: "emerald", lowQuotaThreshold: 25 },
+  { restartIfRunning: true, silent: false }
+);
+
+// 4. 增量合并保存部分字段
+await window.AGYPluginSettings.patch({ colorScheme: "amber" });
+
+// 5. 恢复默认设置
+await window.AGYPluginSettings.reset({ colorScheme: "purple", lowQuotaThreshold: 25 });
+
+// 6. 监听管理器深浅色主题实时切换
+window.AGYPluginSettings.onThemeChange((newTheme) => {
+  // newTheme: "light" | "dark"（根元素 html.dark 与 CSS 变量已由宿主自动同步切换）
+});
+
+// 7. 弹出管理器原生 Toast 提示 / 打开外部链接 / 手动通知高度重算
+window.AGYPluginSettings.toast("配色已切换", "ok"); // tone: "info" | "ok" | "warn" | "error"
+window.AGYPluginSettings.openExternalUrl("https://github.com/haoan33/agy-quota-badge");
+window.AGYPluginSettings.resize();
+```
+
+### 4. 插件设置页 UI 开发统一性要求 (Visual & Interaction Guidelines)
+
+为了保证不同开发者编写的 `settings.html` 嵌入管理器后视觉自然协调、不突兀，所有插件设置页必须遵守以下 UI 规范：
+
+1. **自包含与零外部网络依赖**：
+   - `settings.html` 在沙盒 `iframe (sandbox="allow-scripts")` 的 `srcdoc` 中运行，**必须将所需的 CSS 与 JS 内联在 `settings.html` 内**，严禁引用 CDN 外链脚本、外部字体或远程图片，确保离线环境 100% 秒开。
+2. **复用宿主注入的 CSS 主题变量（严禁硬编码刺眼背景色）**：
+   - 宿主已自动将 `html, body` 设为 `background: transparent; color: var(--text-primary); font-family: var(--font-sans);`，并在深色模式下自动为 `<html>` 切换 `.dark` 类与 `data-theme="dark"`。
+   - **背景与卡片层次**：由于外层容器已是管理器的 `.agy-inset`（`--bg-surface-soft`），设置页内部卡片请使用 `background: var(--bg-surface); border: 1px solid var(--border-hairline); border-radius: 12px; padding: 14px 16px;`。
+   - **核心颜色变量表**（由管理器自动注入并随「自动 / 浅色 / 深色」实时更新）：
+     - 文本：`var(--text-primary)`（主标题/正文）、`var(--text-muted)`（次级说明）、`var(--text-faint)`（辅助标注）
+     - 表面与边框：`var(--bg-surface)`（卡片底色）、`var(--bg-surface-soft)`（次级底色）、`var(--bg-subtle)`（胶囊/代码块底色）、`var(--border-hairline)`（细边框）、`var(--border-strong)`（悬停/强调边框）
+     - 强调色与按钮：`var(--accent)`（`#10B981` 翡翠绿主强调色）、`var(--accent-soft)`（选中态浅底色）、`var(--primary-bg)` / `var(--primary-text)`（主按钮黑/白反转色）
+     - 语义状态色：`var(--ok)` / `var(--ok-bg)`、`var(--warn)` / `var(--warn-bg)`、`var(--danger)` / `var(--danger-bg)`、`var(--info)` / `var(--info-bg)`
+     - 字体栈：`var(--font-sans)`（UI 正文）、`var(--font-mono)`（代码/色值/数值）
+3. **排版、字号与留白规范**：
+   - 分组标题：`13.5px`–`14px`，`font-weight: 600`，颜色 `var(--text-primary)`；
+   - 设置项名称：`13px`，`font-weight: 500`；辅助说明文字：`12px`，颜色 `var(--text-muted)`；
+   - 控件圆角：按钮与输入框统一使用 `8px`–`10px` 圆角，分组卡片使用 `12px` 圆角；
+   - 避免固定死高度或出现双层纵向滚动条：宿主会自动通过 `ResizeObserver` 监听 `document.body` 高度并撑开设置区域，请保持页面自然流式布局（`overflow: hidden` 或自然高度）。
+4. **交互反馈**：
+   - 点击切换预设（如配色方案卡片、开关）时，可直接调用 `window.AGYPluginSettings.patch(...)` 或提供清晰的「保存设置 / 恢复默认」按钮，并在异步保存期间禁用重复点击。

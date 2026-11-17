@@ -11,7 +11,7 @@ use crate::models::{
 use crate::paths::ManagerPaths;
 use crate::plugins::{
     fetch_health, get_plugin_log_info, read_plugin_dir_manifest, resolve_plugin_dir,
-    resolve_plugin_version,
+    resolve_plugin_settings_meta, resolve_plugin_version,
 };
 use chrono::Local;
 use reqwest::Client;
@@ -615,6 +615,8 @@ pub async fn get_overview(paths: &ManagerPaths) -> Result<OverviewSnapshot, Stri
                     Some(h.to_string())
                 }
             });
+        let (has_settings, settings_entry, _) =
+            resolve_plugin_settings_meta(Some(plugin), &dir_manifest, plugin_dir.as_deref());
 
         plugins.push(PluginRuntimeStatus {
             id: plugin.id.clone(),
@@ -638,6 +640,8 @@ pub async fn get_overview(paths: &ManagerPaths) -> Result<OverviewSnapshot, Stri
             health,
             executable_exists,
             logs: get_plugin_log_info(paths, &plugin.id),
+            has_settings,
+            settings_entry,
         });
     }
 

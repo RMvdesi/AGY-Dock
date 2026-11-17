@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.0] - 2026-11-17
+
+- 「我的插件」列表操作按钮统一改为「管理」，进入管理页后移除右上角「编辑配置」按钮。
+- 支持插件自包含设置页（`settings.html` + `settings.json` + `window.AGYPluginSettings` `postMessage` 通信桥）：开启设置页的插件在管理页显示「插件设置 / 插件详情」切换滑块并默认打开「插件设置」；无需设置页的插件（`hasSettings: false` 或无 `settings.html`）自动隐藏滑块并直接展示「插件详情」。
+- 插件包覆盖安装/升级时自动保留并合并用户已有的 `plugins/<id>/settings.json`，并在保存设置且插件运行中时支持自动热重启生效。
+- 更新插件开发与集成规范（`AGY-Launcher/PLUGIN_INTEGRATION.md` 与插件仓库 `AGENTS.md`），补充插件设置页接口契约、UI 主题变量统一性要求与最新版 `changelog` 更新日志规范。
+
 ## [2.5.2] - 2026-11-17
 
 - 存储管理列表改用标准方形复选框，部分选中时表头显示半选状态。

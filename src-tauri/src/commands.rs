@@ -6,9 +6,10 @@ use crate::models::{
     AntigravityDetectResult, AutoProxyResult, BundledPackageInfo, CleanupResult, ClearLogResult,
     DeleteLocalDirResult, DeletePluginResult, FileFilterSpec, InstallPackageResult, LaunchResult,
     LifecycleConfig, LocalPluginPackage, LogTailResult, NativePluginInfo, OverviewSnapshot,
-    PluginActionResult, PluginConfigEntry, PluginPayload, ProxyConfig, RemoteMarketplaceResult,
-    SaveExeResult, ShortcutResult, StorageDeleteResult, StorageTreeResponse, SystemProxyDetection,
-    UiPreferences, UpdateCheckResult,
+    PluginActionResult, PluginConfigEntry, PluginPayload, PluginSettingsPageData, ProxyConfig,
+    RemoteMarketplaceResult, SaveExeResult, SavePluginSettingsResult, ShortcutResult,
+    StorageDeleteResult, StorageTreeResponse, SystemProxyDetection, UiPreferences,
+    UpdateCheckResult,
 };
 use crate::paths::ManagerPaths;
 use crate::plugins;
@@ -879,4 +880,36 @@ pub async fn mark_marketplace_seen(
         .map_err(|e| format!("更新市场已读状态失败: {e}"))??;
     refresh_marketplace_cache_if_present(&app, &state).await;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn load_plugin_settings_page(
+    state: State<'_, AppState>,
+    plugin_id: String,
+) -> Result<PluginSettingsPageData, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || plugins::load_plugin_settings_page(&paths, &plugin_id))
+        .await
+        .map_err(|e| format!("加载插件设置页失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn save_plugin_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plugin_id: String,
+    settings: serde_json::Value,
+    restart_if_running: Option<bool>,
+) -> Result<SavePluginSettingsResult, String> {
+    let paths = state.paths.clone();
+    let restart = restart_if_running.unwrap_or(true);
+    let res = tokio::task::spawn_blocking(move || {
+        plugins::save_plugin_settings(&paths, &plugin_id, settings, restart)
+    })
+    .await
+    .map_err(|e| format!("保存插件设置失败: {e}"))??;
+    if res.restarted {
+        emit_overview_bg(&app, &state.paths).await;
+    }
+    Ok(res)
 }

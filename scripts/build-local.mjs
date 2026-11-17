@@ -101,11 +101,21 @@ runNpm(['run', 'tauri', '--', 'build', '--no-bundle', ...extraArgs], {
 
 const builtExe = locateBuiltExe(targetTriple);
 const localAppData = process.env.LOCALAPPDATA;
-if (!localAppData) {
-  throw new Error('未检测到 LOCALAPPDATA 环境变量，无法定位 %LOCALAPPDATA%\\AGY-Plugin-Manager');
+const customDirIdx = extraArgs.indexOf('--install-dir');
+const customInstallDir = customDirIdx >= 0 ? extraArgs[customDirIdx + 1] : '';
+
+const installDir = customInstallDir
+  ? resolve(customInstallDir)
+  : existsSync('D:\\AGY Plugin Manager')
+    ? 'D:\\AGY Plugin Manager'
+    : localAppData
+      ? join(localAppData, 'AGY-Plugin-Manager')
+      : '';
+
+if (!installDir) {
+  throw new Error('未检测到可用的本地安装目录');
 }
 
-const installDir = join(localAppData, 'AGY-Plugin-Manager');
 const targetExe = join(installDir, 'AGY Plugin Manager.exe');
 mkdirSync(installDir, { recursive: true });
 

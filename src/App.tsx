@@ -1039,32 +1039,6 @@ export default function App() {
                   isDark={resolvedDark}
                   busy={busyPluginId === selectedExternalPlugin.id}
                   onBack={backToExternalList}
-                  onEdit={(plugin) =>
-                    setEditorState({
-                      open: true,
-                      initial: {
-                        mode: "edit",
-                        plugin: {
-                          id: plugin.id,
-                          name: plugin.name,
-                          version: plugin.version,
-                          author: plugin.author ?? "",
-                          homepage: plugin.homepage ?? "",
-                          description: plugin.description,
-                          type: plugin.type,
-                          command: plugin.command,
-                          launchArgs: plugin.launchArgs,
-                          attachArgs: plugin.attachArgs,
-                          stopArgs: plugin.stopArgs,
-                          healthUrl: plugin.healthUrl ?? "",
-                          processMatch: plugin.processMatch ?? "",
-                          enabled: plugin.enabled,
-                          autoAttach: plugin.autoAttach,
-                        },
-                      },
-                      saving: false,
-                    })
-                  }
                   onDelete={(pluginId) =>
                     setDeleteTarget({
                       pluginId,
@@ -1080,6 +1054,7 @@ export default function App() {
                   }}
                   onUpdateRemote={handleInstallRemotePlugin}
                   onOpenUrl={(url) => handleOpenUpdateUrl(url)}
+                  onToast={pushToast}
                 />
               ) : (
                 <div className="agy-card flex h-full flex-col items-center justify-center gap-3 p-8 text-center">

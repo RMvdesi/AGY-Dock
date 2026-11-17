@@ -64,19 +64,21 @@ def _extract_homepage(data: dict[str, Any]) -> str:
     return ""
 
 
-def read_plugin_dir_manifest(plugin_dir: Path | None) -> dict[str, str]:
-    """Reads name, version, description, author, and homepage from a plugin directory."""
-    meta = {
+def read_plugin_dir_manifest(plugin_dir: Path | None) -> dict[str, Any]:
+    """Reads name, version, description, author, homepage, and settings metadata from a plugin directory."""
+    meta: dict[str, Any] = {
         "name": "",
         "version": "",
         "description": "",
         "author": "",
         "homepage": "",
+        "hasSettings": None,
+        "settingsEntry": "",
     }
     if plugin_dir is None or not plugin_dir.is_dir():
         return meta
 
-    for filename in ("package.json", "plugin.json", "manifest.json", "version.json"):
+    for filename in ("agy-plugin.json", "package.json", "plugin.json", "manifest.json", "version.json"):
         candidate = plugin_dir / filename
         if not candidate.is_file():
             continue
@@ -96,6 +98,10 @@ def read_plugin_dir_manifest(plugin_dir: Path | None) -> dict[str, str]:
             meta["author"] = _extract_author(data.get("author"))
         if not meta["homepage"]:
             meta["homepage"] = _extract_homepage(data)
+        if meta["hasSettings"] is None and isinstance(data.get("hasSettings"), bool):
+            meta["hasSettings"] = data["hasSettings"]
+        if not meta["settingsEntry"] and isinstance(data.get("settingsEntry"), str):
+            meta["settingsEntry"] = data["settingsEntry"].strip()
 
     if not meta["version"]:
         ver_file = plugin_dir / "VERSION"
@@ -220,6 +226,17 @@ def build_manifest(entry: dict[str, Any], plugin_dir: Path) -> tuple[dict[str, A
             "autoAttach": bool(entry.get("autoAttach", True)),
         }
     )
+    has_settings = entry.get("hasSettings") if isinstance(entry.get("hasSettings"), bool) else dir_meta.get("hasSettings")
+    settings_entry = str(entry.get("settingsEntry") or dir_meta.get("settingsEntry") or "").strip()
+    if has_settings is not None:
+        manifest["hasSettings"] = bool(has_settings)
+    elif (plugin_dir / (settings_entry or "settings.html")).is_file():
+        manifest["hasSettings"] = True
+    if settings_entry:
+        manifest["settingsEntry"] = settings_entry
+    elif manifest.get("hasSettings") is True and (plugin_dir / "settings.html").is_file():
+        manifest["settingsEntry"] = "settings.html"
+
     if not manifest["command"]:
         raise ValueError(f"Plugin {plugin_id!r} is missing required 'command' field.")
     return manifest, discovered_version

@@ -258,6 +258,8 @@ pub fn run() {
             commands::fetch_remote_marketplace,
             commands::install_remote_plugin,
             commands::mark_marketplace_seen,
+            commands::load_plugin_settings_page,
+            commands::save_plugin_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AGY Plugin Manager");

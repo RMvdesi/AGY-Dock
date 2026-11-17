@@ -160,6 +160,10 @@ pub struct PluginConfigEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_match: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_settings: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings_entry: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
@@ -263,6 +267,10 @@ pub struct PluginRuntimeStatus {
     pub health: Option<Value>,
     pub executable_exists: bool,
     pub logs: PluginLogInfo,
+    #[serde(default)]
+    pub has_settings: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings_entry: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -368,6 +376,30 @@ pub struct PluginPayload {
     pub enabled: bool,
     #[serde(default = "default_true")]
     pub auto_attach: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_settings: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings_entry: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSettingsPageData {
+    pub plugin_id: String,
+    pub has_settings: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings_entry: Option<String>,
+    pub html: String,
+    pub settings: Value,
+    pub running: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavePluginSettingsResult {
+    pub plugin_id: String,
+    pub settings: Value,
+    pub restarted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
