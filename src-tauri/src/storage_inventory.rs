@@ -571,7 +571,8 @@ mod tests {
 
         let as_target = |path: &Path| path.display().to_string();
         let known = HashSet::from([project.clone(), nested.clone()]);
-        let snapshot = scan_project_storage_with_progress(&paths.data_dir, |_| {}).unwrap();
+        let manager_root = resolve_project_storage_root(&paths.data_dir).unwrap();
+        let snapshot = scan_project_storage_with_progress(&manager_root, |_| {}).unwrap();
         assert!(delete_project_folders(
             &paths, &snapshot, &known, &[as_target(&project), as_target(&unrelated)], false,
         ).is_err());

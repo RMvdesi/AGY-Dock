@@ -6,6 +6,23 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.5.2] - 2026-11-17 18:01
+
+### Summary
+
+- Resolve the regression test's temporary directory before scanning it. The Windows runner can report a temporary path whose capitalization differs from its canonical path.
+- Use a new release tag after the v2.5.1 workflow stopped during Rust tests.
+
+### Files Changed
+
+- `src-tauri/src/storage_inventory.rs` — canonicalize the fixture path before passing it to the scan.
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/{Cargo.toml,Cargo.lock,tauri.conf.json}`, `AGY-Launcher/server.mjs`, `AGY-Launcher/lib/process-manager.mjs`, and `CHANGELOG.md` — version synchronization and release notes.
+
+### Verification
+
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml` passed all 31 tests with `TMP` and `TEMP` set to lowercase. The previous v2.5.1 test executable reproduced the runner's failure with those settings.
+- `node --test AGY-Launcher/tests/process-manager.test.mjs` passed all 9 tests.
+
 ## [v2.5.1] - 2026-11-17 17:46
 
 ### Summary
