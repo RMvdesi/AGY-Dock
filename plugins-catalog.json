@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Plugin-Manager",
-  "updatedAt": "2026-11-17T13:39:00Z",
+  "updatedAt": "2026-11-17T14:16:00Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -48,15 +48,15 @@
     {
       "id": "agy-quota-badge",
       "name": "Antigravity Quota Badge",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "author": "HaoAn",
       "description": "在模型选择器旁显示 5 小时与周额度，悬停查看原生剩余额度和重置倒计时，支持低饱和/高饱和与自定义配色切换。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/agy-quota-badge-v1.1.0.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/agy-quota-badge-v1.1.1.zip",
       "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
-      "changelog": "新增插件自包含后台设置页面（settings.html），支持在管理器中实时预览、切换配色方案并自动热重载生效：内置 5 款原型低饱和色系（雾茶青、微醺暮蓝、燕麦素灰、薄藤灰紫、5h/周双色微区分）、5 款高饱和色系（翡翠极光、电光青蓝、星耀电紫、流金琥珀、霓虹双色）以及自定义三色混色支持。",
-      "sha256": "26311745b06d2e29c5c16735ae7af58a070f3fadf437a33a40f720b1cf3a0317",
-      "size": 34392,
+      "changelog": "优化设置页交互：点击配色方案卡片或调整自定义取色器时仅在设置页内实时预览并标记未保存状态，仅在点击「保存并立即应用」按钮后才写入配置并触发热重载生效。",
+      "sha256": "2732942fc86ea7021582dbbc07ea949a3b6ee48fa2ac040e3e772d5f3de871db",
+      "size": 34539,
       "releaseTag": "v2.4.0"
     }
   ]
