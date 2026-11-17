@@ -1,8 +1,9 @@
 use crate::config::{read_text_strip_bom, write_json_atomic};
-use crate::models::{StorageNode, StorageScanProgress};
+use crate::models::{StorageDeleteResult, StorageNode, StorageScanProgress};
 use crate::paths::ManagerPaths;
 use crate::storage::{
-    is_link_or_reparse_point, mtime_ts, resolve_project_storage_root, StorageScanSnapshot,
+    delete_project_targets, is_link_or_reparse_point, mtime_ts, resolve_project_storage_root,
+    StorageScanSnapshot,
 };
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
@@ -85,7 +86,7 @@ fn path_key(path: &Path) -> String {
     }
 }
 
-fn contains(parent: &Path, child: &Path) -> bool {
+pub(crate) fn contains(parent: &Path, child: &Path) -> bool {
     Path::new(&path_key(child)).starts_with(Path::new(&path_key(parent)))
 }
 
@@ -226,6 +227,38 @@ pub fn valid_project_root(path: &Path, snapshot: &StorageScanSnapshot) -> Result
         return Err("项目目录与 AGY 本地数据重叠".to_string());
     }
     Ok(path)
+}
+
+pub fn delete_project_folders(
+    paths: &ManagerPaths,
+    snapshot: &StorageScanSnapshot,
+    known_paths: &HashSet<PathBuf>,
+    targets: &[String],
+    recycle_bin: bool,
+) -> Result<StorageDeleteResult, String> {
+    if targets.iter().any(|target| !known_paths.contains(Path::new(target))) {
+        return Err("所选目录不在当前项目扫描结果中，请重新扫描".to_string());
+    }
+    let mut saved = load_saved_projects(paths)?;
+    let mut result = delete_project_targets(targets, recycle_bin, true, |target| {
+        if valid_project_root(target, snapshot)? != target {
+            return Err("项目目录已变更，请重新扫描".to_string());
+        }
+        if contains(target, &paths.data_dir) || contains(&paths.data_dir, target) {
+            return Err("项目目录与管理器数据目录重叠".to_string());
+        }
+        Ok(())
+    });
+    let previous_count = saved.len();
+    saved.retain(|folder| {
+        !result.deleted_paths.iter().any(|path| contains(Path::new(path), folder))
+    });
+    if saved.len() != previous_count {
+        if let Err(err) = write_json_atomic(&saved_projects_file(paths), &saved) {
+            result.warnings.push(format!("项目目录已删除，但更新手动添加的项目列表失败：{err}"));
+        }
+    }
+    Ok(result)
 }
 
 fn project_folder_usage(root: &Path, on_file: &mut impl FnMut(&Path, u64)) -> (StorageUsage, bool) {
@@ -514,6 +547,61 @@ mod tests {
     use crate::paths::RuntimeDirs;
     use crate::storage::scan_project_storage_with_progress;
     use serde_json::json;
+
+    #[test]
+    fn deletes_selected_project_folders_and_updates_saved_paths() {
+        let tmp = std::env::temp_dir().join(format!("agy-delete-projects-{}", std::process::id()));
+        let paths = ManagerPaths::from_runtime_dirs(RuntimeDirs {
+            data_dir: tmp.join("manager"),
+            assets_dir: tmp.join("manager"),
+            is_portable: true,
+        });
+        let project = tmp.join("项目");
+        let nested = project.join("nested");
+        let unrelated = tmp.join("unrelated");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir_all(&unrelated).unwrap();
+        fs::write(nested.join("main.txt"), b"1234").unwrap();
+        let project = resolve_project_storage_root(&project).unwrap();
+        let nested = resolve_project_storage_root(&nested).unwrap();
+        let unrelated = resolve_project_storage_root(&unrelated).unwrap();
+        update_saved_project(&paths, &project, true).unwrap();
+        update_saved_project(&paths, &nested, true).unwrap();
+        update_saved_project(&paths, &unrelated, true).unwrap();
+
+        let as_target = |path: &Path| path.display().to_string();
+        let known = HashSet::from([project.clone(), nested.clone()]);
+        let snapshot = scan_project_storage_with_progress(&paths.data_dir, |_| {}).unwrap();
+        assert!(delete_project_folders(
+            &paths, &snapshot, &known, &[as_target(&project), as_target(&unrelated)], false,
+        ).is_err());
+        assert!(project.is_dir());
+
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd.exe")
+                .args(["/c", "mklink", "/J"])
+                .arg(project.join("external-link"))
+                .arg(&unrelated)
+                .output()
+                .unwrap();
+            assert!(status.status.success(), "{status:?}");
+            fs::write(unrelated.join("keep.txt"), b"keep").unwrap();
+        }
+
+        let result = delete_project_folders(
+            &paths, &snapshot, &known, &[as_target(&nested), as_target(&project)], false,
+        ).unwrap();
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert_eq!(result.deleted_paths, [as_target(&project)]);
+        assert_eq!(result.freed_bytes, 4);
+        assert!(!project.exists());
+        assert_eq!(load_saved_projects(&paths).unwrap(), [unrelated.clone()]);
+        assert!(unrelated.is_dir());
+        #[cfg(windows)]
+        assert!(unrelated.join("keep.txt").is_file());
+        fs::remove_dir_all(&tmp).unwrap();
+    }
 
     #[test]
     fn inventory_reports_registered_workspaces_and_saved_projects_without_double_counting() {

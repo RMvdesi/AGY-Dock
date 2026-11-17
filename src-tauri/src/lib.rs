@@ -253,6 +253,7 @@ pub fn run() {
             commands::delete_storage_session_files,
             commands::delete_storage_sessions,
             commands::delete_storage_items,
+            commands::delete_storage_projects,
             commands::is_antigravity_running_for_storage,
             commands::fetch_remote_marketplace,
             commands::install_remote_plugin,

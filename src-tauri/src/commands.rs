@@ -603,6 +603,29 @@ pub async fn remove_storage_project(state: State<'_, AppState>, project_path: St
     Ok(())
 }
 
+#[tauri::command]
+pub async fn delete_storage_projects(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    targets: Vec<String>,
+    recycle_bin: bool,
+) -> Result<StorageDeleteResult, String> {
+    let mut projects = state.project_storage.lock().await;
+    let snapshot = storage_snapshot(&app, &state, false).await?;
+    let paths = state.paths.clone();
+    let known_paths = projects.paths.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        storage_inventory::delete_project_folders(&paths, &snapshot, &known_paths, &targets, recycle_bin)
+    })
+    .await
+    .map_err(|err| format!("删除项目目录失败：{err}"))??;
+    projects.snapshot = None;
+    projects.paths.retain(|root| {
+        !result.deleted_paths.iter().any(|path| storage_inventory::contains(Path::new(path), root))
+    });
+    Ok(result)
+}
+
 async fn project_storage_tree(
     app: &AppHandle,
     state: &AppState,

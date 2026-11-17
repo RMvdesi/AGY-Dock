@@ -6,6 +6,27 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.5.1] - 2026-11-17 17:46
+
+### Summary
+
+- Use native square checkboxes for storage list selection and show partial selection in the table header.
+- Allow single and batch deletion of scanned project folders. Show the full paths and default to the Windows Recycle Bin. Refresh the project inventory and remove saved entries for deleted folders.
+
+### Files Changed
+
+- `src/pages/StoragePage.tsx`, `src/lib/storage.ts`, and `src/components/StorageDeleteModal.tsx` — project deletion actions, checkbox states, and path confirmation.
+- `src/lib/ipc.ts`, `src/types/ipc.ts`, and `src-tauri/src/{lib,commands,storage,storage_inventory}.rs` — project-folder deletion, scan validation, saved-folder updates, and regression coverage.
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/{Cargo.toml,Cargo.lock,tauri.conf.json}`, `AGY-Launcher/server.mjs`, `AGY-Launcher/lib/process-manager.mjs`, and `CHANGELOG.md` — version synchronization and release notes.
+
+### Verification
+
+- `npm run build` passed TypeScript and Vite production compilation.
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml` passed 31 tests, including rejecting an unscanned path, deleting overlapping selections once, preserving a junction's external target, and updating saved paths.
+- `node --test AGY-Launcher/tests/process-manager.test.mjs` passed 9 tests. `npm run tauri -- build --no-bundle` built the v2.5.1 Windows executable.
+- `cua-driver call get_window_state` and `cua-driver call run_steps` verified the checkbox layout, partial and full selection, path confirmation, cancel, and batch deletion in the Windows client. The two selected temporary folders appeared in the Recycle Bin, and the unselected folder and its saved entry were preserved.
+- Updated and reopened the installed client in the project-files list. The installed executable SHA-256 matches the build, and the existing configuration SHA-256 matches its pre-update value.
+
 ## [v2.5.0] - 2026-11-16 00:22
 
 ### Summary

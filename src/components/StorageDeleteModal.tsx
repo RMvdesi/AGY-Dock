@@ -10,7 +10,7 @@ export interface StorageDeleteDialogState {
   targetsPreview: string[];
   hasProtected: boolean;
   antigravityRunning: boolean;
-  mode: "session_files" | "session" | "items";
+  mode: "session_files" | "session" | "items" | "projects";
   sessionIds?: string[];
   targets?: string[];
   projectPath?: string | null;
@@ -140,7 +140,7 @@ export function StorageDeleteModal({
                 </div>
                 <div className="max-h-[144px] space-y-0.5 overflow-y-auto px-3 py-2 font-mono-code text-[11.5px] leading-relaxed text-[var(--text-muted)]">
                   {state.targetsPreview.slice(0, 30).map((item, idx) => (
-                    <div key={`${item}-${idx}`} className="truncate">
+                    <div key={`${item}-${idx}`} className="wrap-anywhere">
                       • {item}
                     </div>
                   ))}

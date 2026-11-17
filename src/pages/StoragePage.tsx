@@ -47,6 +47,7 @@ interface StoragePageProps {
 }
 
 type StorageSource = "local" | "projects";
+const LIST_CHECKBOX_CLASS = "size-4 shrink-0 cursor-pointer accent-[var(--accent)] disabled:cursor-not-allowed";
 
 const KIND_LABELS: Record<string, string> = {
   root: "根目录",
@@ -615,7 +616,8 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
     const seen = new Set<string>();
     let totalBytes = 0;
     let hasProt = false;
-    for (const n of nodes) {
+    const deletable = nodes.filter((node) => node.deleteTargets.length > 0);
+    for (const n of deletable) {
       totalBytes += n.sizeBytes;
       if (n.protected) hasProt = true;
       for (const t of n.deleteTargets) {
@@ -629,14 +631,18 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
       onToast("所选条目没有可直接删除的磁盘路径", "warn");
       return;
     }
-    const projectPath = activeProject?.path ?? nodes[0]?.projectRootPath ?? null;
+    const deletingProjects = deletable.every((node) => node.kind === "project");
+    const projectPath = activeProject?.path ?? deletable[0].projectRootPath ?? null;
     if (isProjectSource && !projectPath) return;
     const agyRunning = !isProjectSource && await ipc.isAntigravityRunningForStorage().catch(() => false);
     setDeleteDialog({
       open: true,
-      mode: "items",
-      title: nodes.length === 1 ? `清理 ${nodes[0].name}` : `批量清理 ${nodes.length} 个条目`,
-      summaryText: `共涉及 ${targets.length} 个磁盘路径（约 ${formatBytes(totalBytes)}）。`,
+      mode: deletingProjects ? "projects" : "items",
+      title: deletingProjects ? `删除 ${targets.length} 个项目目录` :
+        deletable.length === 1 ? `清理 ${deletable[0].name}` : `批量清理 ${deletable.length} 个条目`,
+      summaryText: deletingProjects
+        ? "将删除以下项目目录及其中的全部文件和子目录。"
+        : `共涉及 ${targets.length} 个磁盘路径（约 ${formatBytes(totalBytes)}）。`,
       targetsPreview: targets,
       hasProtected: hasProt,
       antigravityRunning: agyRunning,
@@ -647,6 +653,7 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
 
   const handleConfirmDelete = async (recycleBin: boolean) => {
     if (!deleteDialog) return;
+    const deletingProjects = deleteDialog.mode === "projects";
     setDeleteDialog((prev) => (prev ? { ...prev, busy: true } : null));
     try {
       let res: StorageDeleteResult;
@@ -654,6 +661,8 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
         res = await ipc.deleteStorageSessionFiles(deleteDialog.sessionIds ?? [], recycleBin);
       } else if (deleteDialog.mode === "session") {
         res = await ipc.deleteStorageSessions(deleteDialog.sessionIds ?? [], recycleBin);
+      } else if (deletingProjects) {
+        res = await ipc.deleteStorageProjects(deleteDialog.targets ?? [], recycleBin);
       } else {
         res = await ipc.deleteStorageItems(deleteDialog.targets ?? [], recycleBin, deleteDialog.projectPath);
       }
@@ -661,8 +670,12 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
 
       const freed = formatBytes(res.freedBytes);
       const cnt = res.deletedCount || res.deletedPaths.length;
+      const modeLabel = res.permanent ? "已彻底删除" : "已移入回收站";
+      const projectSummary = `${modeLabel} ${cnt} 个项目目录`;
       if (res.lockedPaths.length > 0 || res.warnings.length > 0) {
-        if (cnt > 0) {
+        if (cnt > 0 && deletingProjects) {
+          onToast(projectSummary, "warn");
+        } else if (cnt > 0) {
           onToast(
             `部分清理：释放 ${freed}，${res.lockedPaths.length || res.warnings.length} 项未清理`,
             "warn",
@@ -674,7 +687,7 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
         const preview = items.slice(0, 6).map((w) => `• ${w}`).join("\n");
         const more = items.length > 6 ? `\n... 以及其余 ${items.length - 6} 项` : "";
         setNoticeModal({
-          title: isProjectSource ? "有项目条目未清理" : "部分文件正被程序占用",
+          title: deletingProjects ? "项目目录删除结果" : isProjectSource ? "有项目条目未清理" : "部分文件正被程序占用",
           body: isProjectSource ? preview + more :
             "以下文件正被运行中的 Antigravity 或其他程序占用，暂时无法删除；其余未占用文件已完成清理。\n\n" +
             "如需彻底删除这些会话并同步更新 Antigravity 对话列表，请先退出 Antigravity 后重试：\n" +
@@ -682,21 +695,29 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
             more,
         });
       } else {
-        const modeLabel = res.permanent ? "已彻底删除" : "已移入回收站";
         let extra = "";
         if (res.mode === "session" && res.antigravityRunning) {
           extra = "（AGY 运行中未同步列表；关闭后可点「清理失效记录」）";
         } else if (res.mode === "session" && (res.dbCleaned || res.protoCleaned)) {
           extra = " · 已同步 Antigravity 对话列表";
         }
-        onToast(`${modeLabel} ${cnt} 项 · 释放 ${freed}${extra}`, "ok");
+        onToast(deletingProjects ? projectSummary : `${modeLabel} ${cnt} 项 · 释放 ${freed}${extra}`, "ok");
       }
 
       setCheckedIds(new Set());
       setLastCheckedIdx(null);
       setSelectedId("");
       if (isProjectSource) inventoryDirty.current = true;
-      await runFullScan({ rescan: !isProjectSource || Boolean(activeProject) });
+      if (deletingProjects && activeProject && res.deletedPaths.includes(activeProject.path)) {
+        setActiveProject(null);
+        setProjectSnapshot(null);
+        setPathIds([]);
+        setQuery("");
+        setHoveredNode(null);
+        await runFullScan({ project: null, search: "", rescan: false });
+      } else {
+        await runFullScan({ rescan: !isProjectSource || Boolean(activeProject) });
+      }
     } catch (err) {
       setDeleteDialog(null);
       onToast(`清理失败：${formatErrorMessage(err)}`, "error");
@@ -838,7 +859,8 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
     ) {
       actions.push({
         key: "delete-item",
-        label: inspectorNode.kind === "file" ? "删除此文件" : "清理此项",
+        label: inspectorNode.kind === "project" ? "删除项目目录" :
+          inspectorNode.kind === "file" ? "删除此文件" : "清理此项",
         icon: <Trash2 className="h-3.5 w-3.5 shrink-0" />,
         variant: "danger",
         onClick: () => openDeleteItemsDialog([inspectorNode]),
@@ -1409,14 +1431,17 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
             >
               {/* Table Header */}
               <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border-hairline)] bg-[var(--bg-subtle)]/70 px-4 py-2.5 text-[11.5px] font-semibold text-[var(--text-muted)]">
-                <SpringSwitch
-                  role="checkbox"
-                  compact
-                  ariaLabel="全选当前列表"
+                <input
+                  type="checkbox"
+                  aria-label="全选当前列表"
+                  className={LIST_CHECKBOX_CLASS}
+                  ref={(input) => {
+                    if (input) input.indeterminate = !allListChecked && selectedListNodes.length > 0;
+                  }}
                   checked={allListChecked}
                   disabled={listItems.length === 0}
-                  onChange={(checked) => {
-                    if (checked) {
+                  onChange={(event) => {
+                    if (event.currentTarget.checked) {
                       setCheckedIds(new Set(listItems.map((i) => i.nodeId)));
                     } else {
                       setCheckedIds(new Set());
@@ -1463,12 +1488,13 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
                           isChecked ? "bg-[var(--accent-soft)]/55" : ""
                         }`}
                       >
-                        <SpringSwitch
-                          role="checkbox"
-                          compact
-                          ariaLabel={`选择 ${node.name}`}
+                        <input
+                          type="checkbox"
+                          aria-label={`选择 ${node.name}`}
+                          className={LIST_CHECKBOX_CLASS}
                           checked={isChecked}
-                          onChange={(checked, event) => handleRowCheck(node.nodeId, idx, checked, event.shiftKey)}
+                          onChange={(event) => handleRowCheck(node.nodeId, idx, event.currentTarget.checked,
+                            event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey)}
                         />
 
                         {/* Name + Badges */}
@@ -1556,7 +1582,7 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
                                 onClick={() => openDeleteItemsDialog([node])}
                                 className="inline-flex h-7 cursor-pointer items-center justify-center rounded-lg border border-[var(--danger)]/35 bg-[var(--danger-bg)] px-2 text-[11px] font-medium whitespace-nowrap text-[var(--danger)] transition-all hover:brightness-95"
                               >
-                                清理
+                                {node.kind === "project" ? "删除" : "清理"}
                               </button>
                             )
                           )}
@@ -1662,7 +1688,7 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
                           className="agy-btn-danger h-8 px-3 text-[12px]"
                         >
                           <Trash2 className="h-3.5 w-3.5 shrink-0" />
-                          <span>清理所选条目</span>
+                          <span>{isProjectSource && !activeProject ? "删除所选项目" : "清理所选条目"}</span>
                         </button>
                       )}
                     </div>
@@ -1741,7 +1767,8 @@ export function StoragePage({ isDark, scanProgress, onScanStart, onToast }: Stor
                     className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[12px] text-[var(--danger)] hover:bg-[var(--danger-bg)]"
                   >
                     <Trash2 className="h-3.5 w-3.5 shrink-0" />
-                    <span>{contextMenu.node.kind === "file" ? "删除此文件" : "清理此项"}</span>
+                    <span>{contextMenu.node.kind === "project" ? "删除项目目录" :
+                      contextMenu.node.kind === "file" ? "删除此文件" : "清理此项"}</span>
                   </button>
                 )}
 

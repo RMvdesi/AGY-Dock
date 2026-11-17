@@ -457,6 +457,7 @@ export const TAURI_COMMANDS = {
   GET_STORAGE_INVENTORY: "get_storage_inventory",
   PICK_STORAGE_PROJECT: "pick_storage_project",
   REMOVE_STORAGE_PROJECT: "remove_storage_project",
+  DELETE_STORAGE_PROJECTS: "delete_storage_projects",
   SCAN_AGY_STORAGE: "scan_agy_storage",
   GET_STORAGE_TREE: "get_storage_tree",
   CLEAN_ORPHAN_STORAGE_SUMMARIES: "clean_orphan_storage_summaries",

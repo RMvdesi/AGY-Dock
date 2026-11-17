@@ -2786,12 +2786,15 @@ pub fn delete_storage_items(
     res
 }
 
-fn measure_project_target(target: &Path) -> Result<u64, String> {
+fn measure_project_target(target: &Path, allow_nested_links: bool) -> Result<u64, String> {
     let mut bytes = 0_u64;
     let mut pending = vec![target.to_path_buf()];
     while let Some(path) = pending.pop() {
         let meta = fs::symlink_metadata(&path).map_err(|err| format!("{}：{err}", path.display()))?;
         if is_link_or_reparse_point(&meta) {
+            if allow_nested_links && path != target {
+                continue;
+            }
             return Err(format!("包含链接或目录联接点，已跳过：{}", path.display()));
         }
         if meta.is_dir() {
@@ -2864,12 +2867,28 @@ pub fn delete_project_storage_items(
     let scanned_paths: HashSet<&Path> = snapshot.files.iter().map(|file| file.path.as_path())
         .chain(snapshot.project_dirs.iter().map(|(dir, _)| dir.as_path()))
         .collect();
+    if targets.iter().any(|path| !scanned_paths.contains(Path::new(path))) {
+        return Err("所选路径不属于当前项目扫描结果，请重新扫描".to_string());
+    }
+
+    Ok(delete_project_targets(targets, recycle_bin, false, |path| {
+        let canonical = clean_win_path(&fs::canonicalize(path).map_err(|err| err.to_string())?);
+        if canonical != path || !canonical.starts_with(&root.path) || canonical == root.path {
+            return Err("路径已变更或超出项目目录".to_string());
+        }
+        Ok(())
+    }))
+}
+
+pub(crate) fn delete_project_targets(
+    targets: &[String],
+    recycle_bin: bool,
+    whole_projects: bool,
+    validate: impl Fn(&Path) -> Result<(), String>,
+) -> StorageDeleteResult {
     let mut paths: Vec<&Path> = targets.iter().map(Path::new).collect();
     paths.sort_unstable();
     paths.dedup();
-    if paths.iter().any(|path| !scanned_paths.contains(path)) {
-        return Err("所选路径不属于当前项目扫描结果，请重新扫描".to_string());
-    }
 
     let mut result = StorageDeleteResult {
         permanent: !recycle_bin,
@@ -2883,15 +2902,12 @@ pub fn delete_project_storage_items(
             continue;
         }
         let item = (|| {
-            let canonical = clean_win_path(&fs::canonicalize(path).map_err(|err| err.to_string())?);
-            if canonical != path || !canonical.starts_with(&root.path) || canonical == root.path {
-                return Err("路径已变更或超出项目目录".to_string());
-            }
-            let bytes = measure_project_target(&canonical)?;
+            validate(path)?;
+            let bytes = measure_project_target(path, whole_projects)?;
             if recycle_bin {
-                recycle_project_target(&canonical)?;
+                recycle_project_target(path)?;
             } else {
-                remove_single_path(&canonical, true)?;
+                remove_single_path(path, true)?;
             }
             if fs::symlink_metadata(path).is_ok() {
                 return Err("文件仍在原位置".to_string());
@@ -2911,7 +2927,7 @@ pub fn delete_project_storage_items(
         }
     }
     result.deleted_count = result.deleted_paths.len();
-    Ok(result)
+    result
 }
 
 pub fn clean_orphan_summaries(snapshot: &StorageScanSnapshot) -> StorageDeleteResult {

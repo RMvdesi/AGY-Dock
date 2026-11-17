@@ -159,6 +159,9 @@ export const ipc = {
   removeStorageProject: (projectPath: string) =>
     callCommand<void>(TAURI_COMMANDS.REMOVE_STORAGE_PROJECT, { projectPath }),
 
+  deleteStorageProjects: (targets: string[], recycleBin: boolean) =>
+    callCommand<StorageDeleteResult>(TAURI_COMMANDS.DELETE_STORAGE_PROJECTS, { targets, recycleBin }),
+
   scanAgyStorage: (viewMode: StorageViewMode, includeAppdata: boolean, query?: string, projectPath?: string | null) =>
     callCommand<StorageTreeResponse>(TAURI_COMMANDS.SCAN_AGY_STORAGE, {
       viewMode,
