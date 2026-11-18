@@ -307,10 +307,23 @@ fn acquire_launch_lock(paths: &ManagerPaths) -> Option<LaunchLockGuard> {
     None
 }
 
+fn has_remote_debugging_port_arg(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        let trimmed = arg.trim().to_ascii_lowercase();
+        trimmed == "--remote-debugging-port"
+            || trimmed.starts_with("--remote-debugging-port=")
+            || trimmed == "-remote-debugging-port"
+            || trimmed.starts_with("-remote-debugging-port=")
+    })
+}
+
 pub fn build_antigravity_launch_params(
     config: &AppConfig,
 ) -> (Vec<String>, HashMap<String, String>, bool) {
     let mut agy_args = config.antigravity_args.clone();
+    if !has_remote_debugging_port_arg(&agy_args) {
+        agy_args.push("--remote-debugging-port=0".to_string());
+    }
     let mut env: HashMap<String, String> = std::env::vars().collect();
     if !config.proxy.enabled {
         return (agy_args, env, false);
@@ -1210,6 +1223,10 @@ pub async fn launch_antigravity_and_attach(
             if let Some(port) = rcdp.port {
                 paths.log_info(&format!("Antigravity CDP 已就绪: 127.0.0.1:{port}"));
             }
+        } else if initial_cdp.main_process_count > 0 {
+            paths.log_warn(&format!(
+                "等待 Antigravity CDP 端口就绪超时 ({timeout_sec}s)：检测到 Antigravity 主程序已在运行但未开启远程调试端口，请完全退出 Antigravity 后通过管理器重新启动"
+            ));
         } else {
             paths.log_warn(&format!("等待 Antigravity CDP 端口就绪超时 ({timeout_sec}s)"));
         }
@@ -1345,5 +1362,54 @@ pub fn run_watch_exit(paths: &ManagerPaths, after_gui_exit: bool) -> i32 {
                 return 0;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_launch_params_injects_remote_debugging_port_by_default() {
+        let cfg = AppConfig {
+            antigravity_args: vec!["--host-resolver-rules=MAP play.googleapis.com 127.0.0.1".to_string()],
+            ..AppConfig::default()
+        };
+        let (args, _, proxy_injected) = build_antigravity_launch_params(&cfg);
+        assert!(!proxy_injected);
+        assert_eq!(
+            args,
+            vec![
+                "--host-resolver-rules=MAP play.googleapis.com 127.0.0.1".to_string(),
+                "--remote-debugging-port=0".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_launch_params_respects_existing_remote_debugging_port() {
+        let mut cfg = AppConfig {
+            antigravity_args: vec!["--remote-debugging-port=9333".to_string()],
+            ..AppConfig::default()
+        };
+        let (args, _, _) = build_antigravity_launch_params(&cfg);
+        assert_eq!(args, vec!["--remote-debugging-port=9333".to_string()]);
+
+        cfg.antigravity_args = vec![
+            "--remote-debugging-port".to_string(),
+            "9444".to_string(),
+        ];
+        cfg.proxy.enabled = true;
+        cfg.proxy.electron_proxy_server = "http://127.0.0.1:7890".to_string();
+        let (args_split, _, proxy_injected) = build_antigravity_launch_params(&cfg);
+        assert!(proxy_injected);
+        assert_eq!(
+            args_split,
+            vec![
+                "--remote-debugging-port".to_string(),
+                "9444".to_string(),
+                "--proxy-server=http://127.0.0.1:7890".to_string(),
+            ]
+        );
     }
 }

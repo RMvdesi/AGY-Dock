@@ -24,7 +24,7 @@ const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_BASE_DIR = path.resolve(__dirname, '..');
 export const DEFAULT_NO_PROXY = '127.0.0.1,localhost,::1';
-export const APP_VERSION = '2.6.0';
+export const APP_VERSION = '2.6.1';
 export const DEFAULT_UPDATE_SITE_URL = 'https://www.haoanlab.xyz';
 export const DEFAULT_PRODUCT_SLUG = 'agy-plugin-manager';
 const UPDATE_SEMVER_RE = /^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$/;
@@ -48,6 +48,18 @@ const SOCKS_ONLY_PORTS = new Set([1080, 2080, 7891, 10808]);
 const MIXED_PROXY_PORTS = new Set([7897, 7890]);
 const ANTIGRAVITY_INSTALLER_SKIP_RE = /(?:agy-launcher|plugin[\s_-]*manager)/i;
 
+function hasRemoteDebuggingPortArg(args) {
+  return args.some((arg) => {
+    const trimmed = String(arg || '').trim().toLowerCase();
+    return (
+      trimmed === '--remote-debugging-port' ||
+      trimmed.startsWith('--remote-debugging-port=') ||
+      trimmed === '-remote-debugging-port' ||
+      trimmed.startsWith('-remote-debugging-port=')
+    );
+  });
+}
+
 /**
  * Builds Antigravity CLI args and environment variables with optional on-demand proxy injection.
  */
@@ -55,6 +67,9 @@ export function buildAntigravityLaunchParams(config, baseEnv = process.env) {
   const agyArgs = Array.isArray(config?.antigravityArgs)
     ? config.antigravityArgs.map((x) => String(x))
     : [];
+  if (!hasRemoteDebuggingPortArg(agyArgs)) {
+    agyArgs.push('--remote-debugging-port=0');
+  }
   const env = { ...baseEnv };
   const proxy = config?.proxy || {};
   if (!proxy.enabled) {

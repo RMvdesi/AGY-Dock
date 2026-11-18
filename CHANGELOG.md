@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.6.1] - 2026-11-18
+
+- 启动 Antigravity 时自动注入 `--remote-debugging-port=0`（若用户已在自定义参数中指定 `--remote-debugging-port` 则保持原配置），适配新版 Antigravity 默认关闭 CDP 端口的变更，确保 `DevToolsActivePort` 正常生成、外部插件可正常附着。
+- 当检测到 Antigravity 主程序已在运行但未开启远程调试端口导致等待 CDP 超时时，在日志中给出更明确的重启提示。
+
 ## [2.6.0] - 2026-11-17
 
 - 「我的插件」列表操作按钮统一改为「管理」，进入管理页后移除右上角「编辑配置」按钮。

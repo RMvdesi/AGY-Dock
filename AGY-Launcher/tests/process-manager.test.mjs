@@ -283,11 +283,21 @@ test('AgyProcessManager supports CRUD on plugins, proxy, logs, and native invent
       { PATH: 'C:\\Windows' }
     );
     assert.equal(launchOn.proxyInjected, true);
-    assert.deepEqual(launchOn.agyArgs, ['--foo', '--proxy-server=http=127.0.0.1:8888']);
+    assert.deepEqual(launchOn.agyArgs, ['--foo', '--remote-debugging-port=0', '--proxy-server=http=127.0.0.1:8888']);
     assert.equal(launchOn.env.HTTPS_PROXY, 'http://127.0.0.1:8888');
     assert.equal(launchOn.env.https_proxy, 'http://127.0.0.1:8888');
     assert.equal(launchOn.env.NO_PROXY, DEFAULT_NO_PROXY);
     assert.equal(launchOn.env.no_proxy, DEFAULT_NO_PROXY);
+
+    const launchCustomPort = buildAntigravityLaunchParams(
+      {
+        antigravityArgs: ['--remote-debugging-port=9333'],
+        proxy: { enabled: false },
+      },
+      { PATH: 'C:\\Windows' }
+    );
+    assert.equal(launchCustomPort.proxyInjected, false);
+    assert.deepEqual(launchCustomPort.agyArgs, ['--remote-debugging-port=9333']);
 
     const lc = manager.saveLifecycleConfig({ autoCleanupOnExit: true, stopPluginsOnExit: false });
     assert.deepEqual(lc, { autoCleanupOnExit: true, stopPluginsOnExit: false });

@@ -6,6 +6,27 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.6.1] - 2026-11-18 14:17
+
+### Summary
+
+- Automatically inject `--remote-debugging-port=0` when launching `Antigravity.exe` unless the user has already configured a `--remote-debugging-port` argument in `antigravityArgs`, restoring `DevToolsActivePort` creation and plugin CDP attachment on Antigravity `v2.33.0+` where remote debugging became opt-in.
+- Clarify the CDP wait timeout log when `Antigravity.exe` main processes are already running without remote debugging enabled so users know to fully exit and relaunch Antigravity via the manager.
+- Synchronize `v2.6.1` across Tauri/Node version files and hot-update the local installation (`D:\AGY Plugin Manager\AGY Plugin Manager.exe`).
+
+### Files Changed
+
+- `src-tauri/src/supervisor.rs` — add `has_remote_debugging_port_arg`, default `--remote-debugging-port=0` injection in `build_antigravity_launch_params`, clearer timeout hint in `launch_antigravity_and_attach`, and 2 unit tests (`build_launch_params_injects_remote_debugging_port_by_default`, `build_launch_params_respects_existing_remote_debugging_port`).
+- `AGY-Launcher/lib/process-manager.mjs` and `AGY-Launcher/tests/process-manager.test.mjs` — mirror `--remote-debugging-port=0` injection parity in `buildAntigravityLaunchParams` and update/add Node test coverage.
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/{Cargo.toml,Cargo.lock,tauri.conf.json}`, `AGY-Launcher/server.mjs`, `CHANGELOG.md`, and `AGY-Launcher/MAINTENANCE_LOG.md` — bump version to `2.6.1` and record changelog/maintenance entry.
+
+### Verification
+
+- `npm run build` -> passed `tsc --noEmit` and `vite build` (`dist/assets/index-o_fviYdr.js`).
+- `cargo test --manifest-path src-tauri/Cargo.toml` -> 34 passed, 0 failed (including `supervisor::tests::build_launch_params_injects_remote_debugging_port_by_default` and `supervisor::tests::build_launch_params_respects_existing_remote_debugging_port`).
+- `node --test AGY-Launcher/tests/process-manager.test.mjs` -> 9 passed, 0 failed.
+- `npm run build:local` -> built `src-tauri/target/release/AGY Plugin Manager.exe` and hot-updated `D:\AGY Plugin Manager\AGY Plugin Manager.exe` (`7.91 MB`) while preserving user `plugins.json` and `plugins/`.
+
 ## [v2.6.0] - 2026-11-17 21:10
 
 ### Summary
