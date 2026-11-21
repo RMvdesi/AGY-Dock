@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Dock",
-  "updatedAt": "2026-11-21T11:05:58Z",
+  "updatedAt": "2026-11-21T11:16:33Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -20,15 +20,15 @@
     {
       "id": "antigravity-hans",
       "name": "Antigravity Hans (动态汉化)",
-      "version": "0.7.0",
+      "version": "0.7.2",
       "author": "HaoAn",
-      "description": "纯 Node.js CDP 动态注入引擎，实时汉化 Antigravity 界面、Agent 面板与 Swarm 看板，并支持保留 Google Sans 西文的中文字体设置（无任何 .exe 二进制，零杀软误报）。",
+      "description": "纯 Node.js CDP 动态注入引擎，实时汉化 Antigravity 界面、Agent 面板与 Swarm 看板，并支持保留 Google Sans 西文的中文字体与字重设置（无任何 .exe 二进制，零杀软误报）。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.0.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.2.zip",
       "homepage": "https://github.com/haoan33/AGY-Dock",
-      "changelog": "新增插件自包含字体设置页（settings.html）：默认开启保留 Google Sans 西文的中文字体优化，优先适配 HarmonyOS Sans SC（支持实时检测本机安装状态与华为官方免费下载引导），同时支持自动探测本机常见中文字体、扫描系统全部字体（queryLocalFonts）、自定义字体名输入与深/浅色混排实时预览（严格保护代码编辑器与图标字体不被替换）。",
-      "sha256": "56bb6b3acd7a51b4507c41dc0b7b4c75198d1d93e51438df6422c563d9539d5f",
-      "size": 155055,
+      "changelog": "新增正文字重（粗细）调节功能：针对多字重黑体默认 400 偏细问题，默认采用 500（适中推荐），支持在设置页一键切换跟随默认 / 400 / 500 / 600 / 700 或 300-700 微调滑块，并自动保持标题与加粗文本更高一档层级（同时修复未安装鸿蒙黑体时仍误显示在本机已有字体列表中的问题）。",
+      "sha256": "5fda8462805ae1a4fc33d68d68a407bbb46081a182262cb21a2da2f58c107882",
+      "size": 157169,
       "releaseTag": "v2.4.0"
     },
     {
