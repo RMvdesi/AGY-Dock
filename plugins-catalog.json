@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Dock",
-  "updatedAt": "2026-11-21T14:35:53Z",
+  "updatedAt": "2026-11-21T14:51:58Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -34,15 +34,15 @@
     {
       "id": "agy-telemetry",
       "name": "Antigravity Telemetry (会话与上下文监控)",
-      "version": "1.3.4",
+      "version": "1.3.5",
       "author": "HaoAn",
       "description": "在对话右上角极简显示输出速度、缓存命中率与上下文占比，悬停展示完整统计与响应模型。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/agy-telemetry-v1.3.4.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/agy-telemetry-v1.3.5.zip",
       "homepage": "https://github.com/haoan33/AGY-Dock",
-      "changelog": "修复长对话 Token 用量总额偏小的问题：由于宿主仅下发最近约 50 步 stepsInSlice，现优先读取宿主后端全量汇总 state.costSummary.total.cumulativeTotal（兼容 BigInt），并增加跨滑窗步骤用量缓存作为兜底。",
-      "sha256": "6d0e5e1223a86b5136d4c418925f6942c5c16d35192e93f46f41341be1ae3d39",
-      "size": 29042,
+      "changelog": "新增全量历史轨迹主动补齐：当检测到界面仅加载最近部分消息时，自动调用宿主内置接口拉取从第 0 步起的全部历史步骤与模型配置，彻底解决长对话重启后 Token 总额偏小及早期模型遗漏问题。",
+      "sha256": "42774224bd3ce15931e20ab43fa7c30d9fa7e17877772d358696738fd6fbb41b",
+      "size": 29859,
       "releaseTag": "v2.4.0"
     },
     {
