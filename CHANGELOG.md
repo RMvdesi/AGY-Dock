@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.8.0] - 2026-11-21
+## [2.8.1] - 2026-11-21
 
 - **品牌升级更名为 AGY Dock**：
   - 应用与仓库正式更名为 **AGY Dock**（`haoan33/AGY-Dock`），支持从旧版 *AGY Plugin Manager* 原位无损覆盖升级（保留原有 `%LOCALAPPDATA%\AGY-Plugin-Manager` 数据目录、插件配置与自动更新通道，并自动迁移旧版快捷方式与遗留程序文件）。

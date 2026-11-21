@@ -6,6 +6,30 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.8.1] - 2026-11-21 17:17
+
+### Summary
+
+- Fix Windows 11 native titlebar small icon remaining visible after the `v2.8.0` rebrand (`src-tauri/src/tray.rs`):
+  - Preserve `ICON_BIG` (Taskbar and Alt+Tab icon) via `WM_GETICON` / `GCLP_HICON` and assign a cached 16×16 all-transparent monochrome `HICON` (`CreateIcon` with all-1 AND mask / all-0 XOR mask) to `WM_SETICON(ICON_SMALL)` alongside `SetWindowThemeAttribute` and `SWP_FRAMECHANGED`.
+- Fix NSIS in-place upgrade from legacy *AGY Plugin Manager* installations (`src-tauri/nsis/hooks.nsh`):
+  - Wrap `MUI_PAGE_WELCOME` (`AgyPreWelcome` → `AgyDetectLegacyInstall`) and `MUI_PAGE_DIRECTORY` (`AgyLeaveDirectory` → `AgyCollapseNestedLegacyInstallDir`), and call both plus `SetOutPath $INSTDIR` inside `NSIS_HOOK_PREINSTALL` so passive/silent/interactive upgrades adopt existing `AGY Plugin Manager` paths without nesting `\AGY Dock`.
+  - Clean up legacy binaries, `Uninstall\AGY Plugin Manager` / `Software\ahmustudyhelper\AGY Plugin Manager` / Run registry entries, Start Menu shortcuts, and Desktop / `Antigravity (AGY-Launcher).lnk` shortcuts while preserving user `plugins.json`, `plugins/`, and `logs/`.
+- Bump synchronized version manifests to `2.8.1` (`VERSION`, `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `AGY-Launcher/server.mjs`, `AGY-Launcher/lib/process-manager.mjs`, and `CHANGELOG.md` heading without altering `v2.8.0` release notes prose).
+
+### Files Changed
+
+- `src-tauri/src/tray.rs` — add `transparent_small_icon()` and preserve `ICON_BIG` while masking `ICON_SMALL` in `hide_native_titlebar_caption_and_icon()`.
+- `src-tauri/nsis/hooks.nsh` — add legacy *AGY Plugin Manager* install path detection, nested `\AGY Dock` collapse guard, registry/binary cleanup, and unconditional shortcut repair/cleanup.
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/{Cargo.toml,Cargo.lock,tauri.conf.json}`, `AGY-Launcher/{server.mjs,lib/process-manager.mjs,MAINTENANCE_LOG.md}`, `CHANGELOG.md` — bump version to `2.8.1` (retaining `CHANGELOG.md` body content per user request).
+
+### Verification
+
+- `npm run build` (`tsc --noEmit && vite build`) -> passed (`dist/assets/index-DKDhWkmy.js`).
+- `cargo test --manifest-path src-tauri/Cargo.toml` -> 52 passed, 0 failed (refreshed `src-tauri/Cargo.lock` to `agy-dock 2.8.1`).
+- `node --test AGY-Launcher/tests/process-manager.test.mjs` -> 10 passed, 0 failed.
+- Prior to the `2.8.1` version-string bump (same `tray.rs` & `hooks.nsh` code): verified `npm run tauri -- build --bundles nsis` (`0` errors), `makensis /V3` (`0` hook warnings), and live Win11 `PrintWindow` capture confirming the top-left titlebar icon & caption are completely hidden while `ICON_BIG` (`0x992829`) and `— □ ×` remain intact.
+
 ## [v2.8.0] - 2026-11-21 16:41
 
 ### Summary

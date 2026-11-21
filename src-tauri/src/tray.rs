@@ -32,14 +32,46 @@ extern "system" {
 }
 
 #[cfg(windows)]
+fn transparent_small_icon() -> isize {
+    use std::sync::OnceLock;
+    use windows::Win32::UI::WindowsAndMessaging::CreateIcon;
+
+    static TRANSPARENT_SMALL_ICON: OnceLock<isize> = OnceLock::new();
+    *TRANSPARENT_SMALL_ICON.get_or_init(|| {
+        // 16x16 monochrome icon: all-1 AND mask + all-0 XOR mask renders completely transparent.
+        let and_mask = [0xFFu8; 32];
+        let xor_mask = [0x00u8; 32];
+        unsafe {
+            match CreateIcon(
+                None,
+                16,
+                16,
+                1,
+                1,
+                and_mask.as_ptr(),
+                xor_mask.as_ptr(),
+            ) {
+                Ok(hicon) => hicon.0 as isize,
+                Err(_) => 0,
+            }
+        }
+    })
+}
+
+#[cfg(windows)]
 fn hide_native_titlebar_caption_and_icon(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        GetClassLongPtrW, SendMessageW, SetWindowPos, GCLP_HICON, ICON_BIG, ICON_SMALL,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_GETICON,
+        WM_SETICON,
     };
 
     const WTA_NONCLIENT: u32 = 1;
     const WTNCA_NODRAWCAPTION: u32 = 0x0000_0001;
     const WTNCA_NODRAWICON: u32 = 0x0000_0002;
+
+    let blank_small_icon = transparent_small_icon();
 
     let opts = WtaOptions {
         dw_flags: WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON,
@@ -47,6 +79,40 @@ fn hide_native_titlebar_caption_and_icon(hwnd: windows::Win32::Foundation::HWND)
     };
 
     unsafe {
+        // Preserve the real large icon for the Taskbar and Alt+Tab before replacing ICON_SMALL.
+        let existing_big = SendMessageW(hwnd, WM_GETICON, Some(WPARAM(ICON_BIG as usize)), None).0;
+        if existing_big == 0 {
+            let class_big = GetClassLongPtrW(hwnd, GCLP_HICON) as isize;
+            if class_big != 0 {
+                let _ = SendMessageW(
+                    hwnd,
+                    WM_SETICON,
+                    Some(WPARAM(ICON_BIG as usize)),
+                    Some(LPARAM(class_big)),
+                );
+            } else {
+                let existing_small =
+                    SendMessageW(hwnd, WM_GETICON, Some(WPARAM(ICON_SMALL as usize)), None).0;
+                if existing_small != 0 && existing_small != blank_small_icon {
+                    let _ = SendMessageW(
+                        hwnd,
+                        WM_SETICON,
+                        Some(WPARAM(ICON_BIG as usize)),
+                        Some(LPARAM(existing_small)),
+                    );
+                }
+            }
+        }
+
+        if blank_small_icon != 0 {
+            let _ = SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(ICON_SMALL as usize)),
+                Some(LPARAM(blank_small_icon)),
+            );
+        }
+
         let _ = SetWindowThemeAttribute(
             hwnd.0,
             WTA_NONCLIENT,
