@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Dock",
-  "updatedAt": "2026-11-21T12:15:44Z",
+  "updatedAt": "2026-11-21T12:51:11Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -20,15 +20,15 @@
     {
       "id": "antigravity-hans",
       "name": "Antigravity Hans (动态汉化)",
-      "version": "0.7.3",
+      "version": "0.7.4",
       "author": "HaoAn",
       "description": "纯 Node.js CDP 动态注入引擎，实时汉化 Antigravity 界面、Agent 面板与 Swarm 看板，并支持保留 Google Sans 西文的中文字体与字重设置（无任何 .exe 二进制，零杀软误报）。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.3.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.4.zip",
       "homepage": "https://github.com/haoan33/AGY-Dock",
-      "changelog": "修复本机已安装 HarmonyOS Sans SC（中文 Windows 注册为「鸿蒙黑体」）仍提示未检测到的问题：新增纯 Node.js 系统字体目录 OpenType name 表实时扫描（/api/fonts，支持 .ttf/.otf/.ttc 双语别名），无需重启即可实时识别新装字体，并在注入字体栈中自动同时写入 HarmonyOS Sans SC 与 鸿蒙黑体 双语别名。",
-      "sha256": "f420a365f168518c57aaadfe460b1c73bd7452566c0f441f90436f1091675c68",
-      "size": 161287,
+      "changelog": "完整对接 Antigravity 原生 Google Sans Flex 与字重变量阶梯：1. 字体栈首位补回 Google Sans Flex 保留原生可变西文特性；2. 同步重映射 --font-weight-light/normal/medium/semibold/bold/black 与 --agy-gsf-bold-wght 严格单调阶梯，保留各层级粗细对比；3. 补充排除 .google-symbols、.katex、.code-block 并还原代码区标准字重变量。",
+      "sha256": "261dca799c7dce917035c7e4fd698f42292144d1569211364e3484022889d12f",
+      "size": 162413,
       "releaseTag": "v2.4.0"
     },
     {
