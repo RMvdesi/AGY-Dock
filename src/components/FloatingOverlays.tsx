@@ -77,7 +77,7 @@ export function FloatingUpdateBanner({
   const latest = sanitizePlainText(update.latestVersion);
   const title =
     sanitizePlainText(update.prompt?.title) ||
-    (latest ? `AGY Plugin Manager v${latest} 已发布` : "发现新版本");
+    (latest ? `AGY Dock v${latest} 已发布` : "发现新版本");
   const baseBody =
     sanitizePlainText(update.prompt?.body) ||
     "前往 HaoAn Lab 官网查看更新日志并获取最新版本。";

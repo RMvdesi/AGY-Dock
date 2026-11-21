@@ -140,6 +140,133 @@ export interface NativePluginInfo {
   hasMcp: boolean;
   hasRules: boolean;
   sidecars: NativeSidecar[];
+  path?: string;
+  author?: string;
+  homepage?: string;
+  mcpNames?: string[];
+  skillNames?: string[];
+  ruleFiles?: string[];
+}
+
+export interface McpToolInfo {
+  name: string;
+  description: string;
+}
+
+export type McpScope = "global" | "project" | "plugin";
+export type McpRuntimeStatus = "running" | "stopped" | "disabled" | "remote";
+
+export interface McpServerInfo {
+  id: string;
+  uniqueKey: string;
+  scope: McpScope | string;
+  sourceLabel: string;
+  configPath: string;
+  pluginDir?: string | null;
+  projectPath?: string | null;
+  transport: "stdio" | "http" | string;
+  command: string;
+  args: string[];
+  cwd?: string | null;
+  env: Record<string, string>;
+  url?: string | null;
+  timeoutMs?: number | null;
+  disabled: boolean;
+  parentEnabled: boolean;
+  effectiveEnabled: boolean;
+  runtimeStatus: McpRuntimeStatus | string;
+  pids: number[];
+  memoryBytes: number;
+  cachedTools: McpToolInfo[];
+  relatedPaths?: string[];
+  canToggle: boolean;
+  canDelete: boolean;
+}
+
+export interface McpOverview {
+  languageServerRunning: boolean;
+  globalConfigPath: string;
+  servers: McpServerInfo[];
+}
+
+export interface McpEndpointProbe {
+  reachable: boolean;
+  statusCode?: number | null;
+  latencyMs: number;
+  message: string;
+}
+
+export type SkillScope = "global" | "project" | "plugin";
+
+export interface SkillInfo {
+  id: string;
+  dirName: string;
+  name: string;
+  description: string;
+  scope: SkillScope | string;
+  scopeLabel: string;
+  projectName?: string | null;
+  projectPath?: string | null;
+  pluginDir?: string | null;
+  path: string;
+  skillMdPath: string;
+  isSymlink: boolean;
+  linkTarget?: string | null;
+  subdirs: string[];
+  sizeBytes: number;
+  fileCount: number;
+  modifiedAt: number;
+  canDelete: boolean;
+}
+
+export interface SkillDetail {
+  skillMdPath: string;
+  name: string;
+  description: string;
+  bodyMarkdown: string;
+  rawContent: string;
+  sizeBytes: number;
+  modifiedAt: number;
+}
+
+export interface RuleFileInfo {
+  id: string;
+  fileName: string;
+  kind: "agents" | "gemini" | string;
+  relPath: string;
+  fullPath: string;
+  scope: "global" | "project" | string;
+  projectId: string;
+  projectName: string;
+  projectRoot: string;
+  sizeBytes: number;
+  modifiedAt: number;
+  overLimit: boolean;
+}
+
+export interface RuleFileContent {
+  fullPath: string;
+  fileName: string;
+  content: string;
+  sizeBytes: number;
+  modifiedAt: number;
+  overLimit: boolean;
+}
+
+export interface DiscoveredProject {
+  id: string;
+  name: string;
+  rootPath: string;
+  source: "global" | "antigravity" | "workspace" | "manual" | string;
+  exists: boolean;
+  skillCount: number;
+  mcpCount: number;
+  ruleFiles: RuleFileInfo[];
+}
+
+export interface ProjectRulesOverview {
+  globalConfigDir: string;
+  projects: DiscoveredProject[];
 }
 
 export interface LocalPluginPackage {
@@ -439,6 +566,109 @@ export interface StorageDeleteResult {
   cleanedIds: string[];
 }
 
+export interface QuotaPeriodSnapshot {
+  bucketId: string;
+  available: boolean;
+  percent: number | null;
+  rawPercent: number | null;
+  resetAtMs: number | null;
+  resetIn: string;
+  resetClock: string;
+}
+
+export interface WeeklyForecastSnapshot {
+  status: "safe" | "tight" | "exhausted" | "unknown" | string;
+  label: string;
+  dailyBurnPct: number | null;
+  runwayHours: number | null;
+  resetHours: number | null;
+}
+
+export interface QuotaPoolSnapshot {
+  id: string;
+  label: string;
+  shortLabel: string;
+  badgeKind: "gemini" | "claude-gpt" | "argon" | string;
+  fiveHour: QuotaPeriodSnapshot;
+  weekly: QuotaPeriodSnapshot;
+  argon: QuotaPeriodSnapshot | null;
+  weeklyForecast: WeeklyForecastSnapshot | null;
+  models: string[];
+}
+
+export interface AccountQuotaRecord {
+  accountKey: string;
+  email: string | null;
+  displayName: string | null;
+  tierName: string | null;
+  tierId: string | null;
+  avatarDataUrl: string | null;
+  updatedAtMs: number;
+  updatedAtText: string;
+  pools: QuotaPoolSnapshot[];
+  totalModels: number;
+  isLive: boolean;
+}
+
+export interface AccountQuotaSnapshot {
+  status: "live" | "cached" | "unavailable" | "error" | string;
+  isCached: boolean;
+  stale: boolean;
+  accountKey?: string | null;
+  liveAccountKey?: string | null;
+  email: string | null;
+  displayName: string | null;
+  tierName: string | null;
+  tierId: string | null;
+  avatarDataUrl: string | null;
+  updatedAtMs: number;
+  updatedAtText: string;
+  cdpPort: number | null;
+  reason: string | null;
+  pools: QuotaPoolSnapshot[];
+  totalModels: number;
+  accounts?: AccountQuotaRecord[];
+}
+
+export interface TokenDayUsage {
+  dateStr: string;
+  shortDate: string;
+  monthLabel: string;
+  dayNum: number;
+  dow: number;
+  weekday: string;
+  isToday: boolean;
+  totalTokens: number;
+  uncachedInput: number;
+  cacheRead: number;
+  thinkingOutput: number;
+  responseOutput: number;
+  outputTotal: number;
+  steps: number;
+  sessions: number;
+  geminiTokens: number;
+  partnersTokens: number;
+  argonTokens: number;
+}
+
+export interface TokenUsageSnapshot {
+  days: TokenDayUsage[];
+  days7Total: number;
+  days7AvgActive: number;
+  days7Sessions: number;
+  days30Total: number;
+  days30ActiveDays: number;
+  days30Sessions: number;
+  allTotalTokens: number;
+  allUncachedInput: number;
+  allCacheRead: number;
+  allOutputTotal: number;
+  allActiveDays: number;
+  allSessions: number;
+  totalDbFiles: number;
+  scannedAtMs: number;
+}
+
 export const TAURI_COMMANDS = {
   GET_OVERVIEW: "get_overview",
   LIST_NATIVE_PLUGINS: "list_native_plugins",
@@ -488,11 +718,31 @@ export const TAURI_COMMANDS = {
   DELETE_STORAGE_SESSIONS: "delete_storage_sessions",
   DELETE_STORAGE_ITEMS: "delete_storage_items",
   IS_ANTIGRAVITY_RUNNING_FOR_STORAGE: "is_antigravity_running_for_storage",
+  TOGGLE_NATIVE_PLUGIN: "toggle_native_plugin",
+  DELETE_NATIVE_PLUGIN: "delete_native_plugin",
+  GET_MCP_OVERVIEW: "get_mcp_overview",
+  TOGGLE_MCP_SERVER: "toggle_mcp_server",
+  DELETE_MCP_SERVER: "delete_mcp_server",
+  STOP_MCP_SERVER_PROCESS: "stop_mcp_server_process",
+  CHECK_MCP_ENDPOINT: "check_mcp_endpoint",
+  LIST_SKILLS: "list_skills",
+  READ_SKILL_DETAIL: "read_skill_detail",
+  DELETE_SKILL: "delete_skill",
+  LIST_PROJECT_RULES: "list_project_rules",
+  READ_RULE_FILE: "read_rule_file",
+  OPEN_IN_NOTEPAD: "open_in_notepad",
+  CREATE_RULE_FILE_AND_OPEN_NOTEPAD: "create_rule_file_and_open_notepad",
+  PICK_NATIVE_PROJECT: "pick_native_project",
+  GET_ACCOUNT_QUOTA: "get_account_quota",
+  REMOVE_CACHED_QUOTA_ACCOUNT: "remove_cached_quota_account",
+  GET_TOKEN_USAGE: "get_token_usage",
 } as const;
 
 export const TAURI_EVENTS = {
   OVERVIEW_UPDATED: "overview:updated",
   NATIVE_UPDATED: "native:updated",
+  QUOTA_UPDATED: "quota:updated",
+  TOKEN_USAGE_UPDATED: "token-usage:updated",
   UPDATE_AVAILABLE: "update:available",
   MARKETPLACE_UPDATED: "marketplace:updated",
   LOG_UPDATED: "log:updated",

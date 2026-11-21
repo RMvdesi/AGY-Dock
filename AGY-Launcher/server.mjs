@@ -7,7 +7,7 @@ import { AgyProcessManager } from './lib/process-manager.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, 'ui');
-const VERSION = '2.6.1';
+const VERSION = '2.8.0';
 
 function sendJson(res, status, payload) {
   if (res.writableEnded) return;
@@ -89,7 +89,7 @@ export function validateRequestSecurity(req, boundPort, expectedToken) {
 }
 
 /**
- * Creates the local AGY Plugin Manager HTTP server without binding until listen() is called.
+ * Creates the local AGY Dock HTTP server without binding until listen() is called.
  */
 export function createManagerServer({
   manager = new AgyProcessManager(),

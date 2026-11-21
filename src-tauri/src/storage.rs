@@ -2090,7 +2090,7 @@ fn count_path_bytes(target: &Path) -> u64 {
 }
 
 #[cfg(windows)]
-fn send_to_recycle_bin(paths: &[PathBuf]) -> Result<(), String> {
+pub(crate) fn send_to_recycle_bin(paths: &[PathBuf]) -> Result<(), String> {
     if paths.is_empty() {
         return Ok(());
     }
@@ -2120,7 +2120,7 @@ fn send_to_recycle_bin(paths: &[PathBuf]) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn send_to_recycle_bin(paths: &[PathBuf]) -> Result<(), String> {
+pub(crate) fn send_to_recycle_bin(paths: &[PathBuf]) -> Result<(), String> {
     for p in paths {
         if p.is_dir() {
             fs::remove_dir_all(p).map_err(|e| e.to_string())?;

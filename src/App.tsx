@@ -12,21 +12,21 @@ import { ExternalPluginDetailPage } from "./pages/ExternalPluginDetailPage";
 import { LogsPage } from "./pages/LogsPage";
 import { MarketplacePage } from "./pages/MarketplacePage";
 import { MyPluginsPage } from "./pages/MyPluginsPage";
-import { NativeExtensionsPage } from "./pages/NativeExtensionsPage";
+import { NativeExtensionsPage, type NativeSubTabId } from "./pages/NativeExtensionsPage";
 import { NativePluginDetailPage } from "./pages/NativePluginDetailPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { StatusPage } from "./pages/StatusPage";
 import { StoragePage } from "./pages/StoragePage";
 import type {
-  LocalPluginPackage,
+  AccountQuotaSnapshot,
   NativePluginInfo,
   OverviewSnapshot,
   PluginPayload,
-  PluginRuntimeStatus,
   RemoteMarketplaceResult,
   RemotePluginInfo,
   StorageScanProgress,
   ThemeMode,
+  TokenUsageSnapshot,
   UpdateCheckResult,
 } from "./types/ipc";
 
@@ -76,11 +76,16 @@ const DEFAULT_SITE_URL = "https://www.haoanlab.xyz";
 
 export default function App() {
   const [view, setView] = useState<ViewState>({ kind: "tab", tab: "status" });
+  const [nativeSubTab, setNativeSubTab] = useState<NativeSubTabId>("plugins");
   const [transitionDir, setTransitionDir] = useState<TransitionDir>("fade");
 
   const [overview, setOverview] = useState<OverviewSnapshot | null>(null);
   const [nativePlugins, setNativePlugins] = useState<NativePluginInfo[]>([]);
-  const [localPackages, setLocalPackages] = useState<LocalPluginPackage[]>([]);
+  const [accountQuota, setAccountQuota] = useState<AccountQuotaSnapshot | null>(null);
+  const [selectedQuotaAccountKey, setSelectedQuotaAccountKey] = useState<string | null>(null);
+  const [removingQuotaAccountKey, setRemovingQuotaAccountKey] = useState<string | null>(null);
+  const [tokenUsage, setTokenUsage] = useState<TokenUsageSnapshot | null>(null);
+  const [busyQuotaRefresh, setBusyQuotaRefresh] = useState<boolean>(false);
 
   const [themeMode, setThemeMode] = useState<ThemeMode>("auto");
   const [systemDark, setSystemDark] = useState<boolean>(() =>
@@ -116,11 +121,6 @@ export default function App() {
     busy: boolean;
   } | null>(null);
 
-  const [deleteLocalDirTarget, setDeleteLocalDirTarget] = useState<{
-    item: LocalPluginPackage;
-    busy: boolean;
-  } | null>(null);
-
   const [busyLaunch, setBusyLaunch] = useState(false);
   const [busyAttach, setBusyAttach] = useState(false);
   const [busyRefreshing, setBusyRefreshing] = useState(false);
@@ -132,6 +132,11 @@ export default function App() {
   const remoteInstallInFlightRef = useRef(false);
   const themeInitializedRef = useRef(false);
   const seenIdsInFlightRef = useRef<Set<string>>(new Set());
+  const selectedQuotaAccountKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedQuotaAccountKeyRef.current = selectedQuotaAccountKey;
+  }, [selectedQuotaAccountKey]);
 
   const resolvedDark = useMemo(() => {
     if (themeMode === "dark") return true;
@@ -199,18 +204,6 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const refreshMarketplace = useCallback(async (plugins?: PluginRuntimeStatus[]) => {
-    if (!isTauriRuntime()) return;
-    try {
-      const local = await ipc
-        .discoverLocalPlugins(plugins)
-        .catch(() => [] as LocalPluginPackage[]);
-      setLocalPackages(local);
-    } catch {
-      // non-fatal
-    }
-  }, []);
-
   const refreshRemoteMarketplace = useCallback(async (force = false) => {
     if (!isTauriRuntime()) return;
     setLoadingMarketplace(true);
@@ -231,6 +224,65 @@ export default function App() {
     }
   }, [pushToast]);
 
+  const refreshQuota = useCallback(
+    async (notify = false) => {
+      if (!isTauriRuntime()) return;
+      setBusyQuotaRefresh(true);
+      try {
+        const snap = await ipc.getAccountQuota();
+        setAccountQuota(snap);
+        if (notify) {
+          if (!snap.liveAccountKey) {
+            pushToast("Antigravity 未运行，已显示离线缓存", "info");
+          } else if (
+            selectedQuotaAccountKeyRef.current &&
+            selectedQuotaAccountKeyRef.current !== snap.liveAccountKey
+          ) {
+            pushToast("已同步当前登录账号，当前正在查看其他账号缓存", "info");
+          } else {
+            pushToast("账号额度已刷新", "ok");
+          }
+        }
+      } catch (err) {
+        if (notify) {
+          pushToast(`刷新额度失败：${formatErrorMessage(err)}`, "error");
+        }
+      } finally {
+        setBusyQuotaRefresh(false);
+      }
+    },
+    [pushToast],
+  );
+
+  const handleSelectQuotaAccount = useCallback(
+    (accountKey: string | null) => {
+      if (accountKey && accountQuota?.liveAccountKey && accountKey === accountQuota.liveAccountKey) {
+        setSelectedQuotaAccountKey(null);
+      } else {
+        setSelectedQuotaAccountKey(accountKey);
+      }
+    },
+    [accountQuota?.liveAccountKey],
+  );
+
+  const handleRemoveCachedQuotaAccount = useCallback(
+    async (accountKey: string) => {
+      if (!isTauriRuntime()) return;
+      setRemovingQuotaAccountKey(accountKey);
+      try {
+        const snap = await ipc.removeCachedQuotaAccount(accountKey);
+        setAccountQuota(snap);
+        setSelectedQuotaAccountKey((prev) => (prev === accountKey ? null : prev));
+        pushToast("已移除该账号的额度缓存", "ok");
+      } catch (err) {
+        pushToast(`移除缓存失败：${formatErrorMessage(err)}`, "error");
+      } finally {
+        setRemovingQuotaAccountKey((prev) => (prev === accountKey ? null : prev));
+      }
+    },
+    [pushToast],
+  );
+
   const refreshAll = useCallback(
     async (notify = false) => {
       if (!isTauriRuntime()) return;
@@ -242,13 +294,14 @@ export default function App() {
         ]);
         setOverview(ov);
         setNativePlugins(natives);
+        ipc.getAccountQuota().then(setAccountQuota).catch(() => {});
+        ipc.getTokenUsage().then(setTokenUsage).catch(() => {});
         if (!themeInitializedRef.current && ov.ui?.theme) {
           themeInitializedRef.current = true;
           if (THEME_MODES.includes(ov.ui.theme)) {
             setThemeMode(ov.ui.theme);
           }
         }
-        await refreshMarketplace(ov.plugins);
         if (notify) {
           pushToast("状态已更新", "ok");
         }
@@ -260,7 +313,7 @@ export default function App() {
         setBusyRefreshing(false);
       }
     },
-    [pushToast, refreshMarketplace],
+    [pushToast],
   );
 
   // Initial load & Tauri event subscriptions
@@ -282,7 +335,6 @@ export default function App() {
           themeInitializedRef.current = true;
           setThemeMode(ov.ui.theme);
         }
-        refreshMarketplace(ov.plugins);
       })
       .then(register)
       .catch(() => {});
@@ -290,6 +342,20 @@ export default function App() {
     events
       .onNativeUpdated((natives) => {
         setNativePlugins(natives);
+      })
+      .then(register)
+      .catch(() => {});
+
+    events
+      .onQuotaUpdated((snap) => {
+        setAccountQuota(snap);
+      })
+      .then(register)
+      .catch(() => {});
+
+    events
+      .onTokenUsageUpdated((usage) => {
+        setTokenUsage(usage);
       })
       .then(register)
       .catch(() => {});
@@ -336,7 +402,7 @@ export default function App() {
       window.clearInterval(poll);
       for (const fn of unlisteners) fn();
     };
-  }, [pushToast, refreshAll, refreshMarketplace]);
+  }, [pushToast, refreshAll]);
 
   // Acknowledge newly discovered remote plugins once user visits the Marketplace tab
   useEffect(() => {
@@ -584,30 +650,6 @@ export default function App() {
     } catch (err) {
       setDeleteTarget(null);
       pushToast(`移除失败：${formatErrorMessage(err)}`, "error");
-    }
-  };
-
-  const handleConfirmDeleteLocalDir = async () => {
-    if (!deleteLocalDirTarget) return;
-    const { item } = deleteLocalDirTarget;
-    setDeleteLocalDirTarget({ item, busy: true });
-    try {
-      const res = await ipc.deleteLocalPluginDir(item.dir);
-      setDeleteLocalDirTarget(null);
-      const unreg = res.unregisteredIds?.length ?? 0;
-      if (unreg > 0) {
-        pushToast(
-          `已删除本地目录 ${item.dir}，并同步移除配置（${res.unregisteredIds.join(", ")}）`,
-          "ok",
-        );
-      } else {
-        pushToast(`已删除本地目录 ${item.dir}`, "ok");
-      }
-      await refreshAll(false);
-      await refreshRemoteMarketplace(false);
-    } catch (err) {
-      setDeleteLocalDirTarget(null);
-      pushToast(`删除目录失败：${formatErrorMessage(err)}`, "error");
     }
   };
 
@@ -864,7 +906,7 @@ export default function App() {
           activeNav={activeNav}
           onSelectTab={selectTab}
           externalCount={plugins.length}
-          nativeCount={nativePlugins.length}
+          marketCount={remoteMarketplace ? remoteMarketplace.plugins.length : undefined}
           marketBadgeCount={marketBadgeCount}
           isStatusPage={view.kind === "tab" && view.tab === "status"}
           isBusyAction={
@@ -897,12 +939,20 @@ export default function App() {
               <StatusPage
                 overview={overview}
                 nativePlugins={nativePlugins}
+                accountQuota={accountQuota}
+                tokenUsage={tokenUsage}
                 isDark={resolvedDark}
                 busyLaunch={busyLaunch}
                 busyAttach={busyAttach}
+                busyQuotaRefresh={busyQuotaRefresh}
+                selectedAccountKey={selectedQuotaAccountKey}
+                removingAccountKey={removingQuotaAccountKey}
                 actionPluginId={busyPluginId}
                 onQuickLaunch={handleQuickLaunch}
                 onAttachEnabled={handleAttachEnabled}
+                onRefreshQuota={() => refreshQuota(true)}
+                onSelectAccount={handleSelectQuotaAccount}
+                onRemoveCachedAccount={handleRemoveCachedQuotaAccount}
                 onStopPlugin={(pid) => handlePluginAction(pid, "stop")}
                 onOpenExternalDetail={openExternalDetail}
                 onNavigateExternal={() => selectTab("external")}
@@ -943,38 +993,12 @@ export default function App() {
                 loadingRemote={loadingMarketplace}
                 installingRemoteId={installingRemoteId}
                 updatingAllRemote={updatingAllRemote}
-                localPackages={localPackages}
-                deletingLocalDir={
-                  deleteLocalDirTarget?.busy ? deleteLocalDirTarget.item.dir : null
-                }
                 isDark={resolvedDark}
                 onInstallRemote={handleInstallRemotePlugin}
                 onUpdateAllRemote={handleUpdateAllRemotePlugins}
                 onRefreshRemote={() => refreshRemoteMarketplace(true)}
                 onOpenExternalUrl={(url) => handleOpenUpdateUrl(url)}
                 onManageInstalled={openExternalDetail}
-                onImportLocal={(item) =>
-                  setEditorState({
-                    open: true,
-                    initial: {
-                      mode: "create",
-                      plugin: {
-                        id: item.dir,
-                        name: item.displayName,
-                        version: item.version || "",
-                        author: item.author || "",
-                        description:
-                          item.desc && item.desc !== "发现未注册本地插件目录"
-                            ? item.desc
-                            : "",
-                      },
-                    },
-                    saving: false,
-                  })
-                }
-                onDeleteLocalDir={(item) =>
-                  setDeleteLocalDirTarget({ item, busy: false })
-                }
                 onOpenManualCreate={() =>
                   setEditorState({
                     open: true,
@@ -982,7 +1006,6 @@ export default function App() {
                     saving: false,
                   })
                 }
-                onRefreshDiscovery={() => refreshMarketplace(overview?.plugins)}
               />
             )}
 
@@ -990,7 +1013,12 @@ export default function App() {
               <NativeExtensionsPage
                 nativePlugins={nativePlugins}
                 isDark={resolvedDark}
+                subTab={nativeSubTab}
+                onChangeSubTab={setNativeSubTab}
                 onOpenDetail={openNativeDetail}
+                onNativePluginsUpdated={setNativePlugins}
+                onOpenUrl={(url) => handleOpenUpdateUrl(url)}
+                onToast={pushToast}
               />
             )}
 
@@ -1071,12 +1099,15 @@ export default function App() {
                   plugin={selectedNativePlugin}
                   isDark={resolvedDark}
                   onBack={backToNativeList}
+                  onNativePluginsUpdated={setNativePlugins}
+                  onOpenUrl={(url) => handleOpenUpdateUrl(url)}
+                  onToast={pushToast}
                 />
               ) : (
                 <div className="agy-card flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
                   <p className="text-[13.5px] text-[var(--text-muted)]">未找到该原生扩展</p>
                   <button type="button" onClick={backToNativeList} className="agy-btn">
-                    返回原生扩展
+                    返回原生管理
                   </button>
                 </div>
               ))}
@@ -1115,23 +1146,6 @@ export default function App() {
         }
         onCancel={() => setDeleteTarget(null)}
         onConfirm={handleConfirmDeletePlugin}
-      />
-
-      <ConfirmModal
-        open={Boolean(deleteLocalDirTarget)}
-        title="确认删除本地插件目录"
-        description={
-          deleteLocalDirTarget
-            ? deleteLocalDirTarget.item.installedId
-              ? `确定删除本地目录「plugins/${deleteLocalDirTarget.item.dir}」吗？\n\n该目录当前已接入插件「${deleteLocalDirTarget.item.installedId}」，删除后将同时停止并移除该插件配置，且目录内的所有文件将被永久删除。`
-              : `确定删除本地目录「plugins/${deleteLocalDirTarget.item.dir}」及其中的所有文件吗？此操作不可撤销。`
-            : ""
-        }
-        confirmLabel="确认删除"
-        tone="danger"
-        busy={deleteLocalDirTarget?.busy ?? false}
-        onCancel={() => setDeleteLocalDirTarget(null)}
-        onConfirm={handleConfirmDeleteLocalDir}
       />
 
       <FloatingUpdateBanner

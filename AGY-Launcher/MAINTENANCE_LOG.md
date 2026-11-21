@@ -1,10 +1,90 @@
-# AGY Plugin Manager — Maintenance Log
+# AGY Dock — Maintenance Log
 
-All notable maintenance updates, fixes, UI upgrades, and version bumps for `AGY-Launcher` are documented in this file in reverse chronological order.
+All notable maintenance updates, fixes, UI upgrades, and version bumps for `AGY Dock` (`AGY-Launcher`) are documented in this file in reverse chronological order.
 
 Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`MAJOR.MINOR.PATCH`).
 
 ---
+
+## [v2.8.0] - 2026-11-21 16:41
+
+### Summary
+
+- Rebrand the product and repository from **AGY Plugin Manager** (`haoan33/AGY-Plugin-Manager`) to **AGY Dock** (`haoan33/AGY-Dock`):
+  - Update desktop binary/window/tray/shortcut names (`AGY Dock.exe`, `AGY Dock.lnk`), package manifests, `.release.json` (`dist-release/AGY-Dock-Setup-v{version}.exe`), `plugins-catalog.json`, Node CLI/daemon parity (`AGY-Launcher/{server.mjs,cli.mjs,lib/process-manager.mjs}`), and documentation.
+  - Retain `identifier: "xyz.ahmustudyhelper.agy-plugin-manager"`, `DEFAULT_PRODUCT_SLUG: "agy-plugin-manager"`, and `%LOCALAPPDATA%\AGY-Plugin-Manager` default install/data dir while normalizing NSIS preinstall/postinstall hooks (`src-tauri/nsis/hooks.nsh`), marketplace repository migration (`resolve_marketplace_repo`), and process exclusions (`detector.rs`) for seamless in-place upgrades from legacy *AGY Plugin Manager* installations.
+- Hide the Windows native titlebar's top-left small icon and title text via `SetWindowThemeAttribute` (`WTA_NONCLIENT`, `WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON`) in `src-tauri/src/tray.rs` while keeping native caption buttons, DWM caption color blending, Taskbar/Alt+Tab labels, and the TopBar `BrandMark`.
+- Add Status Page **Account Quota (`账号额度`)** live CDP monitor + multi-account local cache & switcher (`src-tauri/src/account_quota.rs`, `src/components/QuotaBadgeSvg.tsx`, `src/pages/StatusPage.tsx`, `src/App.tsx`):
+  - Track 5h/weekly/Argon quotas and weekly burn forecasts without reading or modifying OAuth tokens/keychains.
+  - Persist per-account snapshots in `account-quota-cache.json` (with legacy single-snapshot migration and past-reset status normalization) and add an interactive Account Switcher popover + `remove_cached_quota_account` Tauri command.
+- Add Status Page **Token Usage (`Token 用量`)** card (`src-tauri/src/token_usage.rs`, `src/components/TokenUsageCard.tsx`) summarizing 7d/30d/all-time token breakdown across local Antigravity conversation databases.
+
+### Files Changed
+
+- `src-tauri/src/{account_quota.rs,token_usage.rs,commands.rs,lib.rs,models.rs,tray.rs,marketplace.rs,detector.rs,shortcuts.rs,cli.rs,supervisor.rs,updater.rs,main.rs}`, `src-tauri/{Cargo.toml,Cargo.lock,tauri.conf.json,nsis/hooks.nsh}` — implement account quota multi-account caching, token usage aggregation, native titlebar icon/caption hiding, `AGY Dock` rebrand, and `v2.8.0` upgrade migration hooks.
+- `index.html`, `src/{App.tsx,pages/StatusPage.tsx,pages/MarketplacePage.tsx,components/TopBar.tsx,components/FloatingOverlays.tsx,components/QuotaBadgeSvg.tsx,components/TokenUsageCard.tsx,types/ipc.ts,lib/ipc.ts}` — implement quota UI, token usage chart, account switcher popover, and `AGY Dock` UI rebrand.
+- `VERSION`, `package.json`, `package-lock.json`, `.release.json`, `plugins-catalog.json`, `scripts/build-local.mjs`, `AGY-Launcher/{server.mjs,cli.mjs,lib/process-manager.mjs,AGENTS.md,MAINTENANCE_LOG.md}`, `README.md`, `AGENTS.md`, `CHANGELOG.md` — synchronize `2.8.0` version, `haoan33/AGY-Dock` repo references, release artifact naming, and documentation.
+
+### Verification
+
+- `npm run build` (`tsc --noEmit && vite build`) -> passed (`dist/assets/index-DKDhWkmy.js`).
+- `cargo test --manifest-path src-tauri/Cargo.toml` -> 52 passed, 0 failed.
+- `node --test AGY-Launcher/tests/process-manager.test.mjs` -> 10 passed, 0 failed.
+
+## [v2.7.0] - 2026-11-19 00:28
+
+### Summary
+
+- Upgrade the Native Extensions page (`NativeExtensionsPage` + `NativePluginDetailPage`) into an AGY native configuration & capability hub with 4 segmented tabs (`原生扩展 / MCP 服务 / Skills 技能 / 项目规则`):
+  - **Native Extensions**: support enabling/disabling extensions in `~/.gemini/config/config.json` (preserving `installedFrom` and other metadata, honoring `plugin.json` `disabled` fallback), viewing bundled MCPs/skills/rules/sidecars, opening directories, and uninstalling safely to the Windows Recycle Bin.
+  - **MCP Servers**: aggregate global (`~/.gemini/config/mcp_config.json`), plugin-bundled, and project-local (`.agents/mcp_config.json` etc.) MCP servers; detect live Antigravity `language_server.exe` child process trees (PID & memory), read cached tool schemas from `~/.gemini/antigravity/mcp`, probe Streamable HTTP endpoints, toggle `disabled`, terminate running local MCP processes, delete server entries (with dual switches: clean local tool cache + safely recycle resolved MCP scripts/npm packages while protecting project roots & system runtimes), and edit `mcp_config.json` in Windows Notepad.
+  - **Skills**: discover global (`~/.gemini/config/skills`), project-local (`.agents/skills`, `.agent/skills`, `_agents/skills`, `_agent/skills`, `.gemini/skills`, `.claude/skills`), and plugin-bundled skills; safely render `SKILL.md` introductions (`MarkdownDocView`), open `SKILL.md` in Windows Notepad, and safely delete global or project-local skills (removing only the junction/symlink entry by default, plus an explicit opt-in switch to also delete the resolved link target directory).
+  - **Project Rules (`AGENTS.md` / `GEMINI.md`)**: discover global (`~/.gemini/config`) and project/workspace `AGENTS.md` and `GEMINI.md` files (with folder picker & root rule file creation), render read-only Markdown/raw previews with Antigravity 24 KB limit indicators, launch Windows `notepad.exe` directly via「用记事本编辑」without a built-in editor, and auto-reload on window focus.
+- Refine navigation & Marketplace (`TopBar`, `MarketplacePage`, `plugins.rs`, `marketplace.rs`):
+  - Rename the top-bar「原生扩展」tab to「原生管理」and remove its numeric badge; show total remote plugin count next to「插件市场」.
+  - Remove the「本地扩展目录发现」section and `local` filter from `MarketplacePage`.
+  - Stream remote plugin downloads directly from memory via `install_plugin_package_bytes` / `install_plugin_archive` so no temporary installer `.zip` is written or left on disk, while cleanly replacing old version files on updates (preserving `settings.json`).
+- Add a one-click `屏蔽 play.googleapis.com 进代理` switch inside Settings → 魔法注入 (`SettingsPage`) with a top-right `!` hover tooltip explaining high telemetry traffic usage, bidirectional `NO Proxy` syntax normalization (`normalizeNoProxyList` / `normalize_no_proxy_list`), and synchronized Electron `--proxy-bypass-list` injection in `build_antigravity_launch_params` / `buildAntigravityLaunchParams`.
+- Synchronize `v2.7.0` across workspace version manifests and changelogs.
+
+### Files Changed
+
+- `src-tauri/src/agy_config.rs` — add AGY MCP, Skills, Project Rules (`AGENTS.md`/`GEMINI.md`), safe MCP/junction-target deletion resolvers, and Windows Notepad launcher logic with unit tests.
+- `src-tauri/src/{commands.rs,lib.rs,models.rs,plugins.rs,marketplace.rs,storage.rs,storage_inventory.rs,config.rs,supervisor.rs}` — register new Tauri commands, enrich native plugin toggle/delete, switch remote installs to zero-temp-file in-memory archive installation, normalize `NO_PROXY`/`--proxy-bypass-list`, expose shared project discovery & Recycle Bin helpers, and add unit tests.
+- `src/{App.tsx,index.css}`, `src/types/ipc.ts`, `src/lib/{ipc.ts,format.ts}`, `src/components/{ConfirmModal.tsx,TopBar.tsx,MarkdownDocView.tsx,NativeMcpTab.tsx,NativeSkillsTab.tsx,NativeRulesTab.tsx}`, `src/pages/{MarketplacePage.tsx,NativeExtensionsPage.tsx,NativePluginDetailPage.tsx,SettingsPage.tsx}` — implement the 4-tab AGY native management UI, Notepad editing workflow, multi-switch delete confirmations, TopBar/Marketplace cleanup, and `play.googleapis.com` proxy bypass toggle with `!` tooltip.
+- `AGY-Launcher/lib/process-manager.mjs` and `AGY-Launcher/tests/process-manager.test.mjs` — mirror `normalizeNoProxyList` and `--proxy-bypass-list` parity and update/add Node tests.
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/{Cargo.toml,tauri.conf.json}`, `AGY-Launcher/server.mjs`, `CHANGELOG.md`, and `AGY-Launcher/MAINTENANCE_LOG.md` — bump version to `2.7.0` and record changelog/maintenance entry.
+
+### Verification
+
+- `npm run build` (`tsc --noEmit && vite build`) -> passed (`dist/assets/index-DKB6bHIR.js`).
+- `cargo test --manifest-path src-tauri/Cargo.toml` -> 42 passed, 0 failed.
+- `node --test AGY-Launcher/tests/process-manager.test.mjs` -> 10 passed, 0 failed.
+- `npm run build:local` -> built `src-tauri/target/release/AGY Plugin Manager.exe` and hot-updated `D:\AGY Plugin Manager\AGY Plugin Manager.exe` (`8.18 MB`) while preserving user `plugins.json` and `plugins/`.
+
+## [v2.6.2] - 2026-11-18 20:48
+
+### Summary
+
+- Fix flickering and jumpy scrolling on the plugin settings page (`ExternalPluginDetailPage`):
+  - Remove the redundant passive `wheel` -> `postMessage` -> `scrollBy` forwarding that double-scrolled on top of Chromium/WebView2's native compositor wheel chaining for `scrolling="no"` iframes, and enforce `overflow: hidden !important; height: auto !important; min-height: 0 !important;` inside the injected iframe styles.
+  - Stop observing `document.documentElement` in `ResizeObserver` (observing only `document.body`), coalesce height measurement on `requestAnimationFrame` while ignoring `position: fixed`/`absolute` elements, and remove `transition-[height] duration-150` from `<iframe />` to prevent WebView2 layer resize flicker.
+  - Keep the plugin settings iframe mounted across `插件设置 / 插件详情` tab switches (`hidden` toggle instead of `<AnimatePresence>` unmount/remount), add `scrollbar-gutter: stable` + `overscroll-contain` on the card scroll container, and stabilize `onOpenUrl`/`onToast` refs across 6s background refreshes.
+- Synchronize `v2.6.2` across Tauri/Node version files and hot-update `D:\AGY Plugin Manager\AGY Plugin Manager.exe`.
+- Optimize `src-tauri/Cargo.toml` for desktop-only builds by dropping unused `staticlib`/`cdylib` crate types (`crate-type = ["rlib"]`) and setting `[profile.dev] debug = "line-tables-only"`, reducing `target/debug` footprint from ~34.07 GB to ~2.17 GB after test rebuild.
+
+### Files Changed
+
+- `src/pages/ExternalPluginDetailPage.tsx` — fix plugin settings iframe scroll chaining, `ResizeObserver` measurement, height transition removal, tab switch mount retention, and callback refs.
+- `src-tauri/Cargo.toml` — restrict `[lib] crate-type` to `["rlib"]` and add `[profile.dev] debug = "line-tables-only"`.
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/{Cargo.toml,Cargo.lock,tauri.conf.json}`, `AGY-Launcher/{server.mjs,lib/process-manager.mjs}`, `CHANGELOG.md`, and `AGY-Launcher/MAINTENANCE_LOG.md` — bump version to `2.6.2` and record changelog/maintenance entry.
+
+### Verification
+
+- `npm run build` -> passed `tsc --noEmit` and `vite build` (`dist/assets/index-C07n5AKg.js`).
+- `cargo test --manifest-path src-tauri/Cargo.toml` (after `Cargo.toml` optimization and cleaning `target/debug` + `target/x86_64-pc-windows-msvc`) -> 34 passed, 0 failed (`src-tauri` total size reduced from `41,257.82 MB` to `6,592.74 MB`).
+- `node --test AGY-Launcher/tests/process-manager.test.mjs` -> 9 passed, 0 failed.
+- `npm run build:local` -> built `src-tauri/target/release/AGY Plugin Manager.exe` and hot-updated `D:\AGY Plugin Manager\AGY Plugin Manager.exe` (`7.91 MB`) while preserving user `plugins.json` and `plugins/`.
 
 ## [v2.6.1] - 2026-11-18 14:17
 

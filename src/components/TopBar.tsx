@@ -30,7 +30,7 @@ interface TopBarProps {
   activeNav: NavTabId;
   onSelectTab: (tab: NavTabId) => void;
   externalCount: number;
-  nativeCount: number;
+  marketCount?: number;
   marketBadgeCount?: number;
   isStatusPage: boolean;
   isBusyAction?: boolean;
@@ -43,7 +43,7 @@ export function TopBar({
   activeNav,
   onSelectTab,
   externalCount,
-  nativeCount,
+  marketCount,
   marketBadgeCount = 0,
   isStatusPage,
   isBusyAction = false,
@@ -54,8 +54,8 @@ export function TopBar({
   const tabs: NavTabItem[] = [
     { id: "status", label: "运行状态" },
     { id: "external", label: "我的插件", count: externalCount },
-    { id: "market", label: "插件市场", badge: marketBadgeCount },
-    { id: "native", label: "原生扩展", count: nativeCount },
+    { id: "market", label: "插件市场", count: marketCount, badge: marketBadgeCount },
+    { id: "native", label: "原生管理" },
     { id: "storage", label: "存储管理" },
     { id: "logs", label: "日志" },
     { id: "settings", label: "设置" },
@@ -66,7 +66,7 @@ export function TopBar({
   return (
     <header className="grid grid-cols-[minmax(220px,1fr)_auto_minmax(220px,1fr)] items-center gap-2.5">
       {/* Left Brand Mark (bare icon for symmetric dock centering) */}
-      <div className="flex min-w-0 items-center" title="AGY Plugin Manager">
+      <div className="flex min-w-0 items-center" title="AGY Dock">
         <BrandMark size={26} className="shrink-0" />
       </div>
 

@@ -1,3 +1,5 @@
+pub mod account_quota;
+pub mod agy_config;
 pub mod cli;
 pub mod commands;
 pub mod config;
@@ -10,12 +12,15 @@ pub mod shortcuts;
 pub mod storage;
 mod storage_inventory;
 pub mod supervisor;
+pub mod token_usage;
 pub mod tray;
 pub mod updater;
 
 pub mod events {
     pub const OVERVIEW_UPDATED: &str = "overview:updated";
     pub const NATIVE_UPDATED: &str = "native:updated";
+    pub const QUOTA_UPDATED: &str = "quota:updated";
+    pub const TOKEN_USAGE_UPDATED: &str = "token-usage:updated";
     pub const UPDATE_AVAILABLE: &str = "update:available";
     pub const MARKETPLACE_UPDATED: &str = "marketplace:updated";
     pub const LOG_UPDATED: &str = "log:updated";
@@ -34,7 +39,11 @@ use tokio::sync::Mutex;
 fn spawn_background_monitor(app: tauri::AppHandle, paths: ManagerPaths) {
     tauri::async_runtime::spawn(async move {
         let mut saw_antigravity_main = false;
+        let mut was_cdp_ready = false;
         let mut last_native_hash: String = String::new();
+        let mut last_quota_tick: u64 = 0;
+        let mut last_quota_hash: String = String::new();
+        let mut last_token_fp: String = String::new();
         let mut last_log_sig: Option<(u64, SystemTime)> = None;
         let mut tick_count: u64 = 0;
 
@@ -44,10 +53,32 @@ fn spawn_background_monitor(app: tauri::AppHandle, paths: ManagerPaths) {
 
             if let Ok(ov) = supervisor::get_overview(&paths).await {
                 let main_cnt = ov.cdp.main_process_count;
+                let cdp_ready = ov.cdp.ready;
                 let running_plugins = ov.plugins.iter().filter(|p| p.running).count();
                 let auto_cleanup = ov.lifecycle.auto_cleanup_on_exit;
 
                 let _ = app.emit(events::OVERVIEW_UPDATED, &ov);
+
+                if cdp_ready && (!was_cdp_ready || tick_count.saturating_sub(last_quota_tick) >= 12) {
+                    last_quota_tick = tick_count;
+                    let quota = account_quota::get_account_quota(&paths).await;
+                    if let Ok(serialized) = serde_json::to_string(&quota) {
+                        if serialized != last_quota_hash || !was_cdp_ready {
+                            last_quota_hash = serialized;
+                            let _ = app.emit(events::QUOTA_UPDATED, &quota);
+                        }
+                    }
+                } else if was_cdp_ready && !cdp_ready {
+                    let cached = account_quota::get_cached_offline_snapshot(
+                        &paths,
+                        Some(ov.cdp.reason.clone()),
+                    );
+                    if let Ok(serialized) = serde_json::to_string(&cached) {
+                        last_quota_hash = serialized;
+                    }
+                    let _ = app.emit(events::QUOTA_UPDATED, &cached);
+                }
+                was_cdp_ready = cdp_ready;
 
                 if main_cnt > 0 {
                     saw_antigravity_main = true;
@@ -131,6 +162,24 @@ fn spawn_background_monitor(app: tauri::AppHandle, paths: ManagerPaths) {
                             last_native_hash = serialized;
                             let _ = app.emit(events::NATIVE_UPDATED, &natives);
                         }
+                    }
+                }
+            }
+
+            // Refresh token usage every ~20s (every 8 ticks) when conversation files change
+            if tick_count % 8 == 2 {
+                let p_tok = paths.clone();
+                if let Ok((fp, changed)) = tokio::task::spawn_blocking(move || {
+                    let fp = token_usage::quick_conversations_fingerprint(&p_tok);
+                    let changed = !fp.is_empty();
+                    (fp, changed)
+                })
+                .await
+                {
+                    if changed && fp != last_token_fp {
+                        last_token_fp = fp;
+                        let usage = token_usage::get_token_usage(&paths).await;
+                        let _ = app.emit(events::TOKEN_USAGE_UPDATED, &usage);
                     }
                 }
             }
@@ -260,7 +309,25 @@ pub fn run() {
             commands::mark_marketplace_seen,
             commands::load_plugin_settings_page,
             commands::save_plugin_settings,
+            commands::toggle_native_plugin,
+            commands::delete_native_plugin,
+            commands::get_mcp_overview,
+            commands::toggle_mcp_server,
+            commands::delete_mcp_server,
+            commands::stop_mcp_server_process,
+            commands::check_mcp_endpoint,
+            commands::list_skills,
+            commands::read_skill_detail,
+            commands::delete_skill,
+            commands::list_project_rules,
+            commands::read_rule_file,
+            commands::open_in_notepad,
+            commands::create_rule_file_and_open_notepad,
+            commands::pick_native_project,
+            commands::get_account_quota,
+            commands::remove_cached_quota_account,
+            commands::get_token_usage,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running AGY Plugin Manager");
+        .expect("error while running AGY Dock");
 }

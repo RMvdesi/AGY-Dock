@@ -1,15 +1,18 @@
+use crate::account_quota;
+use crate::agy_config;
 use crate::config;
 use crate::detector;
 use crate::events;
 use crate::marketplace;
 use crate::models::{
-    AntigravityDetectResult, AutoProxyResult, BundledPackageInfo, CleanupResult, ClearLogResult,
-    DeleteLocalDirResult, DeletePluginResult, FileFilterSpec, InstallPackageResult, LaunchResult,
-    LifecycleConfig, LocalPluginPackage, LogTailResult, NativePluginInfo, OverviewSnapshot,
-    PluginActionResult, PluginConfigEntry, PluginPayload, PluginSettingsPageData, ProxyConfig,
-    RemoteMarketplaceResult, SaveExeResult, SavePluginSettingsResult, ShortcutResult,
-    StorageDeleteResult, StorageTreeResponse, SystemProxyDetection, UiPreferences,
-    UpdateCheckResult,
+    AccountQuotaSnapshot, AntigravityDetectResult, AutoProxyResult, BundledPackageInfo,
+    CleanupResult, ClearLogResult, DeleteLocalDirResult, DeletePluginResult, FileFilterSpec,
+    InstallPackageResult, LaunchResult, LifecycleConfig, LocalPluginPackage, LogTailResult,
+    McpEndpointProbe, McpOverview, NativePluginInfo, OverviewSnapshot, PluginActionResult,
+    PluginConfigEntry, PluginPayload, PluginSettingsPageData, ProjectRulesOverview, ProxyConfig,
+    RemoteMarketplaceResult, RuleFileContent, RuleFileInfo, SaveExeResult,
+    SavePluginSettingsResult, ShortcutResult, SkillDetail, SkillInfo, StorageDeleteResult,
+    StorageTreeResponse, SystemProxyDetection, TokenUsageSnapshot, UiPreferences, UpdateCheckResult,
 };
 use crate::paths::ManagerPaths;
 use crate::plugins;
@@ -17,6 +20,7 @@ use crate::shortcuts;
 use crate::storage::{self, StorageScanSnapshot};
 use crate::storage_inventory::{self, StorageInventory};
 use crate::supervisor;
+use crate::token_usage;
 use crate::tray::{apply_dwm_titlebar_theme, resolve_theme_is_dark};
 use crate::updater;
 use std::collections::HashSet;
@@ -912,4 +916,232 @@ pub async fn save_plugin_settings(
         emit_overview_bg(&app, &state.paths).await;
     }
     Ok(res)
+}
+
+#[tauri::command]
+pub async fn toggle_native_plugin(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    dir_name: String,
+    enabled: bool,
+) -> Result<Vec<NativePluginInfo>, String> {
+    let paths = state.paths.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        plugins::toggle_native_plugin(&paths, &dir_name, enabled)
+    })
+    .await
+    .map_err(|e| format!("切换原生扩展状态失败: {e}"))??;
+    let _ = app.emit(events::NATIVE_UPDATED, &res);
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn delete_native_plugin(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    dir_name: String,
+    recycle_bin: Option<bool>,
+) -> Result<Vec<NativePluginInfo>, String> {
+    let paths = state.paths.clone();
+    let use_recycle = recycle_bin.unwrap_or(true);
+    let res = tokio::task::spawn_blocking(move || {
+        plugins::delete_native_plugin(&paths, &dir_name, use_recycle)
+    })
+    .await
+    .map_err(|e| format!("卸载原生扩展失败: {e}"))??;
+    let _ = app.emit(events::NATIVE_UPDATED, &res);
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn get_mcp_overview(state: State<'_, AppState>) -> Result<McpOverview, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || agy_config::get_mcp_overview(&paths))
+        .await
+        .map_err(|e| format!("读取 MCP 配置失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn toggle_mcp_server(
+    state: State<'_, AppState>,
+    config_path: String,
+    server_id: String,
+    disabled: bool,
+) -> Result<McpOverview, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || {
+        agy_config::toggle_mcp_server(&paths, &config_path, &server_id, disabled)
+    })
+    .await
+    .map_err(|e| format!("切换 MCP 状态失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn delete_mcp_server(
+    state: State<'_, AppState>,
+    config_path: String,
+    server_id: String,
+    clean_cache: Option<bool>,
+    delete_files: Option<bool>,
+) -> Result<McpOverview, String> {
+    let paths = state.paths.clone();
+    let clean = clean_cache.unwrap_or(false);
+    let remove_files = delete_files.unwrap_or(false);
+    tokio::task::spawn_blocking(move || {
+        agy_config::delete_mcp_server(&paths, &config_path, &server_id, clean, remove_files)
+    })
+    .await
+    .map_err(|e| format!("删除 MCP 服务失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn stop_mcp_server_process(
+    state: State<'_, AppState>,
+    config_path: String,
+    server_id: String,
+) -> Result<McpOverview, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || {
+        agy_config::stop_mcp_server_process(&paths, &config_path, &server_id)
+    })
+    .await
+    .map_err(|e| format!("停止 MCP 进程失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn check_mcp_endpoint(url: String) -> Result<McpEndpointProbe, String> {
+    agy_config::check_mcp_endpoint(&url).await
+}
+
+#[tauri::command]
+pub async fn list_skills(state: State<'_, AppState>) -> Result<Vec<SkillInfo>, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || agy_config::list_skills(&paths))
+        .await
+        .map_err(|e| format!("读取 Skills 列表失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn read_skill_detail(
+    state: State<'_, AppState>,
+    skill_md_path: String,
+) -> Result<SkillDetail, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || agy_config::read_skill_detail(&paths, &skill_md_path))
+        .await
+        .map_err(|e| format!("读取 Skill 详情失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn delete_skill(
+    state: State<'_, AppState>,
+    skill_path: String,
+    recycle_bin: Option<bool>,
+    delete_link_target: Option<bool>,
+) -> Result<(), String> {
+    let paths = state.paths.clone();
+    let use_recycle = recycle_bin.unwrap_or(true);
+    let remove_link_target = delete_link_target.unwrap_or(false);
+    tokio::task::spawn_blocking(move || {
+        agy_config::delete_skill(&paths, &skill_path, use_recycle, remove_link_target)
+    })
+    .await
+    .map_err(|e| format!("删除 Skill 失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn list_project_rules(
+    state: State<'_, AppState>,
+) -> Result<ProjectRulesOverview, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || agy_config::list_project_rules(&paths))
+        .await
+        .map_err(|e| format!("扫描项目规则文件失败: {e}"))
+}
+
+#[tauri::command]
+pub async fn read_rule_file(
+    state: State<'_, AppState>,
+    file_path: String,
+) -> Result<RuleFileContent, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || agy_config::read_rule_file(&paths, &file_path))
+        .await
+        .map_err(|e| format!("读取规则文件失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn open_in_notepad(
+    state: State<'_, AppState>,
+    file_path: String,
+) -> Result<(), String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || agy_config::open_in_notepad(&paths, &file_path))
+        .await
+        .map_err(|e| format!("打开记事本失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn create_rule_file_and_open_notepad(
+    state: State<'_, AppState>,
+    project_root: String,
+    file_name: String,
+) -> Result<RuleFileInfo, String> {
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || {
+        agy_config::create_rule_file_and_open_notepad(&paths, &project_root, &file_name)
+    })
+    .await
+    .map_err(|e| format!("创建并打开规则文件失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn pick_native_project(state: State<'_, AppState>) -> Result<bool, String> {
+    let path = tokio::task::spawn_blocking(|| {
+        rfd::FileDialog::new().set_title("添加项目文件夹").pick_folder()
+    })
+    .await
+    .map_err(|err| format!("打开文件夹选择对话框失败：{err}"))?;
+    let Some(path) = path else {
+        return Ok(false);
+    };
+    let paths = state.paths.clone();
+    tokio::task::spawn_blocking(move || {
+        let root = storage::resolve_project_storage_root(&path)?;
+        storage_inventory::update_saved_project(&paths, &root, true)
+    })
+    .await
+    .map_err(|err| format!("添加项目文件夹失败：{err}"))??;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn get_account_quota(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AccountQuotaSnapshot, String> {
+    let snap = account_quota::get_account_quota(&state.paths).await;
+    let _ = app.emit(events::QUOTA_UPDATED, &snap);
+    Ok(snap)
+}
+
+#[tauri::command]
+pub async fn remove_cached_quota_account(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_key: String,
+) -> Result<AccountQuotaSnapshot, String> {
+    let snap = account_quota::remove_cached_account(&state.paths, &account_key).await?;
+    let _ = app.emit(events::QUOTA_UPDATED, &snap);
+    Ok(snap)
+}
+
+#[tauri::command]
+pub async fn get_token_usage(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<TokenUsageSnapshot, String> {
+    let snap = token_usage::get_token_usage(&state.paths).await;
+    let _ = app.emit(events::TOKEN_USAGE_UPDATED, &snap);
+    Ok(snap)
 }

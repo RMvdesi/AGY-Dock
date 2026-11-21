@@ -1,6 +1,6 @@
-# AGY Plugin Manager (`AGY-Launcher` v2.0.0)
+# AGY Dock (`AGY-Dock` v2.8.0)
 
-**AGY Plugin Manager** is a decoupled Windows desktop control center, process supervisor, and Chrome DevTools Protocol (CDP) bridge launcher for **Google Antigravity IDE**.
+**AGY Dock** (formerly *AGY Plugin Manager* / `AGY-Launcher`) is a decoupled Windows desktop control center, process supervisor, and Chrome DevTools Protocol (CDP) bridge launcher for **Google Antigravity IDE**.
 
 It launches Antigravity cleanly with on-demand proxy injection and orchestrates external companion plugins without modifying host IDE binaries (`Antigravity.exe`, `app.asar`, or `version.dll`).
 
@@ -10,8 +10,8 @@ It launches Antigravity cleanly with on-demand proxy injection and orchestrates 
 
 Starting with **v2.0.0**, the manager core and external plugins are completely decoupled:
 
-- **Manager Core (`AGY-Launcher/`)**: Pure desktop GUI (`PySide6`), process/CDP supervisor (`desktop/core.py`), and optional CLI/HTTP daemon (`cli.mjs`, `server.mjs`).
-- **Writable User Data Directory**: When packaged as a Windows executable, user state (`plugins.json`, `plugins/`, `logs/`) is stored in `%LOCALAPPDATA%\AGY-Plugin-Manager` (or next to the executable in portable mode when `plugins.json` or `.portable` exists), completely separate from bundled app binaries (`_MEIPASS`).
+- **Desktop App (`src-tauri/` + `src/`) & Legacy CLI/Daemon (`AGY-Launcher/`)**: Native Rust/Tauri v2 Windows desktop control center with React UI, alongside optional Node.js CLI/HTTP daemon (`cli.mjs`, `server.mjs`).
+- **Writable User Data Directory**: When packaged as a Windows executable, user state (`plugins.json`, `plugins/`, `logs/`, `account-quota-cache.json`) is stored in `%LOCALAPPDATA%\AGY-Plugin-Manager` (retained for seamless upgrades, or next to the executable in portable mode when `plugins.json` or `.portable` exists), completely separate from bundled app binaries.
 - **Template Configuration**: [`AGY-Launcher/plugins.example.json`](AGY-Launcher/plugins.example.json) provides a clean zero-plugin baseline (`plugins: []`, `antigravityExe: ""`, `proxy.enabled: false`). Personal runtime files (`plugins/`, `plugins.json`, `logs/`) are excluded via [`.gitignore`](.gitignore).
 
 ---
@@ -33,21 +33,19 @@ Each package carries a root `agy-plugin.json` manifest (`schemaVersion: 1`). See
 ## Installation & Quick Start
 
 ### Option 1: Standalone Windows Setup Installer (Recommended)
-1. Download or build `AGY-Launcher/dist/AGY-Plugin-Manager-Setup-v2.0.0.exe`.
+1. Download or build `dist-release/AGY-Dock-Setup-v2.8.0.exe`.
 2. Run the setup wizard:
    - Automatically detects your local `Antigravity.exe` installation (with manual browse override).
-   - Installs clean manager binaries to `%LOCALAPPDATA%\AGY-Plugin-Manager` by default.
+   - Installs clean manager binaries to `%LOCALAPPDATA%\AGY-Plugin-Manager` by default (preserving existing configurations when upgrading from *AGY Plugin Manager*).
    - Initializes a clean `plugins.json` (or preserves your existing `plugins.json` and installed plugins on upgrade).
-   - Creates **Desktop** and **Start Menu** shortcuts (`AGY Plugin Manager`) plus `Uninstall.cmd`, and launches immediately.
+   - Creates **Desktop** and **Start Menu** shortcuts (`AGY Dock` / `Antigravity (AGY-Launcher)`), and launches immediately.
 3. Silent install for automation/CI:
    ```powershell
-   .\AGY-Plugin-Manager-Setup-v2.0.0.exe --silent
-   # Or specify custom target directory:
-   .\AGY-Plugin-Manager-Setup-v2.0.0.exe --silent --dest "D:\Apps\AGY-Plugin-Manager"
+   .\AGY-Dock-Setup-v2.8.0.exe /S
    ```
 
 ### Option 2: Installing Plugins (Drag-and-Drop / One-Click)
-1. Open **AGY Plugin Manager** and switch to **我的插件** (`My Plugins`).
+1. Open **AGY Dock** and switch to **我的插件** (`My Plugins`).
 2. **Drag and drop** any `.zip`, `.agypkg`, or `.agy-plugin` package onto the window (or click **安装插件包**).
 3. The manager validates the archive (Zip-Slip path traversal check + `agy-plugin.json` schema), extracts files into `plugins/<id>/`, registers the entry in `plugins.json`, and makes it immediately available to attach or launch.
 
@@ -91,7 +89,7 @@ python scripts/package_plugins.py
 ```powershell
 node scripts/build.mjs windows x64
 ```
-The build writes `dist-release/AGY-Plugin-Manager-Setup-v<VERSION>.exe`.
+The build writes `dist-release/AGY-Dock-Setup-v<VERSION>.exe`.
 
 ### Run Tests
 ```powershell

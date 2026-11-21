@@ -74,7 +74,12 @@ function locateBuiltExe(targetTriple) {
   }
   searchDirs.push(resolve(root, 'src-tauri', 'target', 'release'));
 
-  const exeNames = ['AGY Plugin Manager.exe', 'agy-plugin-manager.exe'];
+  const exeNames = [
+    'AGY Dock.exe',
+    'agy-dock.exe',
+    'AGY Plugin Manager.exe',
+    'agy-plugin-manager.exe',
+  ];
   for (const dir of searchDirs) {
     for (const name of exeNames) {
       const candidate = join(dir, name);
@@ -106,27 +111,34 @@ const customInstallDir = customDirIdx >= 0 ? extraArgs[customDirIdx + 1] : '';
 
 const installDir = customInstallDir
   ? resolve(customInstallDir)
-  : existsSync('D:\\AGY Plugin Manager')
-    ? 'D:\\AGY Plugin Manager'
-    : localAppData
-      ? join(localAppData, 'AGY-Plugin-Manager')
-      : '';
+  : existsSync('D:\\AGY Dock')
+    ? 'D:\\AGY Dock'
+    : existsSync('D:\\AGY Plugin Manager')
+      ? 'D:\\AGY Plugin Manager'
+      : localAppData
+        ? join(localAppData, 'AGY-Plugin-Manager')
+        : '';
 
 if (!installDir) {
   throw new Error('未检测到可用的本地安装目录');
 }
 
-const targetExe = join(installDir, 'AGY Plugin Manager.exe');
+const targetExe = join(installDir, 'AGY Dock.exe');
 mkdirSync(installDir, { recursive: true });
 
+stopRunningManager('AGY Dock.exe');
 stopRunningManager('AGY Plugin Manager.exe');
 
 try {
   copyFileSync(builtExe, targetExe);
+  const legacyExe = join(installDir, 'AGY Plugin Manager.exe');
+  if (existsSync(legacyExe)) {
+    rmSync(legacyExe, { force: true });
+  }
 } catch (error) {
   if (error && (error.code === 'EBUSY' || error.code === 'EPERM' || error.code === 'EACCES')) {
     console.error(
-      `[build:local] 无法覆盖 ${targetExe}（文件正被占用）。请先从系统托盘完全退出 AGY Plugin Manager，然后重新运行 npm run build:local。`,
+      `[build:local] 无法覆盖 ${targetExe}（文件正被占用）。请先从系统托盘完全退出 AGY Dock，然后重新运行 npm run build:local。`,
     );
     process.exit(1);
   }

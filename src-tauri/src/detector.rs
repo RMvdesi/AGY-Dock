@@ -74,7 +74,7 @@ fn managed_plugin_script_re() -> &'static Regex {
 
 fn installer_skip_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?i)(?:agy-launcher|plugin[\s_-]*manager)").unwrap())
+    RE.get_or_init(|| Regex::new(r"(?i)(?:agy-launcher|plugin[\s_-]*manager|agy[\s_-]*dock)").unwrap())
 }
 
 fn script_or_path_arg_re() -> &'static Regex {
@@ -263,6 +263,8 @@ pub fn find_antigravity_cleanup_targets(
                 && (cmd_lower.contains("server.mjs") || cmd_lower.contains("cli.mjs")))
             || name_lower.contains("agy plugin manager")
             || name_lower.contains("agy-plugin-manager")
+            || name_lower.contains("agy dock")
+            || name_lower.contains("agy-dock")
         {
             continue;
         }

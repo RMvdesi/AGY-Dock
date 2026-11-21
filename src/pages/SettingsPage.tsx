@@ -14,7 +14,13 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { MOTION_EASE, SpringSwitch } from "../components/MotionPrimitives";
-import { formatErrorMessage } from "../lib/format";
+import {
+  DEFAULT_NO_PROXY_LIST,
+  formatErrorMessage,
+  hasNoProxyHost,
+  normalizeNoProxyList,
+  toggleNoProxyHost,
+} from "../lib/format";
 import { ipc } from "../lib/ipc";
 import type {
   LifecycleConfig,
@@ -143,16 +149,30 @@ export function SettingsPage({
     }
   };
 
+  const PLAY_TELEMETRY_HOST = "play.googleapis.com";
+  const blockPlayTelemetry = hasNoProxyHost(noProxy, PLAY_TELEMETRY_HOST);
+
+  const handleToggleBlockPlayTelemetry = (checked: boolean) => {
+    setNoProxy((prev) => toggleNoProxyHost(prev, PLAY_TELEMETRY_HOST, checked));
+    setDirty(true);
+  };
+
   const handleAutoDetectProxy = async () => {
     setDetectingProxy(true);
     setProxyStatus({ tone: "muted", text: "正在检测..." });
     try {
       const detection = await ipc.detectSystemProxy();
       if (detection.detected) {
+        const keepPlayBlocked = hasNoProxyHost(noProxy, PLAY_TELEMETRY_HOST);
+        const detectedNoProxy = detection.noProxy || DEFAULT_NO_PROXY_LIST;
         setHttpProxy(detection.httpProxy || "");
         setHttpsProxy(detection.httpsProxy || "");
         setAllProxy(detection.allProxy || "");
-        setNoProxy(detection.noProxy || "127.0.0.1,localhost,::1");
+        setNoProxy(
+          keepPlayBlocked
+            ? toggleNoProxyHost(detectedNoProxy, PLAY_TELEMETRY_HOST, true)
+            : normalizeNoProxyList(detectedNoProxy),
+        );
         setElectronProxy(detection.electronProxyServer || "");
         setDirty(true);
         setProxyStatus({ tone: "ok", text: "已填入代理参数" });
@@ -184,12 +204,14 @@ export function SettingsPage({
           : { tone: "warn", text: "未配置" },
       );
 
+      const normalizedNoProxy = normalizeNoProxyList(noProxy);
+      setNoProxy(normalizedNoProxy);
       const proxyPayload: ProxyConfig = {
         enabled: proxyEnabled,
         httpProxy: httpProxy.trim(),
         httpsProxy: httpsProxy.trim(),
         allProxy: allProxy.trim(),
-        noProxy: noProxy.trim() || "127.0.0.1,localhost,::1",
+        noProxy: normalizedNoProxy,
         electronProxyServer: electronProxy.trim(),
       };
       await ipc.saveProxyConfig(proxyPayload);
@@ -431,6 +453,40 @@ export function SettingsPage({
           <p className="mt-2.5 text-[12px] text-[var(--text-muted)]">
             开启并保存后，在下次启动 Antigravity 时传入代理参数。
           </p>
+
+          <div className="agy-inset relative mt-3 flex items-center justify-between gap-4 px-3.5 py-2.5 pr-9">
+            <div className="min-w-0">
+              <div className="text-[12.5px] font-medium text-[var(--text-primary)]">
+                屏蔽 <span className="font-mono-code">play.googleapis.com</span> 进代理
+              </div>
+              <p className="mt-0.5 text-[11.5px] text-[var(--text-muted)]">
+                开启后自动将该域名规范写入 NO Proxy 以绕过代理
+              </p>
+            </div>
+
+            <SpringSwitch
+              checked={blockPlayTelemetry}
+              onChange={handleToggleBlockPlayTelemetry}
+              disabled={saving}
+              ariaLabel="屏蔽 play.googleapis.com 进代理"
+            />
+
+            <div className="group/tip absolute top-2 right-2">
+              <button
+                type="button"
+                aria-label="屏蔽 play.googleapis.com 进代理说明"
+                className="flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-[var(--border-strong)] bg-[var(--bg-surface)] text-[10px] leading-none font-bold text-[var(--text-muted)] transition-colors hover:border-[var(--warn)] hover:text-[var(--warn)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+              >
+                !
+              </button>
+              <div
+                role="tooltip"
+                className="pointer-events-none invisible absolute top-full right-0 z-30 mt-1.5 w-[264px] rounded-xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] px-3 py-2 text-[11.5px] leading-relaxed text-[var(--text-primary)] opacity-0 shadow-[var(--shadow-floating)] transition-all duration-150 group-hover/tip:visible group-hover/tip:opacity-100 group-focus-within/tip:visible group-focus-within/tip:opacity-100"
+              >
+                这个连接会持续上传大量流量，导致魔法流量消耗剧增，开启此功能即可避免。
+              </div>
+            </div>
+          </div>
 
           <div className="mt-3.5 space-y-2.5">
             <ProxyField

@@ -128,15 +128,16 @@ pub fn create_all_shortcuts(paths: &ManagerPaths) -> Result<ShortcutResult, Stri
     let working_dir = paths.data_dir.to_string_lossy().into_owned();
     let app_icon = find_manager_icon(paths, &launcher_exe);
 
-    let manager_lnk = desktop_dir.join("AGY Plugin Manager.lnk");
+    let manager_lnk = desktop_dir.join("AGY Dock.lnk");
     create_shortcut_com(
         &manager_lnk,
         &launcher_exe,
         "",
         &working_dir,
         &app_icon,
-        "打开 AGY Plugin Manager 原生桌面控制中心",
+        "打开 AGY Dock 原生桌面控制中心",
     )?;
+    let _ = std::fs::remove_file(desktop_dir.join("AGY Plugin Manager.lnk"));
     paths.log_info(&format!("已生成桌面快捷方式: {}", manager_lnk.display()));
 
     let agy_lnk = create_agy_launcher_shortcut(paths, &launcher_exe, &config.antigravity_exe)?;
@@ -198,7 +199,7 @@ pub fn ensure_default_shortcuts_once(paths: &ManagerPaths) -> Result<bool, Strin
 
     let desktop_dir = resolve_desktop_dir();
     let agy_lnk = desktop_dir.join("Antigravity (AGY-Launcher).lnk");
-    let mgr_lnk = desktop_dir.join("AGY Plugin Manager.lnk");
+    let mgr_lnk = desktop_dir.join("AGY Dock.lnk");
     if agy_lnk.exists() && mgr_lnk.exists() {
         cfg.ui.shortcuts_initialized = Some(true);
         save_config(paths, &cfg)?;

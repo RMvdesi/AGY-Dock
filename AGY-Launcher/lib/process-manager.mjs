@@ -24,7 +24,7 @@ const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_BASE_DIR = path.resolve(__dirname, '..');
 export const DEFAULT_NO_PROXY = '127.0.0.1,localhost,::1';
-export const APP_VERSION = '2.6.1';
+export const APP_VERSION = '2.8.0';
 export const DEFAULT_UPDATE_SITE_URL = 'https://www.haoanlab.xyz';
 export const DEFAULT_PRODUCT_SLUG = 'agy-plugin-manager';
 const UPDATE_SEMVER_RE = /^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$/;
@@ -46,7 +46,7 @@ const PROXY_PROCESS_NAMES = [
 const COMMON_PROXY_PORTS = [7897, 7890, 10808, 10809, 1080, 2080, 2081, 7891, 8080];
 const SOCKS_ONLY_PORTS = new Set([1080, 2080, 7891, 10808]);
 const MIXED_PROXY_PORTS = new Set([7897, 7890]);
-const ANTIGRAVITY_INSTALLER_SKIP_RE = /(?:agy-launcher|plugin[\s_-]*manager)/i;
+const ANTIGRAVITY_INSTALLER_SKIP_RE = /(?:agy-launcher|plugin[\s_-]*manager|agy[\s_-]*dock)/i;
 
 function hasRemoteDebuggingPortArg(args) {
   return args.some((arg) => {
@@ -63,6 +63,33 @@ function hasRemoteDebuggingPortArg(args) {
 /**
  * Builds Antigravity CLI args and environment variables with optional on-demand proxy injection.
  */
+function normalizeNoProxyList(raw) {
+  const seen = new Set();
+  const items = [];
+  for (const part of String(raw || '').split(/[,;\s]+/)) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      items.push(trimmed);
+    }
+  }
+  return items.length > 0 ? items.join(',') : DEFAULT_NO_PROXY;
+}
+
+function hasProxyBypassListArg(args) {
+  return (Array.isArray(args) ? args : []).some((arg) => {
+    const trimmed = String(arg || '').trim().toLowerCase();
+    return (
+      trimmed === '--proxy-bypass-list' ||
+      trimmed.startsWith('--proxy-bypass-list=') ||
+      trimmed === '-proxy-bypass-list' ||
+      trimmed.startsWith('-proxy-bypass-list=')
+    );
+  });
+}
+
 export function buildAntigravityLaunchParams(config, baseEnv = process.env) {
   const agyArgs = Array.isArray(config?.antigravityArgs)
     ? config.antigravityArgs.map((x) => String(x))
@@ -85,11 +112,19 @@ export function buildAntigravityLaunchParams(config, baseEnv = process.env) {
   if (proxy.httpsProxy) setEnvPair('HTTPS_PROXY', String(proxy.httpsProxy).trim());
   if (proxy.allProxy) setEnvPair('ALL_PROXY', String(proxy.allProxy).trim());
 
-  const noProxy = String(proxy.noProxy || '').trim() || DEFAULT_NO_PROXY;
+  const noProxy = String(proxy.noProxy || '').trim()
+    ? normalizeNoProxyList(proxy.noProxy)
+    : DEFAULT_NO_PROXY;
   setEnvPair('NO_PROXY', noProxy);
 
   if (proxy.electronProxyServer) {
     agyArgs.push(`--proxy-server=${String(proxy.electronProxyServer).trim()}`);
+    if (!hasProxyBypassListArg(agyArgs)) {
+      const bypassList = noProxy.split(',').filter(Boolean).join(';');
+      if (bypassList) {
+        agyArgs.push(`--proxy-bypass-list=${bypassList}`);
+      }
+    }
   }
   return { agyArgs, env, proxyInjected: true };
 }
@@ -227,7 +262,9 @@ export function findAntigravityCleanupTargets(processes, antigravityExe = '', ow
       (cmdLower.includes('agy-launcher') &&
         (cmdLower.includes('server.mjs') || cmdLower.includes('cli.mjs'))) ||
       nameLower.includes('agy plugin manager') ||
-      nameLower.includes('agy-plugin-manager')
+      nameLower.includes('agy-plugin-manager') ||
+      nameLower.includes('agy dock') ||
+      nameLower.includes('agy-dock')
     ) {
       continue;
     }
@@ -1556,7 +1593,7 @@ foreach ($proc in (Get-Process -Id ${pidList} -ErrorAction SilentlyContinue)) {
 
   async launchAntigravityAndAttach({ focusIfRunning = false } = {}) {
     if (!this.acquireLaunchLock()) {
-      const msg = '已有另一个 AGY-Launcher 启动流程正在执行，跳过重复触发';
+      const msg = '已有另一个 AGY Dock 启动流程正在执行，跳过重复触发';
       this.log(msg);
       return { skipped: true, message: msg, overview: await this.getOverview() };
     }
@@ -2058,7 +2095,11 @@ foreach ($proc in (Get-Process -Id ${pidList} -ErrorAction SilentlyContinue)) {
       httpProxy: String(proxyInput?.httpProxy || '').trim(),
       httpsProxy: String(proxyInput?.httpsProxy || '').trim(),
       allProxy: String(proxyInput?.allProxy || '').trim(),
-      noProxy: rawNoProxy || existingNoProxy || DEFAULT_NO_PROXY,
+      noProxy: rawNoProxy
+        ? normalizeNoProxyList(rawNoProxy)
+        : existingNoProxy
+          ? normalizeNoProxyList(existingNoProxy)
+          : DEFAULT_NO_PROXY,
       electronProxyServer: String(proxyInput?.electronProxyServer || '').trim(),
     };
     this.saveConfig(config);
@@ -2229,10 +2270,10 @@ $sc.Save()
   async createManagerAppShortcut() {
     const appIcon = path.join(this.baseDir, 'ui', 'app.ico');
     return this._createVbsShortcut({
-      fileName: 'AGY Plugin Manager.lnk',
+      fileName: 'AGY Dock.lnk',
       vbsFileName: 'launch-manager.vbs',
       iconPath: existsSync(appIcon) ? appIcon : '',
-      description: '打开 AGY Plugin Manager 独立桌面控制台',
+      description: '打开 AGY Dock 独立桌面控制台',
     });
   }
 
@@ -2256,7 +2297,7 @@ $sc.Save()
         headers: {
           Accept: 'application/json',
           'Cache-Control': 'no-store',
-          'User-Agent': `AGY-Plugin-Manager/${current}`,
+          'User-Agent': `AGY-Dock/${current}`,
         },
         signal: AbortSignal.timeout(Math.max(2000, Number(timeoutMs) || 6000)),
       });
@@ -2338,7 +2379,7 @@ $sc.Save()
         manifestUrl,
         updateUrl: landingUrl,
         prompt: {
-          title: cleanText(promptRaw.title) || `AGY Plugin Manager v${latestVersion} 已发布`,
+          title: cleanText(promptRaw.title) || `AGY Dock v${latestVersion} 已发布`,
           body: cleanText(promptRaw.body) || `当前版本 v${current}，最新版本 v${latestVersion}，可前往 HaoAn Lab 官网更新。`,
           button: cleanText(promptRaw.button) || '立即更新',
         },

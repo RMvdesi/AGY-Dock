@@ -6,7 +6,7 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_NO_PROXY: &str = "127.0.0.1,localhost,::1";
 pub const DEFAULT_UPDATE_SITE_URL: &str = "https://www.haoanlab.xyz";
 pub const DEFAULT_PRODUCT_SLUG: &str = "agy-plugin-manager";
-pub const DEFAULT_MARKETPLACE_REPO: &str = "haoan33/AGY-Plugin-Manager";
+pub const DEFAULT_MARKETPLACE_REPO: &str = "haoan33/AGY-Dock";
 
 fn default_manager_port() -> u16 {
     12400
@@ -315,6 +315,155 @@ pub struct NativePluginInfo {
     pub has_mcp: bool,
     pub has_rules: bool,
     pub sidecars: Vec<NativeSidecar>,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub homepage: String,
+    #[serde(default)]
+    pub mcp_names: Vec<String>,
+    #[serde(default)]
+    pub skill_names: Vec<String>,
+    #[serde(default)]
+    pub rule_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolInfo {
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerInfo {
+    pub id: String,
+    pub unique_key: String,
+    pub scope: String,
+    pub source_label: String,
+    pub config_path: String,
+    pub plugin_dir: Option<String>,
+    pub project_path: Option<String>,
+    pub transport: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub env: HashMap<String, String>,
+    pub url: Option<String>,
+    pub timeout_ms: Option<u64>,
+    pub disabled: bool,
+    pub parent_enabled: bool,
+    pub effective_enabled: bool,
+    pub runtime_status: String,
+    pub pids: Vec<u32>,
+    pub memory_bytes: u64,
+    pub cached_tools: Vec<McpToolInfo>,
+    #[serde(default)]
+    pub related_paths: Vec<String>,
+    pub can_toggle: bool,
+    pub can_delete: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpOverview {
+    pub language_server_running: bool,
+    pub global_config_path: String,
+    pub servers: Vec<McpServerInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpEndpointProbe {
+    pub reachable: bool,
+    pub status_code: Option<u16>,
+    pub latency_ms: u64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillInfo {
+    pub id: String,
+    pub dir_name: String,
+    pub name: String,
+    pub description: String,
+    pub scope: String,
+    pub scope_label: String,
+    pub project_name: Option<String>,
+    pub project_path: Option<String>,
+    pub plugin_dir: Option<String>,
+    pub path: String,
+    pub skill_md_path: String,
+    pub is_symlink: bool,
+    pub link_target: Option<String>,
+    pub subdirs: Vec<String>,
+    pub size_bytes: u64,
+    pub file_count: u64,
+    pub modified_at: f64,
+    pub can_delete: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDetail {
+    pub skill_md_path: String,
+    pub name: String,
+    pub description: String,
+    pub body_markdown: String,
+    pub raw_content: String,
+    pub size_bytes: u64,
+    pub modified_at: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleFileInfo {
+    pub id: String,
+    pub file_name: String,
+    pub kind: String,
+    pub rel_path: String,
+    pub full_path: String,
+    pub scope: String,
+    pub project_id: String,
+    pub project_name: String,
+    pub project_root: String,
+    pub size_bytes: u64,
+    pub modified_at: f64,
+    pub over_limit: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleFileContent {
+    pub full_path: String,
+    pub file_name: String,
+    pub content: String,
+    pub size_bytes: u64,
+    pub modified_at: f64,
+    pub over_limit: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredProject {
+    pub id: String,
+    pub name: String,
+    pub root_path: String,
+    pub source: String,
+    pub exists: bool,
+    pub skill_count: usize,
+    pub mcp_count: usize,
+    pub rule_files: Vec<RuleFileInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRulesOverview {
+    pub global_config_dir: String,
+    pub projects: Vec<DiscoveredProject>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -684,4 +833,134 @@ pub struct StorageDeleteResult {
     pub app_storage_cleaned: bool,
     pub antigravity_running: bool,
     pub cleaned_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaPeriodSnapshot {
+    pub bucket_id: String,
+    pub available: bool,
+    pub percent: Option<u8>,
+    pub raw_percent: Option<f64>,
+    pub reset_at_ms: Option<i64>,
+    pub reset_in: String,
+    pub reset_clock: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WeeklyForecastSnapshot {
+    /// "safe" | "tight" | "exhausted" | "unknown"
+    pub status: String,
+    /// Concise verdict label, e.g. "✓ 够用" / "⚠ 约 2天14时 用光" / "✕ 周耗尽"
+    pub label: String,
+    pub daily_burn_pct: Option<f64>,
+    pub runway_hours: Option<f64>,
+    pub reset_hours: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaPoolSnapshot {
+    pub id: String,
+    pub label: String,
+    pub short_label: String,
+    /// "gemini" | "claude-gpt" | "argon"
+    pub badge_kind: String,
+    pub five_hour: QuotaPeriodSnapshot,
+    pub weekly: QuotaPeriodSnapshot,
+    pub argon: Option<QuotaPeriodSnapshot>,
+    pub weekly_forecast: Option<WeeklyForecastSnapshot>,
+    #[serde(default)]
+    pub models: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountQuotaRecord {
+    pub account_key: String,
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+    pub tier_name: Option<String>,
+    pub tier_id: Option<String>,
+    pub avatar_data_url: Option<String>,
+    pub updated_at_ms: i64,
+    pub updated_at_text: String,
+    #[serde(default)]
+    pub pools: Vec<QuotaPoolSnapshot>,
+    pub total_models: usize,
+    #[serde(default)]
+    pub is_live: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountQuotaSnapshot {
+    /// "live" | "cached" | "unavailable" | "error"
+    pub status: String,
+    pub is_cached: bool,
+    pub stale: bool,
+    #[serde(default)]
+    pub account_key: Option<String>,
+    #[serde(default)]
+    pub live_account_key: Option<String>,
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+    pub tier_name: Option<String>,
+    pub tier_id: Option<String>,
+    pub avatar_data_url: Option<String>,
+    pub updated_at_ms: i64,
+    pub updated_at_text: String,
+    pub cdp_port: Option<u16>,
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub pools: Vec<QuotaPoolSnapshot>,
+    pub total_models: usize,
+    #[serde(default)]
+    pub accounts: Vec<AccountQuotaRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenDayUsage {
+    pub date_str: String,
+    pub short_date: String,
+    pub month_label: String,
+    pub day_num: u32,
+    /// 0 = Sunday .. 6 = Saturday
+    pub dow: u32,
+    pub weekday: String,
+    pub is_today: bool,
+    pub total_tokens: u64,
+    pub uncached_input: u64,
+    pub cache_read: u64,
+    pub thinking_output: u64,
+    pub response_output: u64,
+    pub output_total: u64,
+    pub steps: u64,
+    pub sessions: u64,
+    pub gemini_tokens: u64,
+    pub partners_tokens: u64,
+    pub argon_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsageSnapshot {
+    #[serde(default)]
+    pub days: Vec<TokenDayUsage>,
+    pub days7_total: u64,
+    pub days7_avg_active: u64,
+    pub days7_sessions: u64,
+    pub days30_total: u64,
+    pub days30_active_days: usize,
+    pub days30_sessions: u64,
+    pub all_total_tokens: u64,
+    pub all_uncached_input: u64,
+    pub all_cache_read: u64,
+    pub all_output_total: u64,
+    pub all_active_days: usize,
+    pub all_sessions: u64,
+    pub total_db_files: usize,
+    pub scanned_at_ms: i64,
 }

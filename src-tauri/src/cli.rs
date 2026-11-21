@@ -69,7 +69,7 @@ pub fn maybe_run_cli() -> Option<i32> {
                 if cfg!(debug_assertions) {
                     eprintln!("[ERROR] {err}");
                 } else {
-                    show_error_messagebox("AGY Plugin Manager - 启动失败", &err);
+                    show_error_messagebox("AGY Dock - 启动失败", &err);
                 }
                 return Some(1);
             }

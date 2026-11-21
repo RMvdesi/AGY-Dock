@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   TAURI_COMMANDS,
   TAURI_EVENTS,
+  type AccountQuotaSnapshot,
   type AntigravityDetectResult,
   type AutoProxyResult,
   type BundledPackageInfo,
@@ -16,6 +17,8 @@ import {
   type LifecycleConfig,
   type LocalPluginPackage,
   type LogTailResult,
+  type McpEndpointProbe,
+  type McpOverview,
   type NativePluginInfo,
   type OverviewSnapshot,
   type PluginActionResult,
@@ -23,11 +26,16 @@ import {
   type PluginPayload,
   type PluginRuntimeStatus,
   type PluginSettingsPageData,
+  type ProjectRulesOverview,
   type ProxyConfig,
   type RemoteMarketplaceResult,
+  type RuleFileContent,
+  type RuleFileInfo,
   type SaveExeResult,
   type SavePluginSettingsResult,
   type ShortcutResult,
+  type SkillDetail,
+  type SkillInfo,
   type StorageDeleteResult,
   type StorageInventory,
   type StorageScanProgress,
@@ -36,6 +44,7 @@ import {
   type SystemProxyDetection,
   type ThemeMode,
   type ToastEventPayload,
+  type TokenUsageSnapshot,
   type UiPreferences,
   type UpdateCheckResult,
 } from "../types/ipc";
@@ -218,12 +227,82 @@ export const ipc = {
 
   isAntigravityRunningForStorage: () =>
     callCommand<boolean>(TAURI_COMMANDS.IS_ANTIGRAVITY_RUNNING_FOR_STORAGE),
+
+  toggleNativePlugin: (dirName: string, enabled: boolean) =>
+    callCommand<NativePluginInfo[]>(TAURI_COMMANDS.TOGGLE_NATIVE_PLUGIN, { dirName, enabled }),
+
+  deleteNativePlugin: (dirName: string, recycleBin = true) =>
+    callCommand<NativePluginInfo[]>(TAURI_COMMANDS.DELETE_NATIVE_PLUGIN, { dirName, recycleBin }),
+
+  getMcpOverview: () => callCommand<McpOverview>(TAURI_COMMANDS.GET_MCP_OVERVIEW),
+
+  toggleMcpServer: (configPath: string, serverId: string, disabled: boolean) =>
+    callCommand<McpOverview>(TAURI_COMMANDS.TOGGLE_MCP_SERVER, { configPath, serverId, disabled }),
+
+  deleteMcpServer: (
+    configPath: string,
+    serverId: string,
+    cleanCache = false,
+    deleteFiles = false,
+  ) =>
+    callCommand<McpOverview>(TAURI_COMMANDS.DELETE_MCP_SERVER, {
+      configPath,
+      serverId,
+      cleanCache,
+      deleteFiles,
+    }),
+
+  stopMcpServerProcess: (configPath: string, serverId: string) =>
+    callCommand<McpOverview>(TAURI_COMMANDS.STOP_MCP_SERVER_PROCESS, { configPath, serverId }),
+
+  checkMcpEndpoint: (url: string) =>
+    callCommand<McpEndpointProbe>(TAURI_COMMANDS.CHECK_MCP_ENDPOINT, { url }),
+
+  listSkills: () => callCommand<SkillInfo[]>(TAURI_COMMANDS.LIST_SKILLS),
+
+  readSkillDetail: (skillMdPath: string) =>
+    callCommand<SkillDetail>(TAURI_COMMANDS.READ_SKILL_DETAIL, { skillMdPath }),
+
+  deleteSkill: (skillPath: string, recycleBin = true, deleteLinkTarget = false) =>
+    callCommand<void>(TAURI_COMMANDS.DELETE_SKILL, {
+      skillPath,
+      recycleBin,
+      deleteLinkTarget,
+    }),
+
+  listProjectRules: () => callCommand<ProjectRulesOverview>(TAURI_COMMANDS.LIST_PROJECT_RULES),
+
+  readRuleFile: (filePath: string) =>
+    callCommand<RuleFileContent>(TAURI_COMMANDS.READ_RULE_FILE, { filePath }),
+
+  openInNotepad: (filePath: string) =>
+    callCommand<void>(TAURI_COMMANDS.OPEN_IN_NOTEPAD, { filePath }),
+
+  createRuleFileAndOpenNotepad: (projectRoot: string, fileName: string) =>
+    callCommand<RuleFileInfo>(TAURI_COMMANDS.CREATE_RULE_FILE_AND_OPEN_NOTEPAD, {
+      projectRoot,
+      fileName,
+    }),
+
+  pickNativeProject: () => callCommand<boolean>(TAURI_COMMANDS.PICK_NATIVE_PROJECT),
+  getAccountQuota: () => callCommand<AccountQuotaSnapshot>(TAURI_COMMANDS.GET_ACCOUNT_QUOTA),
+  removeCachedQuotaAccount: (accountKey: string) =>
+    callCommand<AccountQuotaSnapshot>(TAURI_COMMANDS.REMOVE_CACHED_QUOTA_ACCOUNT, { accountKey }),
+  getTokenUsage: () => callCommand<TokenUsageSnapshot>(TAURI_COMMANDS.GET_TOKEN_USAGE),
 };
 
 export const events = {
   onOverviewUpdated: (cb: (payload: OverviewSnapshot) => void): Promise<UnlistenFn> =>
     isTauriRuntime()
       ? listen<OverviewSnapshot>(TAURI_EVENTS.OVERVIEW_UPDATED, (e) => cb(e.payload))
+      : Promise.resolve(() => {}),
+  onQuotaUpdated: (cb: (payload: AccountQuotaSnapshot) => void): Promise<UnlistenFn> =>
+    isTauriRuntime()
+      ? listen<AccountQuotaSnapshot>(TAURI_EVENTS.QUOTA_UPDATED, (e) => cb(e.payload))
+      : Promise.resolve(() => {}),
+  onTokenUsageUpdated: (cb: (payload: TokenUsageSnapshot) => void): Promise<UnlistenFn> =>
+    isTauriRuntime()
+      ? listen<TokenUsageSnapshot>(TAURI_EVENTS.TOKEN_USAGE_UPDATED, (e) => cb(e.payload))
       : Promise.resolve(() => {}),
 
   onNativeUpdated: (cb: (payload: NativePluginInfo[]) => void): Promise<UnlistenFn> =>

@@ -1,8 +1,8 @@
-# AGY Plugin Manager — Project Rules
+# AGY Dock — Project Rules
 
 ## 1. Project Overview
 
-**AGY Plugin Manager** (`AGY-Launcher`) is a Windows desktop control center, process supervisor, and CDP bridge launcher for **Google Antigravity IDE**.
+**AGY Dock** (formerly *AGY Plugin Manager* / `AGY-Launcher`) is a Windows desktop control center, process supervisor, and CDP bridge launcher for **Google Antigravity IDE**.
 
 Its primary goals are:
 - Launching Antigravity IDE cleanly with controlled proxy injection, launch locking, and Chrome DevTools Protocol (`DevToolsActivePort`) readiness verification.
@@ -46,9 +46,9 @@ All active source code, configuration, and runtime assets reside under `AGY-Laun
 
 ### HaoAn Lab Website Update & Integration Compliance
 - **Comply with HaoAn Lab (`https://www.haoanlab.xyz`) update mechanism & integration spec**: All future versions and releases of `AGY-Launcher` MUST stay compatible with the `Personal tools website` (`haoan-lab`) integration specification (`docs/product-integration.md` and `开发接入网站规范.md`):
-  - **Product identity & mode**: Registered as `slug: "agy-plugin-manager"`, `distribution_mode: "managed"`, `runtime_mode: "none"`, `auth_mode: "none"` (public non-forced update checking only — never add startup lockouts, account credential collection, device fingerprinting, or forced update blocking).
+  - **Product identity & mode**: Registered as `slug: "agy-plugin-manager"` (retained for HaoAn Lab update compatibility), `distribution_mode: "managed"`, `runtime_mode: "none"`, `auth_mode: "none"` (public non-forced update checking only — never add startup lockouts, account credential collection, device fingerprinting, or forced update blocking).
   - **Update check & landing endpoints**: Query `GET https://www.haoanlab.xyz/api/v1/products/agy-plugin-manager/releases/latest?platform=windows&arch=<x64|arm64>&from=<X.Y.Z>` using formal SemVer without leading `v`, and navigate clicking `立即更新` to `https://www.haoanlab.xyz/updates/agy-plugin-manager?from=<X.Y.Z>&platform=windows&arch=<arch>`.
-  - **Website-managed copy safety**: Render website-supplied `prompt.title` and `prompt.body` as plain text and `release.changelog` as safe Markdown with raw HTML and external images disabled, retain graceful offline/unpublished fallbacks, and synchronize `APP_VERSION` (`AGY-Launcher/desktop/core.py`) with `VERSION` (`AGY-Launcher/server.mjs`) and release installer asset naming (`AGY-Plugin-Manager-Setup-v<version>.exe`).
+  - **Website-managed copy safety**: Render website-supplied `prompt.title` and `prompt.body` as plain text and `release.changelog` as safe Markdown with raw HTML and external images disabled, retain graceful offline/unpublished fallbacks, and synchronize `APP_VERSION` (`src-tauri/Cargo.toml`) with `VERSION` (`AGY-Launcher/server.mjs`) and release installer asset naming (`AGY-Dock-Setup-v<version>.exe`).
 
 ### Verification Gate
 - Run `python -m unittest discover -s tests -v` inside `AGY-Launcher` after every change to `desktop_app.py`, `desktop/*.py`, or `tests/`.

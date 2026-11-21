@@ -131,12 +131,14 @@ function buildInjectedBridgeHead(
   html, body {
     margin: 0;
     padding: 0;
+    height: auto !important;
+    min-height: 0 !important;
     background: transparent;
     color: var(--text-primary);
     font-family: var(--font-sans);
     font-size: 13px;
     line-height: 1.5;
-    overflow-x: hidden;
+    overflow: hidden !important;
     -webkit-font-smoothing: antialiased;
   }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -173,21 +175,39 @@ function buildInjectedBridgeHead(
   };
 
   let lastReportedHeight = 0;
-  const reportHeight = () => {
-    if (!document.body) return;
-    const childMax = Array.from(document.body.children).reduce((acc, el) => {
+  let resizeRafId = 0;
+  const measureContentHeight = () => {
+    if (!document.body) return 0;
+    let maxBottom = 0;
+    for (const el of Array.from(document.body.children)) {
+      const style = window.getComputedStyle(el);
+      if (style.position === "fixed" || style.position === "absolute" || style.display === "none") {
+        continue;
+      }
       const rect = el.getBoundingClientRect();
-      return Math.max(acc, Math.ceil(el.offsetTop + el.scrollHeight), Math.ceil(rect.height));
-    }, 0);
-    const h = Math.max(
-      childMax,
-      document.body.scrollHeight || 0,
+      maxBottom = Math.max(
+        maxBottom,
+        Math.ceil(el.offsetTop + el.offsetHeight),
+        Math.ceil(rect.bottom)
+      );
+    }
+    return Math.max(
+      maxBottom,
+      Math.ceil(document.body.getBoundingClientRect().height),
       document.body.offsetHeight || 0
     );
+  };
+  const reportHeight = () => {
+    resizeRafId = 0;
+    const h = measureContentHeight();
     if (h > 0 && Math.abs(h - lastReportedHeight) > 1) {
       lastReportedHeight = h;
       postToHost({ type: "resize", height: h });
     }
+  };
+  const scheduleReportHeight = () => {
+    if (resizeRafId) return;
+    resizeRafId = window.requestAnimationFrame(reportHeight);
   };
 
   window.addEventListener("message", (event) => {
@@ -262,7 +282,7 @@ function buildInjectedBridgeHead(
     openExternalUrl: (url) => {
       postToHost({ type: "open-url", url: String(url || "") });
     },
-    resize: reportHeight,
+    resize: scheduleReportHeight,
     onReady: (cb) => {
       if (typeof cb !== "function") return;
       if (document.readyState === "loading") {
@@ -285,17 +305,12 @@ function buildInjectedBridgeHead(
     }
     reportHeight();
     if (typeof ResizeObserver === "function" && document.body) {
-      const ro = new ResizeObserver(() => reportHeight());
+      const ro = new ResizeObserver(() => scheduleReportHeight());
       ro.observe(document.body);
-      ro.observe(document.documentElement);
     }
-    setTimeout(reportHeight, 60);
-    setTimeout(reportHeight, 250);
+    setTimeout(scheduleReportHeight, 60);
+    setTimeout(scheduleReportHeight, 250);
   };
-
-  window.addEventListener("wheel", (e) => {
-    postToHost({ type: "wheel", deltaY: e.deltaY, deltaX: e.deltaX });
-  }, { passive: true });
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", onDomReady, { once: true });
@@ -349,6 +364,10 @@ export function ExternalPluginDetailPage({
   const scrollSectionRef = useRef<HTMLElement | null>(null);
   const initialThemeRef = useRef<boolean>(isDark);
   const initialSettingsSnapshotRef = useRef<Record<string, unknown>>({});
+  const onOpenUrlRef = useRef(onOpenUrl);
+  const onToastRef = useRef(onToast);
+  onOpenUrlRef.current = onOpenUrl;
+  onToastRef.current = onToast;
 
   const supportsSettings = useMemo(() => {
     if (settingsData && settingsData.pluginId === plugin.id) {
@@ -438,17 +457,8 @@ export function ExternalPluginDetailPage({
       }
 
       if (data.type === "resize" && typeof data.height === "number") {
-        const clamped = Math.max(240, Math.min(4800, Math.ceil(data.height) + 8));
-        setIframeHeight(clamped);
-        return;
-      }
-
-      if (data.type === "wheel" && typeof data.deltaY === "number") {
-        scrollSectionRef.current?.scrollBy({
-          top: data.deltaY,
-          left: typeof data.deltaX === "number" ? data.deltaX : 0,
-          behavior: "auto",
-        });
+        const clamped = Math.max(240, Math.min(4800, Math.ceil(data.height)));
+        setIframeHeight((prev) => (Math.abs(prev - clamped) >= 2 ? clamped : prev));
         return;
       }
 
@@ -456,12 +466,12 @@ export function ExternalPluginDetailPage({
         const tone = ["info", "ok", "warn", "error"].includes(data.tone)
           ? (data.tone as "info" | "ok" | "warn" | "error")
           : "info";
-        onToast?.(data.message.trim(), tone);
+        onToastRef.current?.(data.message.trim(), tone);
         return;
       }
 
       if (data.type === "open-url" && typeof data.url === "string" && /^https?:\/\//i.test(data.url.trim())) {
-        onOpenUrl?.(data.url.trim());
+        onOpenUrlRef.current?.(data.url.trim());
         return;
       }
 
@@ -490,7 +500,7 @@ export function ExternalPluginDetailPage({
             "*",
           );
           if (!silent) {
-            onToast?.(
+            onToastRef.current?.(
               saved.restarted ? "设置已保存并热重载插件" : "插件设置已保存",
               "ok",
             );
@@ -508,7 +518,7 @@ export function ExternalPluginDetailPage({
             "*",
           );
           if (!silent) {
-            onToast?.(`保存插件设置失败：${errMsg}`, "error");
+            onToastRef.current?.(`保存插件设置失败：${errMsg}`, "error");
           }
         }
       }
@@ -516,7 +526,7 @@ export function ExternalPluginDetailPage({
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [plugin.id, onOpenUrl, onToast]);
+  }, [plugin.id]);
 
   const composedSrcDoc = useMemo(() => {
     if (!settingsData?.hasSettings || !settingsData.html.trim()) return "";
@@ -586,7 +596,8 @@ export function ExternalPluginDetailPage({
       {/* Main Detail Card */}
       <section
         ref={scrollSectionRef}
-        className="agy-card flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-6"
+        style={{ scrollbarGutter: "stable" }}
+        className="agy-card flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain p-6"
       >
         {/* Hero */}
         <div className="flex shrink-0 items-start gap-4">
@@ -711,50 +722,49 @@ export function ExternalPluginDetailPage({
           )}
         </div>
 
-        {/* Section Body: Settings View vs Detail View */}
+        {/* Section Body: Settings View (kept mounted to prevent iframe reload flicker) vs Detail View */}
+        {supportsSettings && (
+          <div
+            className={
+              effectiveTab === "settings" ? "flex shrink-0 flex-col" : "hidden"
+            }
+          >
+            {loadingSettings && !composedSrcDoc ? (
+              <div className="agy-inset flex min-h-[220px] items-center justify-center gap-2 p-6 text-[13px] text-[var(--text-muted)]">
+                <RefreshCw className="h-4 w-4 animate-spin text-[var(--accent)]" />
+                <span>正在加载插件设置界面...</span>
+              </div>
+            ) : settingsError ? (
+              <div className="agy-inset flex min-h-[200px] flex-col items-center justify-center gap-2.5 p-6 text-center">
+                <p className="text-[13px] text-[var(--danger)]">
+                  加载插件设置页失败：{settingsError}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void fetchSettingsPage()}
+                  className="agy-btn text-[12px]"
+                >
+                  重试
+                </button>
+              </div>
+            ) : (
+              <div className="agy-inset p-3.5">
+                <iframe
+                  ref={iframeRef}
+                  title={`${plugin.name || plugin.id} 设置页`}
+                  sandbox="allow-scripts"
+                  scrolling="no"
+                  srcDoc={composedSrcDoc}
+                  style={{ height: `${iframeHeight}px` }}
+                  className="block w-full border-0 bg-transparent"
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         <AnimatePresence mode="wait" initial={false}>
-          {effectiveTab === "settings" && supportsSettings ? (
-            <motion.div
-              key="plugin-settings-section"
-              initial={{ opacity: 0, y: prefersReduced ? 0 : 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: prefersReduced ? 0 : -4 }}
-              transition={{ duration: prefersReduced ? 0.05 : 0.14, ease: MOTION_EASE }}
-              className="flex shrink-0 flex-col"
-            >
-              {loadingSettings && !composedSrcDoc ? (
-                <div className="agy-inset flex min-h-[220px] items-center justify-center gap-2 p-6 text-[13px] text-[var(--text-muted)]">
-                  <RefreshCw className="h-4 w-4 animate-spin text-[var(--accent)]" />
-                  <span>正在加载插件设置界面...</span>
-                </div>
-              ) : settingsError ? (
-                <div className="agy-inset flex min-h-[200px] flex-col items-center justify-center gap-2.5 p-6 text-center">
-                  <p className="text-[13px] text-[var(--danger)]">
-                    加载插件设置页失败：{settingsError}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => void fetchSettingsPage()}
-                    className="agy-btn text-[12px]"
-                  >
-                    重试
-                  </button>
-                </div>
-              ) : (
-                <div className="agy-inset p-3.5">
-                  <iframe
-                    ref={iframeRef}
-                    title={`${plugin.name || plugin.id} 设置页`}
-                    sandbox="allow-scripts"
-                    scrolling="no"
-                    srcDoc={composedSrcDoc}
-                    style={{ height: `${iframeHeight}px` }}
-                    className="block w-full border-0 bg-transparent transition-[height] duration-150"
-                  />
-                </div>
-              )}
-            </motion.div>
-          ) : (
+          {effectiveTab === "detail" && (
             <motion.div
               key="plugin-detail-section"
               initial={{ opacity: 0, y: prefersReduced ? 0 : 4 }}

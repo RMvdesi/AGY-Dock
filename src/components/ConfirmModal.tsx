@@ -5,6 +5,15 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 export type ConfirmModalTone = "danger" | "warn" | "info";
 
+export interface ConfirmCheckboxOption {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  disabled?: boolean;
+  tone?: "default" | "danger";
+  onChange: (checked: boolean) => void;
+}
+
 interface ConfirmModalProps {
   open: boolean;
   title: string;
@@ -17,6 +26,7 @@ interface ConfirmModalProps {
   checkboxHint?: string;
   checkboxChecked?: boolean;
   onCheckboxChange?: (checked: boolean) => void;
+  extraCheckboxes?: ConfirmCheckboxOption[];
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -33,6 +43,7 @@ export function ConfirmModal({
   checkboxHint,
   checkboxChecked = false,
   onCheckboxChange,
+  extraCheckboxes,
   onCancel,
   onConfirm,
 }: ConfirmModalProps) {
@@ -112,26 +123,58 @@ export function ConfirmModal({
                 <p className="mt-1.5 whitespace-pre-line text-[13px] leading-relaxed text-[var(--text-muted)]">
                   {description}
                 </p>
-                {checkboxLabel && (
-                  <label className="agy-inset mt-3.5 flex cursor-pointer items-start gap-2.5 px-3 py-2.5 transition-colors hover:border-[var(--border-strong)]">
-                    <SpringSwitch
-                      checked={Boolean(checkboxChecked)}
-                      disabled={busy}
-                      onChange={(checked) => onCheckboxChange?.(checked)}
-                      ariaLabel={checkboxLabel}
-                      tone="danger"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[12.5px] font-medium text-[var(--text-primary)]">
-                        {checkboxLabel}
-                      </span>
-                      {checkboxHint && (
-                        <span className="mt-0.5 block text-[11.5px] leading-snug text-[var(--text-muted)]">
-                          {checkboxHint}
+                {(checkboxLabel || (extraCheckboxes && extraCheckboxes.length > 0)) && (
+                  <div className="mt-3.5 space-y-2">
+                    {checkboxLabel && (
+                      <label className="agy-inset flex cursor-pointer items-start gap-2.5 px-3 py-2.5 transition-colors hover:border-[var(--border-strong)]">
+                        <SpringSwitch
+                          checked={Boolean(checkboxChecked)}
+                          disabled={busy}
+                          onChange={(checked) => onCheckboxChange?.(checked)}
+                          ariaLabel={checkboxLabel}
+                          tone="danger"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[12.5px] font-medium text-[var(--text-primary)]">
+                            {checkboxLabel}
+                          </span>
+                          {checkboxHint && (
+                            <span className="mt-0.5 block break-all text-[11.5px] leading-snug text-[var(--text-muted)]">
+                              {checkboxHint}
+                            </span>
+                          )}
                         </span>
-                      )}
-                    </span>
-                  </label>
+                      </label>
+                    )}
+                    {extraCheckboxes?.map((opt) => (
+                      <label
+                        key={opt.label}
+                        className={`agy-inset flex items-start gap-2.5 px-3 py-2.5 transition-colors ${
+                          opt.disabled
+                            ? "cursor-not-allowed opacity-60"
+                            : "cursor-pointer hover:border-[var(--border-strong)]"
+                        }`}
+                      >
+                        <SpringSwitch
+                          checked={Boolean(opt.checked)}
+                          disabled={busy || Boolean(opt.disabled)}
+                          onChange={(checked) => opt.onChange(checked)}
+                          ariaLabel={opt.label}
+                          tone={opt.tone ?? "danger"}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[12.5px] font-medium text-[var(--text-primary)]">
+                            {opt.label}
+                          </span>
+                          {opt.hint && (
+                            <span className="mt-0.5 block break-all text-[11.5px] leading-snug text-[var(--text-muted)]">
+                              {opt.hint}
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
                 )}
               </div>
 

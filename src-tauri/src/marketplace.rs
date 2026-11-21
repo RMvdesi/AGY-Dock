@@ -5,7 +5,7 @@ use crate::models::{
 };
 use crate::paths::ManagerPaths;
 use crate::plugins::{
-    discover_local_plugins, install_plugin_package, read_plugin_dir_manifest,
+    discover_local_plugins, install_plugin_package_bytes, read_plugin_dir_manifest,
     resolve_plugin_version, SUPPORTED_PACKAGE_EXTS,
 };
 use chrono::Local;
@@ -15,10 +15,9 @@ use semver::Version;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use url::Url;
 
 const MAX_CATALOG_BYTES: usize = 1_048_576; // 1 MB
@@ -104,7 +103,11 @@ fn resolve_marketplace_repo(cfg: &AppConfig) -> String {
         .map(str::trim)
         .unwrap_or("");
     if !raw.is_empty() && repo_slug_re().is_match(raw) {
-        raw.to_string()
+        if raw.eq_ignore_ascii_case("haoan33/AGY-Plugin-Manager") {
+            DEFAULT_MARKETPLACE_REPO.to_string()
+        } else {
+            raw.to_string()
+        }
     } else {
         DEFAULT_MARKETPLACE_REPO.to_string()
     }
@@ -138,7 +141,7 @@ fn default_owner_author(repo: &str) -> String {
 pub fn build_http_client(cfg: &AppConfig, timeout_secs: u64) -> Result<Client, String> {
     let mut builder = Client::builder()
         .timeout(Duration::from_secs(timeout_secs.max(2)))
-        .user_agent(format!("AGY-Plugin-Manager/{APP_VERSION}"));
+        .user_agent(format!("AGY-Dock/{APP_VERSION}"));
 
     if cfg.proxy.enabled {
         let candidates = [
@@ -789,36 +792,13 @@ pub async fn install_remote_plugin(
         }
     }
 
-    let path_lower = parsed_url.path().to_ascii_lowercase();
-    let ext = SUPPORTED_PACKAGE_EXTS
-        .iter()
-        .copied()
-        .find(|e| path_lower.ends_with(&format!(".{e}")))
-        .unwrap_or("zip");
-
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let tmp_path = std::env::temp_dir().join(format!(
-        "agy-mkt-{clean_id}-{}-{nanos}.{ext}",
-        std::process::id()
-    ));
-    fs::write(&tmp_path, &buf).map_err(|e| format!("写入临时插件包失败: {e}"))?;
-
-    struct TempFileGuard(PathBuf);
-    impl Drop for TempFileGuard {
-        fn drop(&mut self) {
-            let _ = fs::remove_file(&self.0);
-        }
-    }
-    let _guard = TempFileGuard(tmp_path.clone());
-
     let p_clone = paths.clone();
-    let tmp_str = tmp_path.to_string_lossy().into_owned();
-    let install_res = tokio::task::spawn_blocking(move || install_plugin_package(&p_clone, &tmp_str, true))
-        .await
-        .map_err(|e| format!("安装远程插件任务失败: {e}"))??;
+    let source_url = parsed_url.to_string();
+    let install_res = tokio::task::spawn_blocking(move || {
+        install_plugin_package_bytes(&p_clone, &buf, true, &source_url)
+    })
+    .await
+    .map_err(|e| format!("安装远程插件任务失败: {e}"))??;
 
     Ok(install_res)
 }
@@ -849,8 +829,10 @@ pub fn mark_marketplace_seen(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use zip::write::SimpleFileOptions;
 
     fn create_temp_paths(tag: &str) -> ManagerPaths {
@@ -877,9 +859,9 @@ mod tests {
 
     #[test]
     fn url_whitelist_validation_rejects_untrusted_hosts_and_http() {
-        assert!(validate_download_url("https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.2.1/office-viewer-v1.0.2.zip").is_ok());
+        assert!(validate_download_url("https://github.com/haoan33/AGY-Dock/releases/download/v2.2.1/office-viewer-v1.0.2.zip").is_ok());
         assert!(validate_download_url("https://objects.githubusercontent.com/some/asset.zip").is_ok());
-        assert!(validate_download_url("https://raw.githubusercontent.com/haoan33/AGY-Plugin-Manager/main/a.zip").is_ok());
+        assert!(validate_download_url("https://raw.githubusercontent.com/haoan33/AGY-Dock/main/a.zip").is_ok());
         assert!(validate_download_url("https://codeload.github.com/haoan33/repo/zip/main").is_ok());
         assert!(validate_download_url("http://127.0.0.1:8080/a.zip").is_ok());
         assert!(validate_download_url("http://localhost:3000/a.zip").is_ok());
@@ -895,7 +877,7 @@ mod tests {
     fn catalog_json_parsing_and_sanitization() {
         let raw = br#"{
             "schemaVersion": 1,
-            "repository": "haoan33/AGY-Plugin-Manager",
+            "repository": "haoan33/AGY-Dock",
             "updatedAt": "2026-11-14T12:00:00Z",
             "plugins": [
                 {
@@ -905,8 +887,8 @@ mod tests {
                     "author": { "name": "HaoAn\u0000" },
                     "description": "View docs\u001b",
                     "type": "node-cdp",
-                    "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.2.1/office-viewer-v1.0.2.zip",
-                    "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
+                    "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.2.1/office-viewer-v1.0.2.zip",
+                    "homepage": "https://github.com/haoan33/AGY-Dock",
                     "sha256": "abc123",
                     "size": 1024
                 },
@@ -939,19 +921,19 @@ mod tests {
                 "body": "Latest fixes",
                 "assets": [
                     {
-                        "name": "AGY-Plugin-Manager-Setup-v2.2.1.exe",
+                        "name": "AGY-Dock-Setup-v2.8.0.exe",
                         "size": 99999,
-                        "browser_download_url": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.2.1/AGY-Plugin-Manager-Setup-v2.2.1.exe"
+                        "browser_download_url": "https://github.com/haoan33/AGY-Dock/releases/download/v2.8.0/AGY-Dock-Setup-v2.8.0.exe"
                     },
                     {
                         "name": "office-viewer-v1.0.2.zip",
                         "size": 2048,
-                        "browser_download_url": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.2.1/office-viewer-v1.0.2.zip"
+                        "browser_download_url": "https://github.com/haoan33/AGY-Dock/releases/download/v2.2.1/office-viewer-v1.0.2.zip"
                     },
                     {
                         "name": "antigravity-hans.agypkg",
                         "size": 1024,
-                        "browser_download_url": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.2.1/antigravity-hans.agypkg"
+                        "browser_download_url": "https://github.com/haoan33/AGY-Dock/releases/download/v2.2.1/antigravity-hans.agypkg"
                     }
                 ]
             },
@@ -962,13 +944,13 @@ mod tests {
                     {
                         "name": "office-viewer-v1.0.0.zip",
                         "size": 1500,
-                        "browser_download_url": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.1.0/office-viewer-v1.0.0.zip"
+                        "browser_download_url": "https://github.com/haoan33/AGY-Dock/releases/download/v2.1.0/office-viewer-v1.0.0.zip"
                     }
                 ]
             }
         ]"#;
         let hints = HashMap::new();
-        let items = parse_github_releases_json(raw, "haoan33/AGY-Plugin-Manager", &hints).unwrap();
+        let items = parse_github_releases_json(raw, "haoan33/AGY-Dock", &hints).unwrap();
         assert_eq!(items.len(), 2);
         let ov = items.iter().find(|i| i.id == "office-viewer").unwrap();
         assert_eq!(ov.version, "1.0.2");
@@ -988,7 +970,7 @@ mod tests {
                     {
                         "name": "antigravity-hans-v0.5.1.zip",
                         "size": 143000,
-                        "browser_download_url": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.2.1/antigravity-hans-v0.5.1.zip"
+                        "browser_download_url": "https://github.com/haoan33/AGY-Dock/releases/download/v2.2.1/antigravity-hans-v0.5.1.zip"
                     }
                 ]
             },
@@ -999,13 +981,13 @@ mod tests {
                     {
                         "name": "antigravity-hans.zip",
                         "size": 3400000,
-                        "browser_download_url": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.1.2/antigravity-hans.zip"
+                        "browser_download_url": "https://github.com/haoan33/AGY-Dock/releases/download/v2.1.2/antigravity-hans.zip"
                     }
                 ]
             }
         ]"#;
         let hints = HashMap::new();
-        let items = parse_github_releases_json(releases, "haoan33/AGY-Plugin-Manager", &hints).unwrap();
+        let items = parse_github_releases_json(releases, "haoan33/AGY-Dock", &hints).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, "antigravity-hans");
         assert_eq!(items[0].version, "0.5.1");
@@ -1020,7 +1002,7 @@ mod tests {
                     {
                         "name": "antigravity-hans.zip",
                         "size": 3400000,
-                        "browser_download_url": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.1.2/antigravity-hans.zip"
+                        "browser_download_url": "https://github.com/haoan33/AGY-Dock/releases/download/v2.1.2/antigravity-hans.zip"
                     }
                 ]
             },
@@ -1030,12 +1012,12 @@ mod tests {
                     {
                         "name": "antigravity-hans-v0.5.1.zip",
                         "size": 143000,
-                        "browser_download_url": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.2.1/antigravity-hans-v0.5.1.zip"
+                        "browser_download_url": "https://github.com/haoan33/AGY-Dock/releases/download/v2.2.1/antigravity-hans-v0.5.1.zip"
                     }
                 ]
             }
         ]"#;
-        let items_rev = parse_github_releases_json(reversed, "haoan33/AGY-Plugin-Manager", &hints).unwrap();
+        let items_rev = parse_github_releases_json(reversed, "haoan33/AGY-Dock", &hints).unwrap();
         assert_eq!(items_rev[0].version, "0.5.1");
         assert_eq!(items_rev[0].release_tag, "v2.2.1");
     }
@@ -1064,7 +1046,7 @@ mod tests {
                     "name": "Demo Remote",
                     "version": "1.1.0",
                     "author": "HaoAn",
-                    "homepage": "https://github.com/haoan33/AGY-Plugin-Manager",
+                    "homepage": "https://github.com/haoan33/AGY-Dock",
                     "type": "node-cdp",
                     "command": "node",
                     "launchArgs": ["plugins\\demo-remote\\index.js"]
@@ -1132,7 +1114,7 @@ mod tests {
         let paths = create_temp_paths("e2e");
         let mut cfg = load_config(&paths).unwrap();
         cfg.marketplace = Some(MarketplaceConfig {
-            repository: Some("haoan33/AGY-Plugin-Manager".to_string()),
+            repository: Some("haoan33/AGY-Dock".to_string()),
             catalog_url: Some(format!("http://{addr}/catalog.json")),
             auto_check_on_startup: Some(true),
             seen_plugin_ids: Vec::new(),
@@ -1162,10 +1144,60 @@ mod tests {
         assert_eq!(installed.plugin.id, "demo-remote");
         assert_eq!(installed.plugin.author.as_deref(), Some("HaoAn"));
 
+        // Ensure remote install does not leave installer archive in pluginsDir or dataDir
+        assert!(fs::read_dir(&paths.plugins_dir)
+            .unwrap()
+            .flatten()
+            .all(|e| !e.file_name().to_string_lossy().ends_with(".zip")));
+
         refresh_marketplace_snapshot_status(&paths, &mut res);
         assert_eq!(res.plugins[0].status, "installed");
         assert!(res.plugins[0].installed);
         assert_eq!(res.plugins[0].installed_version, "1.1.0");
+
+        // Verify update overwrites old files cleanly (v1.1.0 -> v1.2.0 drops legacy.js while keeping settings.json)
+        let inst_dir = PathBuf::from(&installed.installed_dir);
+        fs::write(inst_dir.join("legacy.js"), b"old").unwrap();
+        fs::write(inst_dir.join("settings.json"), br#"{"keep":true}"#).unwrap();
+
+        let mut zip_buf_v2 = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw = zip::ZipWriter::new(&mut zip_buf_v2);
+            let opts = SimpleFileOptions::default();
+            zw.start_file("agy-plugin.json", opts).unwrap();
+            zw.write_all(
+                br#"{
+                    "schemaVersion": 1,
+                    "id": "demo-remote",
+                    "name": "Demo Remote",
+                    "version": "1.2.0",
+                    "type": "node-cdp",
+                    "command": "node",
+                    "launchArgs": ["plugins\\demo-remote\\index.js"]
+                }"#,
+            )
+            .unwrap();
+            zw.start_file("index.js", opts).unwrap();
+            zw.write_all(b"console.log('v2');").unwrap();
+            zw.finish().unwrap();
+        }
+        let v2_res = install_plugin_package_bytes(
+            &paths,
+            &zip_buf_v2.into_inner(),
+            true,
+            "https://github.com/haoan33/AGY-Dock/releases/download/v1.2.0/demo-remote-v1.2.0.zip",
+        )
+        .unwrap();
+        assert!(v2_res.replaced);
+        assert_eq!(v2_res.plugin.version.as_deref(), Some("1.2.0"));
+        assert!(!inst_dir.join("legacy.js").exists());
+        assert_eq!(
+            fs::read_to_string(inst_dir.join("index.js")).unwrap(),
+            "console.log('v2');"
+        );
+        assert!(fs::read_to_string(inst_dir.join("settings.json"))
+            .unwrap()
+            .contains("\"keep\""));
 
         let _ = server_handle.join();
         let _ = fs::remove_dir_all(&paths.base_dir);

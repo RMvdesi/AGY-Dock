@@ -283,7 +283,12 @@ test('AgyProcessManager supports CRUD on plugins, proxy, logs, and native invent
       { PATH: 'C:\\Windows' }
     );
     assert.equal(launchOn.proxyInjected, true);
-    assert.deepEqual(launchOn.agyArgs, ['--foo', '--remote-debugging-port=0', '--proxy-server=http=127.0.0.1:8888']);
+    assert.deepEqual(launchOn.agyArgs, [
+      '--foo',
+      '--remote-debugging-port=0',
+      '--proxy-server=http=127.0.0.1:8888',
+      '--proxy-bypass-list=127.0.0.1;localhost;::1',
+    ]);
     assert.equal(launchOn.env.HTTPS_PROXY, 'http://127.0.0.1:8888');
     assert.equal(launchOn.env.https_proxy, 'http://127.0.0.1:8888');
     assert.equal(launchOn.env.NO_PROXY, DEFAULT_NO_PROXY);
@@ -752,4 +757,25 @@ test('HaoAn Lab update check parses release manifests, handles 404/up-to-date, a
     await new Promise((resolve) => mockServer.close(resolve));
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('buildAntigravityLaunchParams normalizes NO_PROXY and injects --proxy-bypass-list', () => {
+  const res = buildAntigravityLaunchParams({
+    antigravityArgs: [],
+    proxy: {
+      enabled: true,
+      httpProxy: 'http://127.0.0.1:7890',
+      httpsProxy: 'http://127.0.0.1:7890',
+      allProxy: '',
+      noProxy: ' , 127.0.0.1 ; localhost , ::1 , play.googleapis.com , play.googleapis.com ',
+      electronProxyServer: 'http=127.0.0.1:7890;https=127.0.0.1:7890',
+    },
+  });
+  assert.equal(res.proxyInjected, true);
+  assert.equal(res.env.NO_PROXY, '127.0.0.1,localhost,::1,play.googleapis.com');
+  assert.equal(res.env.no_proxy, '127.0.0.1,localhost,::1,play.googleapis.com');
+  assert.equal(
+    res.agyArgs.includes('--proxy-bypass-list=127.0.0.1;localhost;::1;play.googleapis.com'),
+    true
+  );
 });

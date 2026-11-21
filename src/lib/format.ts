@@ -150,3 +150,47 @@ export function formatIdleAge(
   if (days < 30) return { label: `${days} 天未用`, tone: "warn" };
   return { label: `${days} 天未用 · 闲置`, tone: "danger" };
 }
+
+export const DEFAULT_NO_PROXY_LIST = "127.0.0.1,localhost,::1";
+
+export function parseNoProxyList(raw: string): string[] {
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const part of String(raw || "").split(/[,;\s]+/)) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      items.push(trimmed);
+    }
+  }
+  return items;
+}
+
+export function normalizeNoProxyList(raw: string): string {
+  const items = parseNoProxyList(raw);
+  return items.length > 0 ? items.join(",") : DEFAULT_NO_PROXY_LIST;
+}
+
+export function hasNoProxyHost(raw: string, host: string): boolean {
+  const target = host.trim().toLowerCase();
+  if (!target) return false;
+  return parseNoProxyList(raw).some((item) => item.toLowerCase() === target);
+}
+
+export function toggleNoProxyHost(raw: string, host: string, enabled: boolean): string {
+  const target = host.trim();
+  const targetLower = target.toLowerCase();
+  if (!target) return normalizeNoProxyList(raw);
+  const current = parseNoProxyList(raw);
+  if (enabled) {
+    const base = current.length > 0 ? current : parseNoProxyList(DEFAULT_NO_PROXY_LIST);
+    if (!base.some((item) => item.toLowerCase() === targetLower)) {
+      base.push(target);
+    }
+    return base.join(",");
+  }
+  const filtered = current.filter((item) => item.toLowerCase() !== targetLower);
+  return filtered.length > 0 ? filtered.join(",") : DEFAULT_NO_PROXY_LIST;
+}

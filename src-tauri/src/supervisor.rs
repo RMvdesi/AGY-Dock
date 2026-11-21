@@ -1,4 +1,4 @@
-use crate::config::{get_cached_detected_exe, load_config};
+use crate::config::{get_cached_detected_exe, load_config, normalize_no_proxy_list};
 use crate::detector::{
     calculate_plugin_memory_bytes, classify_antigravity_processes, detect_antigravity_exe,
     find_antigravity_cleanup_targets, get_active_cdp_info, match_plugin_processes,
@@ -130,7 +130,7 @@ pub fn is_pid_alive(_pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn terminate_pid_win32(pid: u32) -> bool {
+pub(crate) fn terminate_pid_win32(pid: u32) -> bool {
     if pid == 0 || pid == std::process::id() {
         return false;
     }
@@ -145,11 +145,11 @@ fn terminate_pid_win32(pid: u32) -> bool {
 }
 
 #[cfg(not(windows))]
-fn terminate_pid_win32(_pid: u32) -> bool {
+pub(crate) fn terminate_pid_win32(_pid: u32) -> bool {
     false
 }
 
-fn collect_descendant_pids(
+pub(crate) fn collect_descendant_pids(
     processes: &[ProcessSnapshotItem],
     root_pids: &[u32],
     allow_antigravity_main: bool,
@@ -317,6 +317,16 @@ fn has_remote_debugging_port_arg(args: &[String]) -> bool {
     })
 }
 
+fn has_proxy_bypass_list_arg(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        let trimmed = arg.trim().to_ascii_lowercase();
+        trimmed == "--proxy-bypass-list"
+            || trimmed.starts_with("--proxy-bypass-list=")
+            || trimmed == "-proxy-bypass-list"
+            || trimmed.starts_with("-proxy-bypass-list=")
+    })
+}
+
 pub fn build_antigravity_launch_params(
     config: &AppConfig,
 ) -> (Vec<String>, HashMap<String, String>, bool) {
@@ -347,7 +357,7 @@ pub fn build_antigravity_launch_params(
     let no_proxy = if config.proxy.no_proxy.trim().is_empty() {
         DEFAULT_NO_PROXY.to_string()
     } else {
-        config.proxy.no_proxy.trim().to_string()
+        normalize_no_proxy_list(&config.proxy.no_proxy)
     };
     set_pair("NO_PROXY", &no_proxy);
 
@@ -356,6 +366,12 @@ pub fn build_antigravity_launch_params(
             "--proxy-server={}",
             config.proxy.electron_proxy_server.trim()
         ));
+        if !has_proxy_bypass_list_arg(&agy_args) {
+            let bypass_list = no_proxy.split(',').collect::<Vec<_>>().join(";");
+            if !bypass_list.is_empty() {
+                agy_args.push(format!("--proxy-bypass-list={bypass_list}"));
+            }
+        }
     }
 
     (agy_args, env, true)
@@ -1126,7 +1142,7 @@ pub async fn launch_antigravity_and_attach(
     focus_if_running: bool,
 ) -> Result<LaunchResult, String> {
     let Some(_lock_guard) = acquire_launch_lock(paths) else {
-        let msg = "已有另一个 AGY-Launcher 启动流程正在执行，跳过重复触发".to_string();
+        let msg = "已有另一个 AGY Dock 启动流程正在执行，跳过重复触发".to_string();
         paths.log_info(&msg);
         let overview = get_overview(paths).await?;
         return Ok(LaunchResult {
@@ -1401,14 +1417,20 @@ mod tests {
         ];
         cfg.proxy.enabled = true;
         cfg.proxy.electron_proxy_server = "http://127.0.0.1:7890".to_string();
-        let (args_split, _, proxy_injected) = build_antigravity_launch_params(&cfg);
+        cfg.proxy.no_proxy = "127.0.0.1, localhost , ::1 , play.googleapis.com, play.googleapis.com".to_string();
+        let (args_split, env_split, proxy_injected) = build_antigravity_launch_params(&cfg);
         assert!(proxy_injected);
+        assert_eq!(
+            env_split.get("NO_PROXY").map(String::as_str),
+            Some("127.0.0.1,localhost,::1,play.googleapis.com")
+        );
         assert_eq!(
             args_split,
             vec![
                 "--remote-debugging-port".to_string(),
                 "9444".to_string(),
                 "--proxy-server=http://127.0.0.1:7890".to_string(),
+                "--proxy-bypass-list=127.0.0.1;localhost;::1;play.googleapis.com".to_string(),
             ]
         );
     }

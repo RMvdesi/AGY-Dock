@@ -548,29 +548,13 @@ fn read_manifest_from_zip<R: Read + std::io::Seek>(
     Ok((entry, validated, strip_prefix))
 }
 
-pub fn install_plugin_package(
+pub fn install_plugin_archive<R: Read + std::io::Seek>(
     paths: &ManagerPaths,
-    package_path: &str,
+    archive: &mut ZipArchive<R>,
     overwrite: bool,
+    source_label: &str,
 ) -> Result<InstallPackageResult, String> {
-    let raw_pkg = PathBuf::from(package_path.trim());
-    if !raw_pkg.is_file() {
-        return Err(format!("插件安装包不存在: {}", raw_pkg.display()));
-    }
-    let ext = raw_pkg
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_lowercase)
-        .unwrap_or_default();
-    if !SUPPORTED_PACKAGE_EXTS.iter().any(|e| *e == ext) {
-        return Err(format!(
-            "不支持的插件包格式: .{ext}（仅支持 .zip / .agypkg / .agy-plugin）"
-        ));
-    }
-
-    let file = fs::File::open(&raw_pkg).map_err(|e| format!("打开插件包失败: {e}"))?;
-    let mut archive = ZipArchive::new(file).map_err(|e| format!("无效的 ZIP 插件包: {e}"))?;
-    let (entry, validated, strip_prefix) = read_manifest_from_zip(&mut archive)?;
+    let (entry, validated, strip_prefix) = read_manifest_from_zip(archive)?;
     let plugin_id = entry.id.clone();
 
     let cfg = load_config(paths)?;
@@ -714,7 +698,7 @@ pub fn install_plugin_package(
 
     let resolved_dest = fs::canonicalize(&dest_dir).unwrap_or(dest_dir);
     paths.log_info(&format!(
-        "已安装插件包 {plugin_id} -> {} (replaced={replaced})",
+        "已安装插件包 {plugin_id} ({source_label}) -> {} (replaced={replaced})",
         resolved_dest.display()
     ));
 
@@ -723,6 +707,42 @@ pub fn install_plugin_package(
         installed_dir: resolved_dest.to_string_lossy().into_owned(),
         replaced,
     })
+}
+
+pub fn install_plugin_package_bytes(
+    paths: &ManagerPaths,
+    bytes: &[u8],
+    overwrite: bool,
+    source_label: &str,
+) -> Result<InstallPackageResult, String> {
+    let cursor = std::io::Cursor::new(bytes);
+    let mut archive = ZipArchive::new(cursor).map_err(|e| format!("无效的 ZIP 插件包: {e}"))?;
+    install_plugin_archive(paths, &mut archive, overwrite, source_label)
+}
+
+pub fn install_plugin_package(
+    paths: &ManagerPaths,
+    package_path: &str,
+    overwrite: bool,
+) -> Result<InstallPackageResult, String> {
+    let raw_pkg = PathBuf::from(package_path.trim());
+    if !raw_pkg.is_file() {
+        return Err(format!("插件安装包不存在: {}", raw_pkg.display()));
+    }
+    let ext = raw_pkg
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
+        .unwrap_or_default();
+    if !SUPPORTED_PACKAGE_EXTS.iter().any(|e| *e == ext) {
+        return Err(format!(
+            "不支持的插件包格式: .{ext}（仅支持 .zip / .agypkg / .agy-plugin）"
+        ));
+    }
+
+    let file = fs::File::open(&raw_pkg).map_err(|e| format!("打开插件包失败: {e}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| format!("无效的 ZIP 插件包: {e}"))?;
+    install_plugin_archive(paths, &mut archive, overwrite, "local-file")
 }
 
 pub fn list_bundled_packages(paths: &ManagerPaths) -> Vec<BundledPackageInfo> {
@@ -941,13 +961,48 @@ pub fn list_native_plugins(paths: &ManagerPaths) -> Vec<NativePluginInfo> {
             .to_string();
 
         let skills_dir = path.join("skills");
-        let skill_count = if skills_dir.is_dir() {
+        let mut skill_names: Vec<String> = if skills_dir.is_dir() {
             fs::read_dir(&skills_dir)
-                .map(|rd| rd.flatten().filter(|e| e.path().is_dir()).count())
-                .unwrap_or(0)
+                .map(|rd| {
+                    rd.flatten()
+                        .filter(|e| e.path().is_dir())
+                        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
         } else {
-            0
+            Vec::new()
         };
+        skill_names.sort_by_key(|s| s.to_lowercase());
+        let skill_count = skill_names.len();
+
+        let mcp_path = path.join("mcp_config.json");
+        let mut mcp_names: Vec<String> = if mcp_path.is_file() {
+            read_text_strip_bom(&mcp_path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                .and_then(|v| v.get("mcpServers").and_then(|m| m.as_object()).cloned())
+                .map(|m| m.keys().cloned().collect())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        mcp_names.sort_by_key(|s| s.to_lowercase());
+
+        let rules_dir = path.join("rules");
+        let mut rule_files: Vec<String> = if rules_dir.is_dir() {
+            fs::read_dir(&rules_dir)
+                .map(|rd| {
+                    rd.flatten()
+                        .filter(|e| e.path().is_file())
+                        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        rule_files.sort_by_key(|s| s.to_lowercase());
 
         let mut sidecars = Vec::new();
         let sidecars_dir = path.join("sidecars");
@@ -989,16 +1044,29 @@ pub fn list_native_plugins(paths: &ManagerPaths) -> Vec<NativePluginInfo> {
             }
         }
 
+        let manifest_default_enabled = !manifest
+            .get("disabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let enabled = state_map
             .get(&dir_name)
             .and_then(|v| v.as_object())
             .and_then(|o| o.get("enabled"))
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(manifest_default_enabled);
 
         let name = manifest
-            .get("name")
+            .get("displayName")
             .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                manifest
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+            })
             .map(str::to_string)
             .unwrap_or_else(|| dir_name.clone());
         let version = manifest
@@ -1011,6 +1079,11 @@ pub fn list_native_plugins(paths: &ManagerPaths) -> Vec<NativePluginInfo> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let author = extract_author_value(manifest.get("author")).unwrap_or_default();
+        let homepage = manifest
+            .as_object()
+            .and_then(extract_homepage_value)
+            .unwrap_or_default();
 
         items.push(NativePluginInfo {
             dir: dir_name,
@@ -1019,14 +1092,135 @@ pub fn list_native_plugins(paths: &ManagerPaths) -> Vec<NativePluginInfo> {
             description,
             enabled,
             skill_count,
-            has_mcp: path.join("mcp_config.json").exists(),
-            has_rules: path.join("rules").exists(),
+            has_mcp: mcp_path.exists(),
+            has_rules: rules_dir.exists(),
             sidecars,
+            path: clean_canonical_display(&path),
+            author,
+            homepage,
+            mcp_names,
+            skill_names,
+            rule_files,
         });
     }
 
     items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     items
+}
+
+fn validate_native_plugin_dir_name(paths: &ManagerPaths, dir_name: &str) -> Result<PathBuf, String> {
+    let clean = dir_name.trim();
+    if clean.is_empty()
+        || clean == "."
+        || clean == ".."
+        || clean.starts_with('.')
+        || clean.contains('/')
+        || clean.contains('\\')
+        || clean.contains("..")
+        || clean.contains(':')
+        || clean.contains('\0')
+    {
+        return Err("非法的原生扩展目录名".to_string());
+    }
+    if !paths.gemini_plugins_dir.is_dir() {
+        return Err("原生扩展目录不存在".to_string());
+    }
+    let root = fs::canonicalize(&paths.gemini_plugins_dir)
+        .map_err(|e| format!("解析原生扩展目录失败: {e}"))?;
+    let target = paths.gemini_plugins_dir.join(clean);
+    if !target.exists() || !target.is_dir() {
+        return Err(format!("原生扩展不存在: {clean}"));
+    }
+    let target_canon = fs::canonicalize(&target)
+        .map_err(|e| format!("解析原生扩展目录失败: {e}"))?;
+    if target_canon == root || target_canon.parent() != Some(root.as_path()) {
+        return Err("安全限制：仅允许操作 ~/.gemini/config/plugins 下的直接子目录".to_string());
+    }
+    Ok(target)
+}
+
+fn read_gemini_config_object(path: &Path) -> Result<serde_json::Map<String, Value>, String> {
+    if !path.is_file() {
+        return Ok(serde_json::Map::new());
+    }
+    let raw = read_text_strip_bom(path)?;
+    if raw.trim().is_empty() {
+        return Ok(serde_json::Map::new());
+    }
+    let val: Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("解析 AGY config.json 失败: {e}"))?;
+    match val {
+        Value::Object(map) => Ok(map),
+        _ => Err("AGY config.json 根节点必须为 JSON 对象".to_string()),
+    }
+}
+
+pub fn toggle_native_plugin(
+    paths: &ManagerPaths,
+    dir_name: &str,
+    enabled: bool,
+) -> Result<Vec<NativePluginInfo>, String> {
+    let _target = validate_native_plugin_dir_name(paths, dir_name)?;
+    let clean = dir_name.trim();
+    let mut root_map = read_gemini_config_object(&paths.gemini_config_path)?;
+
+    let plugins_val = root_map
+        .entry("plugins".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if !plugins_val.is_object() {
+        *plugins_val = Value::Object(serde_json::Map::new());
+    }
+    let plugins_obj = plugins_val.as_object_mut().unwrap();
+    let entry_val = plugins_obj
+        .entry(clean.to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if !entry_val.is_object() {
+        *entry_val = Value::Object(serde_json::Map::new());
+    }
+    if let Some(entry_obj) = entry_val.as_object_mut() {
+        entry_obj.insert("enabled".to_string(), Value::Bool(enabled));
+    }
+
+    write_json_atomic(&paths.gemini_config_path, &Value::Object(root_map))?;
+    paths.log_info(&format!(
+        "已{} AGY 原生扩展: {}",
+        if enabled { "启用" } else { "禁用" },
+        clean
+    ));
+    Ok(list_native_plugins(paths))
+}
+
+pub fn delete_native_plugin(
+    paths: &ManagerPaths,
+    dir_name: &str,
+    recycle_bin: bool,
+) -> Result<Vec<NativePluginInfo>, String> {
+    let target = validate_native_plugin_dir_name(paths, dir_name)?;
+    let clean = dir_name.trim();
+
+    let meta = fs::symlink_metadata(&target)
+        .map_err(|e| format!("读取原生扩展目录属性失败: {e}"))?;
+    if crate::storage::is_link_or_reparse_point(&meta) {
+        fs::remove_dir(&target).map_err(|e| format!("移除原生扩展联接目录失败: {e}"))?;
+    } else if recycle_bin {
+        crate::storage::send_to_recycle_bin(&[target.clone()])
+            .map_err(|e| format!("移入回收站失败: {e}"))?;
+    } else {
+        fs::remove_dir_all(&target).map_err(|e| format!("删除原生扩展目录失败: {e}"))?;
+    }
+
+    if paths.gemini_config_path.is_file() {
+        if let Ok(mut root_map) = read_gemini_config_object(&paths.gemini_config_path) {
+            if let Some(Value::Object(plugins_obj)) = root_map.get_mut("plugins") {
+                if plugins_obj.remove(clean).is_some() {
+                    let _ = write_json_atomic(&paths.gemini_config_path, &Value::Object(root_map));
+                }
+            }
+        }
+    }
+
+    paths.log_info(&format!("已卸载 AGY 原生扩展: {clean} (recycle_bin={recycle_bin})"));
+    Ok(list_native_plugins(paths))
 }
 
 pub fn resolve_log_path(paths: &ManagerPaths, log_id: &str) -> Result<PathBuf, String> {
@@ -1594,6 +1788,78 @@ mod tests {
             validate_settings_entry_rel_path("ui\\settings.html").unwrap(),
             "ui/settings.html"
         );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn native_plugin_toggle_and_delete_preserves_config_and_cleans_entry() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("agy-native-test-{}-{nanos}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let gemini_cfg = root.join(".gemini").join("config");
+        let p_dir = gemini_cfg.join("plugins").join("demo-ext");
+        fs::create_dir_all(p_dir.join("skills").join("s1")).unwrap();
+        fs::create_dir_all(p_dir.join("rules")).unwrap();
+        fs::write(p_dir.join("rules").join("AGENTS.md"), "# Rule").unwrap();
+        fs::write(
+            p_dir.join("plugin.json"),
+            r#"{"name":"demo-ext","displayName":"Demo Extension","version":"1.2.0","description":"desc"}"#,
+        )
+        .unwrap();
+        fs::write(
+            p_dir.join("mcp_config.json"),
+            r#"{"mcpServers":{"demo-mcp":{"command":"node","args":["x.js"]}}}"#,
+        )
+        .unwrap();
+
+        let mut paths = ManagerPaths::from_runtime_dirs(crate::paths::RuntimeDirs {
+            data_dir: root.join("data"),
+            assets_dir: root.join("data"),
+            is_portable: true,
+        });
+        paths.gemini_plugins_dir = gemini_cfg.join("plugins");
+        paths.gemini_config_path = gemini_cfg.join("config.json");
+
+        write_json_atomic(
+            &paths.gemini_config_path,
+            &json!({
+                "plugins": {
+                    "demo-ext": {
+                        "installedFrom": { "id": "official/demo-ext", "version": "1.2.0" }
+                    }
+                },
+                "userSettings": { "themeMode": "THEME_MODE_LIGHT" }
+            }),
+        )
+        .unwrap();
+
+        let initial = list_native_plugins(&paths);
+        assert_eq!(initial.len(), 1);
+        assert_eq!(initial[0].name, "Demo Extension");
+        assert!(initial[0].enabled);
+        assert_eq!(initial[0].mcp_names, vec!["demo-mcp"]);
+        assert_eq!(initial[0].skill_names, vec!["s1"]);
+        assert_eq!(initial[0].rule_files, vec!["AGENTS.md"]);
+
+        let toggled = toggle_native_plugin(&paths, "demo-ext", false).unwrap();
+        assert!(!toggled[0].enabled);
+
+        let cfg_raw = read_text_strip_bom(&paths.gemini_config_path).unwrap();
+        let cfg_val: Value = serde_json::from_str(&cfg_raw).unwrap();
+        assert_eq!(cfg_val["plugins"]["demo-ext"]["installedFrom"]["id"], "official/demo-ext");
+        assert_eq!(cfg_val["userSettings"]["themeMode"], "THEME_MODE_LIGHT");
+        assert_eq!(cfg_val["plugins"]["demo-ext"]["enabled"], false);
+
+        let after_del = delete_native_plugin(&paths, "demo-ext", false).unwrap();
+        assert!(after_del.is_empty());
+        assert!(!p_dir.exists());
+
+        let cfg_after: Value = serde_json::from_str(&read_text_strip_bom(&paths.gemini_config_path).unwrap()).unwrap();
+        assert!(cfg_after["plugins"].get("demo-ext").is_none());
 
         let _ = fs::remove_dir_all(&root);
     }

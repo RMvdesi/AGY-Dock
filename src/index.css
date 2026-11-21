@@ -12,6 +12,7 @@
   --border-hairline: #E8EAEF;
   --border-strong: #D2D7E0;
   --text-primary: #1B1E24;
+  --text-secondary: #3B4252;
   --text-muted: #666D7A;
   --text-faint: #8C93A0;
   --primary-bg: #1B1E24;
@@ -35,6 +36,27 @@
   --info-bg: #EFF6FF;
   --log-bg: #FAFBFD;
   --log-text: #1F242D;
+  --sage: #588276;
+  --sage-hover: #466e62;
+  --sage-bg: rgba(88, 130, 118, 0.11);
+  --sage-border: rgba(88, 130, 118, 0.28);
+  --badge-fill: #588276;
+  --badge-fill-hover: #466e62;
+  --badge-fill-wk: #588276;
+  --badge-fill-wk-hover: #466e62;
+  --badge-low: #b87b59;
+  --badge-low-hover: #9f6342;
+  --badge-icon: rgba(26, 33, 44, 0.66);
+  --badge-icon-hover: rgba(22, 28, 36, 0.92);
+  --badge-track: rgba(26, 33, 44, 0.13);
+  --badge-track-hover: rgba(26, 33, 44, 0.22);
+  --badge-zero-track: rgba(184, 123, 89, 0.28);
+  --track-bg: #E5E9F0;
+  --hm-0: #ECEFF4;
+  --hm-1: #DFEAE5;
+  --hm-2: #B3CEC4;
+  --hm-3: #7AA396;
+  --hm-4: #4D7569;
   --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.03);
   --shadow-floating: 0 12px 32px rgba(15, 23, 42, 0.12), 0 2px 8px rgba(15, 23, 42, 0.06);
 }
@@ -51,6 +73,7 @@
   --border-hairline: #242A37;
   --border-strong: #343D52;
   --text-primary: #F1F4F9;
+  --text-secondary: #CBD4E3;
   --text-muted: #9CA6B8;
   --text-faint: #687387;
   --primary-bg: #F1F4F9;
@@ -74,6 +97,27 @@
   --info-bg: rgba(59, 130, 246, 0.14);
   --log-bg: #0A0D12;
   --log-text: #DCE3EC;
+  --sage: #8eb2a6;
+  --sage-hover: #a6c9bd;
+  --sage-bg: rgba(142, 178, 166, 0.15);
+  --sage-border: rgba(142, 178, 166, 0.30);
+  --badge-fill: #8eb2a6;
+  --badge-fill-hover: #a6c9bd;
+  --badge-fill-wk: #8eb2a6;
+  --badge-fill-wk-hover: #a6c9bd;
+  --badge-low: #cf9a7c;
+  --badge-low-hover: #e0ad90;
+  --badge-icon: rgba(232, 238, 246, 0.72);
+  --badge-icon-hover: rgba(245, 248, 252, 0.96);
+  --badge-track: rgba(232, 238, 246, 0.14);
+  --badge-track-hover: rgba(232, 238, 246, 0.24);
+  --badge-zero-track: rgba(214, 158, 128, 0.24);
+  --track-bg: #262D3D;
+  --hm-0: #222836;
+  --hm-1: #233631;
+  --hm-2: #385950;
+  --hm-3: #5D877B;
+  --hm-4: #8EB2A6;
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.2);
   --shadow-floating: 0 16px 36px rgba(0, 0, 0, 0.48), 0 4px 12px rgba(0, 0, 0, 0.3);
 }
@@ -409,3 +453,269 @@
   padding: 0.2em 0.55em;
 }
 .agy-release-link { color: var(--link); text-decoration: underline; cursor: pointer; }
+
+.agy-markdown-doc {
+  color: var(--text-primary);
+  font-size: 13.5px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.agy-markdown-doc > * + * { margin-block-start: 0.7em; }
+.agy-markdown-doc :is(h1, h2, h3, h4, h5, h6) {
+  color: var(--text-primary);
+  font-weight: 700;
+  line-height: 1.35;
+  margin-block-start: 1.05em;
+}
+.agy-markdown-doc h1 { font-size: 1.25em; border-bottom: 1px solid var(--border-hairline); padding-bottom: 0.3em; }
+.agy-markdown-doc h2 { font-size: 1.12em; }
+.agy-markdown-doc h3 { font-size: 1.02em; }
+.agy-markdown-doc p, .agy-markdown-doc li { color: var(--text-muted); }
+.agy-markdown-doc strong { color: var(--text-primary); font-weight: 650; }
+.agy-markdown-doc ul { list-style: disc; padding-inline-start: 1.45em; }
+.agy-markdown-doc ol { list-style: decimal; padding-inline-start: 1.45em; }
+.agy-markdown-doc li + li { margin-block-start: 0.28em; }
+.agy-markdown-doc blockquote {
+  border-inline-start: 3px solid var(--border-strong);
+  padding-inline-start: 0.85em;
+  color: var(--text-muted);
+}
+.agy-markdown-doc code {
+  font-family: "Cascadia Code", "Consolas", ui-monospace, SFMono-Regular, monospace;
+  border-radius: 5px;
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  padding: 0.12em 0.34em;
+  font-size: 0.89em;
+}
+.agy-markdown-doc pre {
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-surface-soft);
+  padding: 0.75em 0.9em;
+}
+.agy-markdown-doc pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.agy-markdown-doc table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.agy-markdown-doc :is(th, td) {
+  border: 1px solid var(--border-hairline);
+  padding: 0.35em 0.65em;
+  text-align: left;
+}
+.agy-markdown-doc th {
+  background: var(--bg-surface-soft);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.agy-markdown-doc hr {
+  border: none;
+  border-top: 1px solid var(--border-hairline);
+  margin-block: 1em;
+}
+
+/* Native <progress> quota bar (separate webkit/moz rules) */
+progress.agy-quota-progress {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0 solid;
+  overflow: clip;
+  display: block;
+  width: 100%;
+  height: 5px;
+  border-radius: 9999px;
+  background-color: var(--track-bg);
+}
+
+progress.agy-quota-progress::-webkit-progress-bar {
+  background: transparent;
+}
+
+progress.agy-quota-progress::-webkit-progress-value {
+  background-color: var(--progress-fill, var(--sage));
+  border-radius: 9999px;
+  transition: inline-size 280ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease;
+}
+
+progress.agy-quota-progress::-moz-progress-bar {
+  background-color: var(--progress-fill, var(--sage));
+  border-radius: 9999px;
+  transition: inline-size 280ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease;
+}
+
+/* Circular SVG Quota Badge (prototype geometry) */
+.agy-qbadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  position: relative;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.agy-qbadge svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  display: block;
+}
+
+.agy-arc-group,
+.agy-argon-group,
+.agy-center-group {
+  cursor: pointer;
+  transform-box: view-box;
+  transform-origin: 14px 14px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .agy-arc-group,
+  .agy-argon-group,
+  .agy-center-group {
+    transition: transform 155ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .agy-arc-track,
+  .agy-arc-fill,
+  .agy-argon-dot,
+  .agy-center-icon {
+    transition:
+      stroke 155ms ease,
+      fill 155ms ease,
+      color 155ms ease,
+      stroke-width 155ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 155ms ease;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  progress.agy-quota-progress::-webkit-progress-value {
+    transition-duration: 0s;
+  }
+  progress.agy-quota-progress::-moz-progress-bar {
+    transition-duration: 0s;
+  }
+}
+
+.agy-arc-group:hover,
+.agy-arc-group:focus-within,
+.agy-argon-group:hover,
+.agy-argon-group:focus-within {
+  transform: scale(1.09);
+}
+
+.agy-center-group:hover,
+.agy-center-group:focus-within {
+  transform: scale(1.1);
+}
+
+.agy-arc-track {
+  fill: none;
+  stroke: var(--badge-track);
+  stroke-width: 1.65;
+  stroke-linecap: round;
+}
+
+.agy-arc-track--zero {
+  stroke: var(--badge-zero-track);
+}
+
+.agy-arc-group:hover .agy-arc-track,
+.agy-arc-group:focus-within .agy-arc-track {
+  stroke: var(--badge-track-hover);
+  stroke-width: 1.85;
+}
+
+.agy-arc-fill {
+  fill: none;
+  stroke: var(--badge-fill);
+  stroke-width: 1.65;
+  stroke-linecap: round;
+}
+
+.agy-arc-fill--wk {
+  stroke: var(--badge-fill-wk);
+}
+
+.agy-arc-fill--low {
+  stroke: var(--badge-low);
+}
+
+.agy-arc-group:hover .agy-arc-fill,
+.agy-arc-group:focus-within .agy-arc-fill {
+  stroke: var(--badge-fill-hover);
+  stroke-width: 1.9;
+}
+
+.agy-arc-group:hover .agy-arc-fill--wk,
+.agy-arc-group:focus-within .agy-arc-fill--wk {
+  stroke: var(--badge-fill-wk-hover);
+}
+
+.agy-arc-group:hover .agy-arc-fill--low,
+.agy-arc-group:focus-within .agy-arc-fill--low {
+  stroke: var(--badge-low-hover);
+}
+
+.agy-arc-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 7.5;
+  stroke-linecap: butt;
+  pointer-events: stroke;
+  outline: none;
+}
+
+.agy-center-icon {
+  color: var(--badge-icon);
+  pointer-events: none;
+}
+
+.agy-center-group:hover .agy-center-icon,
+.agy-center-group:focus-within .agy-center-icon {
+  color: var(--badge-icon-hover);
+}
+
+.agy-center-hit {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all;
+  outline: none;
+}
+
+.agy-argon-dot {
+  fill: var(--badge-icon);
+}
+
+.agy-argon-group:hover .agy-argon-dot,
+.agy-argon-group:focus-within .agy-argon-dot {
+  fill: var(--badge-icon-hover);
+}
+
+.agy-argon-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 7.5;
+  stroke-linecap: butt;
+  pointer-events: stroke;
+  outline: none;
+}
+
+.agy-hm-cell {
+  border: 1px solid transparent;
+  transition: transform 110ms ease, border-color 110ms ease, box-shadow 110ms ease;
+}
+
+.agy-hm-cell:hover {
+  transform: scale(1.14);
+  z-index: 2;
+  border-color: var(--sage);
+}

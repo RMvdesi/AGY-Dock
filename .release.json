@@ -2,7 +2,7 @@
   "product": "agy-plugin-manager",
   "siteUrl": "https://www.haoanlab.xyz",
   "oidcAudience": "https://ahmustudyhelper.xyz",
-  "releaseRepository": "haoan33/AGY-Plugin-Manager",
+  "releaseRepository": "haoan33/AGY-Dock",
   "versionFiles": [
     { "path": "VERSION", "format": "text" },
     { "path": "package.json", "format": "json", "key": "version" },
@@ -21,7 +21,7 @@
         ["cargo", "test", "--manifest-path", "src-tauri/Cargo.toml"],
         ["npm", "run", "tauri", "--", "build", "--target", "x86_64-pc-windows-msvc"]
       ],
-      "artifact": "dist-release/AGY-Plugin-Manager-Setup-v{version}.exe"
+      "artifact": "dist-release/AGY-Dock-Setup-v{version}.exe"
     }
   ]
 }

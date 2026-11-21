@@ -56,8 +56,9 @@ Var AgyLauncherFinishCheckbox
 InstallDir "$LOCALAPPDATA\AGY-Plugin-Manager"
 
 !macro NSIS_HOOK_PREINSTALL
-  ; Normalize default install path if Tauri's template defaulted to productName ("AGY Plugin Manager")
-  ${If} $INSTDIR == "$LOCALAPPDATA\AGY Plugin Manager"
+  ; Normalize default install path if Tauri's template defaulted to productName ("AGY Dock" or legacy "AGY Plugin Manager")
+  ${If} $INSTDIR == "$LOCALAPPDATA\AGY Dock"
+  ${OrIf} $INSTDIR == "$LOCALAPPDATA\AGY Plugin Manager"
     StrCpy $INSTDIR "$LOCALAPPDATA\AGY-Plugin-Manager"
   ${EndIf}
 
@@ -66,13 +67,22 @@ InstallDir "$LOCALAPPDATA\AGY-Plugin-Manager"
     nsExec::ExecToStack '"$INSTDIR\${MAINBINARYNAME}.exe" --stop'
     Pop $0
     Pop $1
+  ${ElseIf} ${FileExists} "$INSTDIR\AGY Plugin Manager.exe"
+    nsExec::ExecToStack '"$INSTDIR\AGY Plugin Manager.exe" --stop'
+    Pop $0
+    Pop $1
   ${ElseIf} ${FileExists} "$INSTDIR\agy-plugin-manager.exe"
     nsExec::ExecToStack '"$INSTDIR\agy-plugin-manager.exe" --stop'
     Pop $0
     Pop $1
   ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\AGY Plugin Manager.exe"
+    !insertmacro CheckIfAppIsRunning "$INSTDIR\AGY Plugin Manager.exe" "AGY Plugin Manager"
+    Delete "$INSTDIR\AGY Plugin Manager.exe"
+  ${EndIf}
   ${If} ${FileExists} "$INSTDIR\agy-plugin-manager.exe"
     !insertmacro CheckIfAppIsRunning "$INSTDIR\agy-plugin-manager.exe" "${PRODUCTNAME}"
+    Delete "$INSTDIR\agy-plugin-manager.exe"
   ${EndIf}
 
   ; Clean up legacy Inno Setup / PyInstaller _internal and removed bundled plugin-packages leftovers
@@ -95,11 +105,22 @@ InstallDir "$LOCALAPPDATA\AGY-Plugin-Manager"
 !macro NSIS_HOOK_POSTINSTALL
   ; Repair an existing launcher link during a filename migration even when
   ; the user chooses to skip creating desktop shortcuts.
-  ${If} $OldMainBinaryName == "agy-plugin-manager.exe"
+  ${If} $OldMainBinaryName == "AGY Plugin Manager.exe"
+  ${OrIf} $OldMainBinaryName == "agy-plugin-manager.exe"
     !insertmacro IsShortcutTarget "$DESKTOP\Antigravity (AGY-Launcher).lnk" "$INSTDIR\$OldMainBinaryName"
     Pop $0
     ${If} $0 = 1
       !insertmacro SetShortcutTarget "$DESKTOP\Antigravity (AGY-Launcher).lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    ${EndIf}
+    ${If} ${FileExists} "$DESKTOP\AGY Dock.lnk"
+      Delete "$DESKTOP\AGY Plugin Manager.lnk"
+    ${ElseIf} ${FileExists} "$DESKTOP\AGY Plugin Manager.lnk"
+      !insertmacro IsShortcutTarget "$DESKTOP\AGY Plugin Manager.lnk" "$INSTDIR\$OldMainBinaryName"
+      Pop $0
+      ${If} $0 = 1
+        !insertmacro SetShortcutTarget "$DESKTOP\AGY Plugin Manager.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+        Rename "$DESKTOP\AGY Plugin Manager.lnk" "$DESKTOP\AGY Dock.lnk"
+      ${EndIf}
     ${EndIf}
   ${EndIf}
   ${If} $PassiveMode = 1

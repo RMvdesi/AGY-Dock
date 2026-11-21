@@ -14,6 +14,58 @@ fn hex_to_colorref(r: u8, g: u8, b: u8) -> u32 {
 }
 
 #[cfg(windows)]
+#[repr(C)]
+struct WtaOptions {
+    dw_flags: u32,
+    dw_mask: u32,
+}
+
+#[cfg(windows)]
+#[link(name = "uxtheme")]
+extern "system" {
+    fn SetWindowThemeAttribute(
+        hwnd: *mut std::ffi::c_void,
+        e_attribute: u32,
+        pv_attribute: *const std::ffi::c_void,
+        cb_attribute: u32,
+    ) -> i32;
+}
+
+#[cfg(windows)]
+fn hide_native_titlebar_caption_and_icon(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    };
+
+    const WTA_NONCLIENT: u32 = 1;
+    const WTNCA_NODRAWCAPTION: u32 = 0x0000_0001;
+    const WTNCA_NODRAWICON: u32 = 0x0000_0002;
+
+    let opts = WtaOptions {
+        dw_flags: WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON,
+        dw_mask: WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON,
+    };
+
+    unsafe {
+        let _ = SetWindowThemeAttribute(
+            hwnd.0,
+            WTA_NONCLIENT,
+            (&opts as *const WtaOptions).cast(),
+            std::mem::size_of::<WtaOptions>() as u32,
+        );
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
+    }
+}
+
+#[cfg(windows)]
 pub fn apply_dwm_titlebar_theme(window: &WebviewWindow, is_dark: bool) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWINDOWATTRIBUTE};
@@ -24,17 +76,11 @@ pub fn apply_dwm_titlebar_theme(window: &WebviewWindow, is_dark: bool) {
     let hwnd = HWND(hwnd_raw.0);
     let dark_flag: i32 = if is_dark { 1 } else { 0 };
     let (caption_color, text_color, border_color) = if is_dark {
-        (
-            hex_to_colorref(0x0F, 0x12, 0x18),
-            hex_to_colorref(0xF1, 0xF4, 0xF9),
-            hex_to_colorref(0x0F, 0x12, 0x18),
-        )
+        let bg = hex_to_colorref(0x0F, 0x12, 0x18);
+        (bg, bg, bg)
     } else {
-        (
-            hex_to_colorref(0xF7, 0xF8, 0xFA),
-            hex_to_colorref(0x1B, 0x1E, 0x24),
-            hex_to_colorref(0xF7, 0xF8, 0xFA),
-        )
+        let bg = hex_to_colorref(0xF7, 0xF8, 0xFA);
+        (bg, bg, bg)
     };
 
     unsafe {
@@ -63,6 +109,8 @@ pub fn apply_dwm_titlebar_theme(window: &WebviewWindow, is_dark: bool) {
             std::mem::size_of::<u32>() as u32,
         );
     }
+
+    hide_native_titlebar_caption_and_icon(hwnd);
 }
 
 #[cfg(not(windows))]
@@ -119,7 +167,7 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
     )?;
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
-        .tooltip("AGY Plugin Manager")
+        .tooltip("AGY Dock")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {

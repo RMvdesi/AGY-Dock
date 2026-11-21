@@ -157,13 +157,33 @@ pub fn save_antigravity_exe(paths: &ManagerPaths, exe_path: &str) -> Result<(Str
     Ok((cleaned, exists))
 }
 
+pub fn normalize_no_proxy_list(raw: &str) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let mut items = Vec::new();
+    for part in raw.split(|c: char| c == ',' || c == ';' || c.is_whitespace()) {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let key = trimmed.to_ascii_lowercase();
+        if seen.insert(key) {
+            items.push(trimmed.to_string());
+        }
+    }
+    if items.is_empty() {
+        DEFAULT_NO_PROXY.to_string()
+    } else {
+        items.join(",")
+    }
+}
+
 pub fn save_proxy_config(paths: &ManagerPaths, proxy_input: ProxyConfig) -> Result<ProxyConfig, String> {
     let mut cfg = load_config(paths)?;
     let existing_no_proxy = cfg.proxy.no_proxy.trim().to_string();
     let next_no_proxy = if !proxy_input.no_proxy.trim().is_empty() {
-        proxy_input.no_proxy.trim().to_string()
+        normalize_no_proxy_list(&proxy_input.no_proxy)
     } else if !existing_no_proxy.is_empty() {
-        existing_no_proxy
+        normalize_no_proxy_list(&existing_no_proxy)
     } else {
         DEFAULT_NO_PROXY.to_string()
     };
@@ -377,5 +397,14 @@ mod tests {
         let reserialized = serde_json::to_string(&cfg).unwrap();
         assert!(reserialized.contains("customRootFlag"));
         assert!(reserialized.contains("customPluginMeta"));
+    }
+
+    #[test]
+    fn normalize_no_proxy_list_cleans_separators_and_deduplicates() {
+        assert_eq!(
+            normalize_no_proxy_list(" , 127.0.0.1; localhost , , ::1, play.googleapis.com, PLAY.GOOGLEAPIS.COM ; "),
+            "127.0.0.1,localhost,::1,play.googleapis.com"
+        );
+        assert_eq!(normalize_no_proxy_list(" , ; "), DEFAULT_NO_PROXY);
     }
 }

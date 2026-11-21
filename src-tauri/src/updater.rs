@@ -194,7 +194,7 @@ pub async fn check_for_updates(paths: &ManagerPaths, timeout_sec: f64) -> Update
 
     let client = match Client::builder()
         .timeout(Duration::from_secs_f64(timeout_sec.max(2.0)))
-        .user_agent(format!("AGY-Plugin-Manager/{current}"))
+        .user_agent(format!("AGY-Dock/{current}"))
         .build()
     {
         Ok(c) => c,
@@ -394,7 +394,7 @@ pub async fn check_for_updates(paths: &ManagerPaths, timeout_sec: f64) -> Update
     let prompt_title = prompt_obj
         .and_then(|p| Some(sanitize_plain_text(p.get("title"))))
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("AGY Plugin Manager v{latest_version} 已发布"));
+        .unwrap_or_else(|| format!("AGY Dock v{latest_version} 已发布"));
     let prompt_body = prompt_obj
         .and_then(|p| Some(sanitize_plain_text(p.get("body"))))
         .filter(|s| !s.is_empty())

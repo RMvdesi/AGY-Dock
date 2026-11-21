@@ -207,6 +207,59 @@ fn load_saved_projects(paths: &ManagerPaths) -> Result<Vec<PathBuf>, String> {
         .map_err(|err| format!("无法读取已添加的项目文件夹：{err}"))
 }
 
+pub(crate) struct DiscoveredProjectRoot {
+    pub id: String,
+    pub name: String,
+    pub source: &'static str,
+    pub root: PathBuf,
+}
+
+pub(crate) fn discover_known_project_roots(paths: &ManagerPaths) -> Vec<DiscoveredProjectRoot> {
+    let project_dir = paths.gemini_config_path.with_file_name("projects");
+    let saved = load_saved_projects(paths).unwrap_or_default();
+    let mut projects = registered_projects(&project_dir);
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<DiscoveredProjectRoot> = Vec::new();
+
+    for project in &mut projects {
+        for folder in &project.folders {
+            let resolved = resolve_project_storage_root(folder).unwrap_or_else(|_| folder.clone());
+            let key = path_key(&resolved);
+            if seen.insert(key) {
+                out.push(DiscoveredProjectRoot {
+                    id: project.id.clone(),
+                    name: project.name.clone(),
+                    source: project.source,
+                    root: resolved,
+                });
+            }
+        }
+    }
+
+    let mut workspace_folders = ide_workspace_paths(&paths.app_data_dir);
+    // Also check session workspace URIs from annotations/db if needed via saved & ide_workspace_paths
+    for (source, folders) in [("manual", saved), ("workspace", std::mem::take(&mut workspace_folders))] {
+        for folder in folders {
+            let resolved = match resolve_project_storage_root(&folder) {
+                Ok(p) => p,
+                Err(_) if source == "workspace" => continue,
+                Err(_) => folder,
+            };
+            let key = path_key(&resolved);
+            if seen.insert(key.clone()) {
+                out.push(DiscoveredProjectRoot {
+                    id: format!("{source}:{key}"),
+                    name: name_for_path(&resolved),
+                    source,
+                    root: resolved,
+                });
+            }
+        }
+    }
+
+    out
+}
+
 pub fn update_saved_project(paths: &ManagerPaths, path: &Path, add: bool) -> Result<(), String> {
     let mut folders = load_saved_projects(paths)?;
     let key = path_key(path);

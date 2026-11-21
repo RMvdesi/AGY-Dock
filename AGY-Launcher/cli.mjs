@@ -72,12 +72,12 @@ async function ensureDaemonRunning(manager) {
     await sleep(150);
   }
 
-  throw new Error('启动 AGY-Manager 后台控制中心超时');
+  throw new Error('启动 AGY Dock 后台控制中心超时');
 }
 
 function printStatus(overview) {
   const { cdp, proxy, plugins } = overview;
-  console.log('================ AGY-Launcher 状态 ================');
+  console.log('================ AGY Dock 状态 ================');
   if (cdp.mainProcessCount > 0) {
     console.log(
       `Antigravity.exe : 主程序运行中 (主进程: ${cdp.mainProcessCount}, Sidecar: ${cdp.sidecarProcessCount}, 总进程: ${cdp.processCount})`
@@ -153,7 +153,7 @@ async function openDesktopAppWindow(manager, info) {
     windowsHide: false,
   });
   child.unref();
-  console.log(`已启动 AGY Plugin Manager 桌面窗口 (${path.basename(browserExe)}): ${url}`);
+  console.log(`已启动 AGY Dock 桌面窗口 (${path.basename(browserExe)}): ${url}`);
 }
 
 async function main() {
@@ -162,7 +162,7 @@ async function main() {
 
   if (action === 'daemon') {
     const info = await ensureDaemonRunning(manager);
-    console.log(`AGY-Manager 运行中: http://127.0.0.1:${info.port}`);
+    console.log(`AGY Dock 运行中: http://127.0.0.1:${info.port}`);
     return;
   }
 
