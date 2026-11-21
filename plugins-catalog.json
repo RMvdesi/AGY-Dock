@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Dock",
-  "updatedAt": "2026-11-21T15:11:36Z",
+  "updatedAt": "2026-11-21T15:28:21Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -34,15 +34,15 @@
     {
       "id": "agy-telemetry",
       "name": "Antigravity Telemetry (会话与上下文监控)",
-      "version": "1.3.5",
+      "version": "1.3.6",
       "author": "HaoAn",
       "description": "在对话右上角极简显示输出速度、缓存命中率与上下文占比，悬停展示完整统计与响应模型。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/agy-telemetry-v1.3.5.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/agy-telemetry-v1.3.6.zip",
       "homepage": "https://github.com/haoan33/AGY-Dock",
-      "changelog": "新增全量历史轨迹主动补齐：当检测到界面仅加载最近部分消息时，自动调用宿主内置接口拉取从第 0 步起的全部历史步骤与模型配置，彻底解决长对话重启后 Token 总额偏小及早期模型遗漏问题。",
-      "sha256": "42774224bd3ce15931e20ab43fa7c30d9fa7e17877772d358696738fd6fbb41b",
-      "size": 29859,
+      "changelog": "新增本地对话记录 transcript.jsonl 直读作为历史总量与已用模型主来源，按步骤号与界面实时数据无重复合并（保留思考/回复拆分与实时流式刷新）；同步修复顶部历史回填入口查找限制与全量模式自动重试。",
+      "sha256": "558256832fac4dbf58d6a7730092543c622e1996c7571109c9686d322f050d3c",
+      "size": 34007,
       "releaseTag": "v2.4.0"
     },
     {
