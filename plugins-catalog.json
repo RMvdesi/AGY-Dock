@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Dock",
-  "updatedAt": "2026-11-21T14:51:58Z",
+  "updatedAt": "2026-11-21T15:11:36Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -20,15 +20,15 @@
     {
       "id": "antigravity-hans",
       "name": "Antigravity Hans (动态汉化)",
-      "version": "0.7.4",
+      "version": "0.7.5",
       "author": "HaoAn",
       "description": "纯 Node.js CDP 动态注入引擎，实时汉化 Antigravity 界面、Agent 面板与 Swarm 看板，并支持保留 Google Sans 西文的中文字体与字重设置（无任何 .exe 二进制，零杀软误报）。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.4.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.5.zip",
       "homepage": "https://github.com/haoan33/AGY-Dock",
-      "changelog": "完整对接 Antigravity 原生 Google Sans Flex 与字重变量阶梯：1. 字体栈首位补回 Google Sans Flex 保留原生可变西文特性；2. 同步重映射 --font-weight-light/normal/medium/semibold/bold/black 与 --agy-gsf-bold-wght 严格单调阶梯，保留各层级粗细对比；3. 补充排除 .google-symbols、.katex、.code-block 并还原代码区标准字重变量。",
-      "sha256": "261dca799c7dce917035c7e4fd698f42292144d1569211364e3484022889d12f",
-      "size": 162413,
+      "changelog": "优化字体粗细反差，避免细字发虚与加粗死黑：新增「粗细反差」三档调节（柔和推荐 / 标准 / 强烈），默认采用「柔和」档收窄正文字与加粗字的差距（最细保底 350、加粗温和提升），并将默认正文字重调至 450。",
+      "sha256": "abd01fdef16a88b9b2ea25249ec91f7116add2538a35794d68cc8e6172dedef9",
+      "size": 163069,
       "releaseTag": "v2.4.0"
     },
     {
