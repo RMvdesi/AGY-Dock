@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Dock",
-  "updatedAt": "2026-11-21T12:51:11Z",
+  "updatedAt": "2026-11-21T14:35:53Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -34,15 +34,15 @@
     {
       "id": "agy-telemetry",
       "name": "Antigravity Telemetry (会话与上下文监控)",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "author": "HaoAn",
       "description": "在对话右上角极简显示输出速度、缓存命中率与上下文占比，悬停展示完整统计与响应模型。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/agy-telemetry-v1.3.3.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Plugin-Manager/releases/download/v2.4.0/agy-telemetry-v1.3.4.zip",
       "homepage": "https://github.com/haoan33/AGY-Dock",
-      "changelog": "修复多模型会话历史检测失效问题：由于宿主仅下发最新 1 条 generatorMetadata，现改为整合 stepsInSlice 枚举、costSummary、clientModelConfigs 映射与本地持久化历史，配合 slug 去重准确展示正在使用与曾调用过的全部模型。",
-      "sha256": "6606be2c74e176a36918082f4cf07146d3a78088a54db088b8bf9987b0d5469c",
-      "size": 28069,
+      "changelog": "修复长对话 Token 用量总额偏小的问题：由于宿主仅下发最近约 50 步 stepsInSlice，现优先读取宿主后端全量汇总 state.costSummary.total.cumulativeTotal（兼容 BigInt），并增加跨滑窗步骤用量缓存作为兜底。",
+      "sha256": "6d0e5e1223a86b5136d4c418925f6942c5c16d35192e93f46f41341be1ae3d39",
+      "size": 29042,
       "releaseTag": "v2.4.0"
     },
     {
