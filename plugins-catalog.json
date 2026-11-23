@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Dock",
-  "updatedAt": "2026-11-23T02:19:45Z",
+  "updatedAt": "2026-11-23T02:40:53Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -20,15 +20,15 @@
     {
       "id": "antigravity-hans",
       "name": "Antigravity Hans (动态汉化)",
-      "version": "0.7.7",
+      "version": "0.7.8",
       "author": "HaoAn",
       "description": "纯 Node.js CDP 动态注入引擎，实时汉化 Antigravity 界面、Agent 面板与 Swarm 看板，并支持保留 Google Sans 西文的中文字体与字重设置（无任何 .exe 二进制，零杀软误报）。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.7.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.8.zip",
       "homepage": "https://github.com/haoan33/AGY-Dock",
-      "changelog": "- 修复 AI 回复普通正文被误判加粗的问题：此前字重样式会把包裹整段回复的外层容器误识别为半粗体，导致正文无法响应字重滑块；现已改为精确匹配，普通段落严格按你设定的字重显示，只有真正的粗体和标题会加粗。\n- 默认正文字重调整为 `400`（标准常规粗细），设置页同步更新档位推荐（新增 `350 轻细`、`400 标准 (推荐)`），默认观感更清秀耐看。",
-      "sha256": "3b916aaedee6828c280300046242bde60eb958fe7b2271f7637fbec2be4548e7",
-      "size": 174570,
+      "changelog": "- 修复已有会话页输入框提示词（如 `Ask anything, @ to mention, / for actions`）及页面内部分按钮控件未翻译的问题：此前插件把整个主对话页面误当成左侧历史列表跳过了，现已精准区分，在继续保持历史标题、你的提问和 AI 回复正文不翻译的同时，恢复已有会话页内所有界面控件与提示词的汉化。\n- 补全全部新建对话页欢迎问候语：包括 `Good to see you, <名字>. What's next?`、`Welcome back, <名字>. Where should we pick up?`、`Hey <名字>, what should we build today?` 及其不带名字的版本与子智能体输入框提示词。",
+      "sha256": "b2ccd3d7bd9424b69a6642f2ea3f612dd276996592982e5d60623c479f30b50b",
+      "size": 175113,
       "releaseTag": "v2.4.0"
     },
     {
