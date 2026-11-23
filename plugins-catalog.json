@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Dock",
-  "updatedAt": "2026-11-23T09:01:43Z",
+  "updatedAt": "2026-11-23T09:20:36Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -62,15 +62,15 @@
     {
       "id": "agy-pixel-pets",
       "name": "AGY Pixel Pets (显卡像素小宠物)",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "RMvdesi (独立显卡重构: HaoAn)",
       "description": "独立像素桌面宠物插件，使用独立后台线程与显卡离屏绘制小螃蟹、小猫及迷你蟹群，支持鼠标逗弄、拎起抛甩、挤压拉伸弹性动效与 AI 状态联动。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/agy-pixel-pets-v1.0.0.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/agy-pixel-pets-v1.0.1.zip",
       "homepage": "https://github.com/RMvdesi/obsidian-prism",
-      "changelog": "- 首次上架 `v1.0.0`：独立后台线程（`OffscreenCanvas` + `Worker`）与 WebGPU 优先显卡管线（支持 WebGL2 兜底）的桌面像素小宠物插件。\n- 内置橘色小螃蟹、紫色小猫与 4 只迷你小螃蟹，支持双宠互动、热闹蟹群与单宠模式，支持鼠标逗弄、拎起抛甩、挤压拉伸弹跳与 AI 状态联动。\n- 全程仅通过显卡变换与合成层位移驱动，不修改页面宽高坐标、不阻塞打字与对话滚动，并配备实时预览设置页。",
-      "sha256": "ba1f3da12768048e90a223957bc13c6c642d22fae980d0f532a3d744284be6b2",
-      "size": 54310,
+      "changelog": "- 修复展开或收起侧栏时宠物区域偶现整块纯白矩形遮挡的问题：合并侧栏动画期间的连续尺寸变动（停稳后再统一调整画布），并在调整尺寸时保留同一显卡设备上的画布配置。\n- 增加透明底色锁定与显卡异常恢复机制：遇到显卡掉线或绘制异常时立即隐身并自动更换干净画布切换至 WebGL2 备用模式继续绘制，彻底杜绝白块残影。",
+      "sha256": "4f9fe56e39b293a0409215d4410f7a39ef7d534eff512238f12277d5a2c6e5f5",
+      "size": 55129,
       "releaseTag": "v2.4.0"
     },
     {
