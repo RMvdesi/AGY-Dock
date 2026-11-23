@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Dock",
-  "updatedAt": "2026-11-21T15:28:21Z",
+  "updatedAt": "2026-11-23T01:42:49Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -20,15 +20,15 @@
     {
       "id": "antigravity-hans",
       "name": "Antigravity Hans (动态汉化)",
-      "version": "0.7.5",
+      "version": "0.7.6",
       "author": "HaoAn",
       "description": "纯 Node.js CDP 动态注入引擎，实时汉化 Antigravity 界面、Agent 面板与 Swarm 看板，并支持保留 Google Sans 西文的中文字体与字重设置（无任何 .exe 二进制，零杀软误报）。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.5.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.6.zip",
       "homepage": "https://github.com/haoan33/AGY-Dock",
-      "changelog": "优化字体粗细反差，避免细字发虚与加粗死黑：新增「粗细反差」三档调节（柔和推荐 / 标准 / 强烈），默认采用「柔和」档收窄正文字与加粗字的差距（最细保底 350、加粗温和提升），并将默认正文字重调至 450。",
-      "sha256": "abd01fdef16a88b9b2ea25249ec91f7116add2538a35794d68cc8e6172dedef9",
-      "size": 163069,
+      "changelog": "- 全面补全 Antigravity 44.9.1 新增与遗漏界面文案（词库扩充至 3,067 条并新增多项动态规则），涵盖指挥模型设置 (`Orchestrator Settings` / `Orchestrator Model` / `Executor Model`)、思考深度、快捷键方案、内置浏览器代理与 Cookie 清理、多方案优选 (`Best of N`)、智能体暂停/继续/打断、侧边栏筛选排序、批注草稿及沙盒权限预设提示（`... need(s) the terminal sandbox...`）。\n- 结合实际功能重译并保留英文括号：将 `Customizations` 修正为 `扩展与定制 (Customizations)`，`Orchestrator` 译为 `指挥模型 (Orchestrator)`，`Side Question` 译为 `侧边追问 (Side Question)`，`Worktree` 译为 `工作副本 (Worktree)`，`Chief of Staff` 译为 `统筹助手 (Chief of Staff)`，`Agent` 统一为 `智能体`。\n- 修复历史误译与残缺词条（如 `Antigravity Tab Settings` 修正为自动补全设置、`Before`/`After` 修正为修改前/修改后），全量润色机翻长句并统一使用“你”，继续保持侧边栏与顶部会话标题不翻译。",
+      "sha256": "b0fac79bc81390645f581bc7cccd796011b48d6676950fb84380565e379de71d",
+      "size": 174557,
       "releaseTag": "v2.4.0"
     },
     {
