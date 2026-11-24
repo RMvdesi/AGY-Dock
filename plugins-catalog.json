@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Dock",
-  "updatedAt": "2026-11-24T00:33:59Z",
+  "updatedAt": "2026-11-24T00:52:39Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -20,15 +20,15 @@
     {
       "id": "antigravity-hans",
       "name": "Antigravity Hans (动态汉化)",
-      "version": "0.7.9",
+      "version": "0.7.10",
       "author": "HaoAn",
       "description": "纯 Node.js CDP 动态注入引擎，实时汉化 Antigravity 界面、Agent 面板与 Swarm 看板，并支持保留 Google Sans 西文的中文字体与字重设置（无任何 .exe 二进制，零杀软误报）。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.9.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.10.zip",
       "homepage": "https://github.com/haoan33/AGY-Dock",
-      "changelog": "- 补全首次使用引导页（“开始前还有最后一件事…”）缺失与半汉化内容：新增“为你量身优化”“一切由你掌控”下方说明的完整中文翻译（同时兼容不同引号格式）。\n- 修复“帮助我们改进 Antigravity。”下方含蓝色可点击条款/隐私政策链接的句子仅翻译链接文字的问题，整句连同链接一起完整汉化并保留链接点击功能。\n- 修复“随时了解最新动态。”下方说明末尾残留英文 `Antigravity.` 的半汉化问题，完整显示为“订阅有关 Antigravity 的简报、使用技巧及相关通知。”。",
-      "sha256": "2f4d91d99c1b839093d272279924b3e97d699923550d8272bd914362de947bef",
-      "size": 176196,
+      "changelog": "- 模型选择列表优化：将模型旁的 `New` 标签从“新建”改为更贴切的“新模型”（其他地方的新建按钮仍保持“新建”）。\n- 补全模型下线提醒汉化：将 `Leaving Soon` 译为“即将下线”，并补全悬停提示（如“适用于高级工作流的初代 Gemini 4 模型。将于 11 月 30 日下线。”与“建议改用 Hydrogen，效果更好且额度消耗更低。将于 11 月 30 日下线。”）。",
+      "sha256": "baa6b04b6e914e89a3401e8912914f598141eee2ca5f5a4988e12a94ac7ff73d",
+      "size": 176930,
       "releaseTag": "v2.4.0"
     },
     {
