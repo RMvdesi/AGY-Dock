@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "haoan33/AGY-Dock",
-  "updatedAt": "2026-11-23T09:20:36Z",
+  "updatedAt": "2026-11-24T00:33:59Z",
   "plugins": [
     {
       "id": "office-viewer",
@@ -20,15 +20,15 @@
     {
       "id": "antigravity-hans",
       "name": "Antigravity Hans (动态汉化)",
-      "version": "0.7.8",
+      "version": "0.7.9",
       "author": "HaoAn",
       "description": "纯 Node.js CDP 动态注入引擎，实时汉化 Antigravity 界面、Agent 面板与 Swarm 看板，并支持保留 Google Sans 西文的中文字体与字重设置（无任何 .exe 二进制，零杀软误报）。",
       "type": "node-cdp",
-      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.8.zip",
+      "downloadUrl": "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/antigravity-hans-v0.7.9.zip",
       "homepage": "https://github.com/haoan33/AGY-Dock",
-      "changelog": "- 修复已有会话页输入框提示词（如 `Ask anything, @ to mention, / for actions`）及页面内部分按钮控件未翻译的问题：此前插件把整个主对话页面误当成左侧历史列表跳过了，现已精准区分，在继续保持历史标题、你的提问和 AI 回复正文不翻译的同时，恢复已有会话页内所有界面控件与提示词的汉化。\n- 补全全部新建对话页欢迎问候语：包括 `Good to see you, <名字>. What's next?`、`Welcome back, <名字>. Where should we pick up?`、`Hey <名字>, what should we build today?` 及其不带名字的版本与子智能体输入框提示词。",
-      "sha256": "b2ccd3d7bd9424b69a6642f2ea3f612dd276996592982e5d60623c479f30b50b",
-      "size": 175113,
+      "changelog": "- 补全首次使用引导页（“开始前还有最后一件事…”）缺失与半汉化内容：新增“为你量身优化”“一切由你掌控”下方说明的完整中文翻译（同时兼容不同引号格式）。\n- 修复“帮助我们改进 Antigravity。”下方含蓝色可点击条款/隐私政策链接的句子仅翻译链接文字的问题，整句连同链接一起完整汉化并保留链接点击功能。\n- 修复“随时了解最新动态。”下方说明末尾残留英文 `Antigravity.` 的半汉化问题，完整显示为“订阅有关 Antigravity 的简报、使用技巧及相关通知。”。",
+      "sha256": "2f4d91d99c1b839093d272279924b3e97d699923550d8272bd914362de947bef",
+      "size": 176196,
       "releaseTag": "v2.4.0"
     },
     {
