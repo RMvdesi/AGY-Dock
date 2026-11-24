@@ -609,9 +609,17 @@ export function ExternalPluginDetailPage({
             isDark={isDark}
           />
           <div className="min-w-0 flex-1">
-            <h1 className="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">
-              {plugin.name || plugin.id}
-            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-[19px] font-bold tracking-tight text-[var(--text-primary)]">
+                {plugin.name || plugin.id}
+              </h1>
+              <span
+                title={`插件编号：${plugin.id}`}
+                className="shrink-0 rounded-md border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-2 py-[2px] font-mono-code text-[11.5px] text-[var(--text-muted)]"
+              >
+                ID: {plugin.id}
+              </span>
+            </div>
             <p className="mt-1 text-[13px] leading-relaxed text-[var(--text-muted)]">
               {plugin.description || "外部托管插件"}
             </p>

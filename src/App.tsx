@@ -1127,13 +1127,6 @@ export default function App() {
                 onRefreshRemote={() => refreshRemoteMarketplace(true)}
                 onOpenExternalUrl={(url) => handleOpenUpdateUrl(url)}
                 onManageInstalled={openExternalDetail}
-                onOpenManualCreate={() =>
-                  setEditorState({
-                    open: true,
-                    initial: { mode: "create", plugin: null },
-                    saving: false,
-                  })
-                }
                 onAddCustomRepo={handleAddCustomRepo}
                 onRemoveCustomRepo={handleRemoveCustomRepo}
                 onToggleCustomRepo={handleToggleCustomRepo}

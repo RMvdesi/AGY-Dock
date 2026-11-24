@@ -193,8 +193,8 @@ export function PluginEditorModal({
                       onChange={(e) => setType(e.target.value)}
                       className="agy-input w-full cursor-pointer"
                     >
-                      <option value="node-cdp">界面增强 · Node (node-cdp)</option>
-                      <option value="custom-cdp">界面增强 · 自定义 (custom-cdp)</option>
+                      <option value="node-cdp">CDP 注入 · Node (node-cdp)</option>
+                      <option value="custom-cdp">CDP 注入 · 自定义 (custom-cdp)</option>
                       <option value="node-companion">后台伴随 · Node (node-companion)</option>
                       <option value="ps-companion">后台伴随 · PowerShell (ps-companion)</option>
                       <option value="py-companion">后台伴随 · Python (py-companion)</option>

@@ -7,7 +7,6 @@ import {
   Download,
   ExternalLink,
   FolderGit2,
-  Plus,
   RefreshCw,
   Rocket,
   ShieldAlert,
@@ -20,7 +19,6 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { PluginMonogram } from "../components/BrandMark";
 import {
-  MOTION_EASE,
   SearchInput,
   SegmentedControl,
   SpringSwitch,
@@ -30,7 +28,6 @@ import {
 import {
   formatBytes,
   formatErrorMessage,
-  formatPluginCategoryLabel,
   formatVersionText,
   sanitizePlainText,
 } from "../lib/format";
@@ -55,7 +52,6 @@ interface MarketplacePageProps {
   onRefreshRemote: () => void;
   onOpenExternalUrl: (url: string) => void;
   onManageInstalled: (pluginId: string) => void;
-  onOpenManualCreate: () => void;
   onAddCustomRepo: (repoInput: string, label?: string) => Promise<void>;
   onRemoveCustomRepo: (repo: string) => Promise<void>;
   onToggleCustomRepo: (repo: string, enabled: boolean) => Promise<void>;
@@ -76,7 +72,6 @@ export function MarketplacePage({
   onRefreshRemote,
   onOpenExternalUrl,
   onManageInstalled,
-  onOpenManualCreate,
   onAddCustomRepo,
   onRemoveCustomRepo,
   onToggleCustomRepo,
@@ -194,7 +189,7 @@ export function MarketplacePage({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3.5">
-      {/* Toolbar */}
+      {/* Toolbar (fixed controls across tiers so switching tabs never jumps toolbar height) */}
       <div className="agy-card flex flex-wrap items-center justify-between gap-2.5 px-4 py-2.5">
         <div className="flex flex-wrap items-center gap-2.5">
           <SegmentedControl
@@ -211,7 +206,7 @@ export function MarketplacePage({
           <SearchInput
             value={query}
             onChange={setQuery}
-            placeholder="搜索插件名称、ID、作者或描述..."
+            placeholder="搜索插件名称、作者或描述..."
             className="w-[220px]"
           />
 
@@ -225,8 +220,38 @@ export function MarketplacePage({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {tier === "third-party" && (
-            <>
+          <button
+            type="button"
+            disabled={isSpinning}
+            onClick={handleRefresh}
+            title="刷新插件市场清单"
+            className="agy-btn"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isSpinning ? "animate-spin" : ""}`} />
+            <span>刷新市场</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Scrollable Marketplace Content */}
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
+        {tier === "third-party" && (
+          <div
+            className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-[var(--border-hairline)] px-3.5 py-2 text-[12px]"
+            style={{ backgroundColor: "var(--warn-bg)" }}
+          >
+            <div
+              className="flex min-w-0 flex-1 items-center gap-2"
+              title="第三方市场收录的插件未经官方人工逐行检查，仅做基础代码安全筛查与敏感行为标注；安装或使用第三方插件引起的数据损失或其它后果均由用户自行承担，与本软件作者无关。"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[var(--warn)]" />
+              <p className="min-w-0 truncate text-[var(--text-muted)]">
+                <span className="font-semibold text-[var(--text-primary)]">免责声明：</span>
+                第三方插件未经官方人工逐行检查，仅作基础安全筛查，使用后果由用户自负（与软件作者无关）。
+              </p>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-1.5">
               <button
                 type="button"
                 onClick={() => {
@@ -234,7 +259,7 @@ export function MarketplacePage({
                   setPreflight(null);
                   setSubmitOpen(true);
                 }}
-                className="agy-btn"
+                className="agy-btn bg-[var(--bg-surface)] px-2.5 py-1 text-[12px]"
               >
                 <Rocket className="h-3.5 w-3.5 text-[var(--accent)]" />
                 <span>快捷上架插件</span>
@@ -246,47 +271,11 @@ export function MarketplacePage({
                   setRepoError("");
                   setReposOpen(true);
                 }}
-                className="agy-btn"
+                className="agy-btn bg-[var(--bg-surface)] px-2.5 py-1 text-[12px]"
               >
                 <FolderGit2 className="h-3.5 w-3.5" />
                 <span>私人仓库 ({customRepos.length})</span>
               </button>
-            </>
-          )}
-
-          <button
-            type="button"
-            disabled={isSpinning}
-            onClick={handleRefresh}
-            title="刷新插件市场清单"
-            className="agy-btn"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${isSpinning ? "animate-spin" : ""}`} />
-            <span>刷新市场</span>
-          </button>
-
-          <button type="button" onClick={onOpenManualCreate} className="agy-btn-primary">
-            <Plus className="h-3.5 w-3.5" />
-            <span>手动配置导入</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Scrollable Marketplace Content */}
-      <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto pr-0.5">
-        {tier === "third-party" && (
-          <div
-            className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-[var(--border-hairline)] px-4 py-3 text-[12.5px]"
-            style={{ backgroundColor: "var(--warn-bg)" }}
-          >
-            <div className="flex min-w-0 flex-1 items-start gap-2.5">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--warn)]" />
-              <div className="space-y-0.5">
-                <div className="font-semibold text-[var(--text-primary)]">第三方插件免责声明</div>
-                <p className="leading-relaxed text-[var(--text-muted)]">
-                  第三方市场收录的插件未经官方人工逐行检查，仅做基础代码安全筛查与敏感行为标注；安装或使用第三方插件引起的数据损失或其它后果均由用户自行承担，与本软件作者无关。
-                </p>
-              </div>
             </div>
           </div>
         )}
@@ -366,217 +355,186 @@ export function MarketplacePage({
               <RefreshCw className="h-3.5 w-3.5 animate-spin text-[var(--accent)]" />
               <span>正在同步插件市场与版本更新...</span>
             </div>
+          ) : filteredRemote.length === 0 ? (
+            <div className="px-5 py-8 text-center text-[12.5px] text-[var(--text-muted)]">
+              {query.trim()
+                ? "未找到匹配的插件"
+                : filter === "updates"
+                  ? "当前分类下已安装的插件均已是最新版本"
+                  : tier === "third-party"
+                    ? "第三方市场暂未收录插件，可点击上方「快捷上架插件」或添加私人仓库"
+                    : "仓库中暂未发现可安装的插件包"}
+            </div>
           ) : (
-            <AnimatePresence mode="wait" initial={false}>
-              {filteredRemote.length === 0 ? (
-                <motion.div
-                  key={`remote-empty-${tier}-${filter}`}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.14, ease: MOTION_EASE }}
-                  className="px-5 py-8 text-center text-[12.5px] text-[var(--text-muted)]"
-                >
-                  {query.trim()
-                    ? "未找到匹配的插件"
-                    : filter === "updates"
-                      ? "当前分类下已安装的插件均已是最新版本"
-                      : tier === "third-party"
-                        ? "第三方市场暂未收录插件，可点击上方「快捷上架插件」或添加私人仓库"
-                        : "仓库中暂未发现可安装的插件包"}
-                </motion.div>
-              ) : (
-                <motion.div
-                  key={`remote-list-${tier}`}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.14, ease: MOTION_EASE }}
-                  className="divide-y divide-[var(--border-hairline)] px-2"
-                >
-                  <AnimatePresence initial={false} mode="popLayout">
-                    {filteredRemote.map((pkg) => {
-                      const isInstalling = installingRemoteId === pkg.id;
-                      const busyAny = updatingAllRemote || Boolean(installingRemoteId);
-                      const displayName = sanitizePlainText(pkg.name) || pkg.id;
-                      const authorName = sanitizePlainText(pkg.author) || "未知";
-                      const descText =
-                        sanitizePlainText(pkg.description) || `${pkg.id} 远程扩展包`;
-                      const changelogText = pkg.hasUpdate ? pkg.changelog.trim() : "";
-                      const hasLowRisk =
-                        pkg.riskLevel === "low" && (pkg.riskFindings?.length ?? 0) > 0;
+            <div className="divide-y divide-[var(--border-hairline)] px-2">
+              {filteredRemote.map((pkg) => {
+                const isInstalling = installingRemoteId === pkg.id;
+                const busyAny = updatingAllRemote || Boolean(installingRemoteId);
+                const displayName = sanitizePlainText(pkg.name) || pkg.id;
+                const authorName = sanitizePlainText(pkg.author) || "未知";
+                const descText =
+                  sanitizePlainText(pkg.description) || `${pkg.id} 远程扩展包`;
+                const changelogText = pkg.hasUpdate ? pkg.changelog.trim() : "";
+                const hasLowRisk =
+                  pkg.riskLevel === "low" && (pkg.riskFindings?.length ?? 0) > 0;
 
-                      return (
-                        <motion.div
-                          key={`${pkg.tier}-${pkg.sourceRepo}-${pkg.id}`}
-                          layout="position"
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.98 }}
-                          transition={{ duration: 0.15, ease: MOTION_EASE }}
-                          className="rounded-xl px-3.5 py-3 transition-colors hover:bg-[var(--bg-row-hover)]"
-                        >
-                          <div className="flex items-center gap-3.5">
-                            <PluginMonogram
-                              pluginId={pkg.id}
-                              pluginType={pkg.type}
-                              label={displayName}
-                              size={36}
-                              isDark={isDark}
-                            />
+                return (
+                  <div
+                    key={`${pkg.tier}-${pkg.sourceRepo}-${pkg.id}`}
+                    className="rounded-xl px-3.5 py-3 transition-colors hover:bg-[var(--bg-row-hover)]"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <PluginMonogram
+                        pluginId={pkg.id}
+                        pluginType={pkg.type}
+                        label={displayName}
+                        size={36}
+                        isDark={isDark}
+                      />
 
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="truncate text-[13.5px] font-semibold text-[var(--text-primary)]">
-                                  {displayName}
-                                </span>
-                                <span
-                                  title={`插件编号：${pkg.id}`}
-                                  className="shrink-0 rounded-md border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-1.5 py-[1px] font-mono-code text-[11px] text-[var(--text-muted)]"
-                                >
-                                  ID: {pkg.id}
-                                </span>
-                                <span className="shrink-0 rounded-md bg-[var(--bg-subtle)] px-1.5 py-[1px] font-mono-code text-[11px] font-medium text-[var(--text-muted)]">
-                                  {formatVersionText(pkg.version)}
-                                </span>
-                                <AuthorBadge author={authorName} />
-                                <span className="hidden shrink-0 rounded-md bg-[var(--bg-subtle)] px-1.5 py-[1px] text-[10.5px] text-[var(--text-muted)] sm:inline">
-                                  {formatPluginCategoryLabel(pkg.type)}
-                                </span>
-                                {pkg.tier === "custom" && pkg.sourceRepo && (
-                                  <span className="hidden shrink-0 rounded-md border border-[var(--border-hairline)] px-1.5 py-[1px] font-mono-code text-[10.5px] text-[var(--text-faint)] md:inline">
-                                    私人源: {pkg.sourceRepo}
-                                  </span>
-                                )}
-                                {hasLowRisk && (
-                                  <StatusPill tone="warn">低危敏感提醒</StatusPill>
-                                )}
-                                {pkg.conflictBlocked && (
-                                  <StatusPill tone="danger">ID 冲突已拦截</StatusPill>
-                                )}
-                                {pkg.size > 0 && (
-                                  <span className="hidden shrink-0 text-[11px] tabular-nums text-[var(--text-faint)] lg:inline">
-                                    · {formatBytes(pkg.size)}
-                                  </span>
-                                )}
-                                {pkg.homepage && (
-                                  <button
-                                    type="button"
-                                    onClick={() => onOpenExternalUrl(pkg.homepage)}
-                                    title={`打开主页：${pkg.homepage}`}
-                                    className="inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--text-faint)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--link)]"
-                                  >
-                                    <ExternalLink className="h-3 w-3" />
-                                  </button>
-                                )}
-                              </div>
-                              <p className="mt-0.5 truncate text-[12.5px] text-[var(--text-muted)]">
-                                {descText}
-                              </p>
-                            </div>
-
-                            <div className="flex shrink-0 items-center gap-2">
-                              {pkg.conflictBlocked ? (
-                                <StatusPill tone="danger">禁止覆盖官方</StatusPill>
-                              ) : pkg.hasUpdate || pkg.status === "update-available" ? (
-                                <>
-                                  <StatusPill tone="warn">
-                                    可更新 {formatVersionText(pkg.installedVersion)} →{" "}
-                                    {formatVersionText(pkg.version)}
-                                  </StatusPill>
-                                  <button
-                                    type="button"
-                                    disabled={busyAny}
-                                    onClick={() => onInstallRemote(pkg)}
-                                    className="agy-btn-primary px-3 py-1.5 text-[12.5px]"
-                                  >
-                                    <Download className="h-3.5 w-3.5" />
-                                    <span>{isInstalling ? "更新中..." : "立即更新"}</span>
-                                  </button>
-                                </>
-                              ) : pkg.installed ? (
-                                <>
-                                  <StatusPill tone="ok">已是最新</StatusPill>
-                                  <button
-                                    type="button"
-                                    onClick={() => onManageInstalled(pkg.id)}
-                                    className="agy-btn px-3 py-1.5 text-[12.5px]"
-                                  >
-                                    管理
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={busyAny}
-                                    onClick={() => onInstallRemote(pkg)}
-                                    className="agy-btn px-3 py-1.5 text-[12.5px]"
-                                  >
-                                    <Download className="h-3.5 w-3.5" />
-                                    <span>{isInstalling ? "安装中..." : "重装"}</span>
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  {pkg.isNew || pkg.status === "new" ? (
-                                    <StatusPill tone="info">新插件</StatusPill>
-                                  ) : (
-                                    <StatusPill tone="muted">未安装</StatusPill>
-                                  )}
-                                  <button
-                                    type="button"
-                                    disabled={busyAny}
-                                    onClick={() => onInstallRemote(pkg)}
-                                    className="agy-btn-primary px-3.5 py-1.5 text-[12.5px]"
-                                  >
-                                    <Download className="h-3.5 w-3.5" />
-                                    <span>{isInstalling ? "下载中..." : "下载安装"}</span>
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="truncate text-[13.5px] font-semibold text-[var(--text-primary)]">
+                            {displayName}
+                          </span>
+                          <span className="shrink-0 rounded-md bg-[var(--bg-subtle)] px-1.5 py-[1px] font-mono-code text-[11px] font-medium text-[var(--text-muted)]">
+                            {formatVersionText(pkg.version)}
+                          </span>
+                          <AuthorBadge author={authorName} />
+                          <span className="hidden shrink-0 font-mono-code text-[11px] text-[var(--text-faint)] sm:inline">
+                            {pkg.type || "custom-cdp"}
+                          </span>
+                          {pkg.tier === "custom" && pkg.sourceRepo && (
+                            <span className="hidden shrink-0 rounded-md border border-[var(--border-hairline)] px-1.5 py-[1px] font-mono-code text-[10.5px] text-[var(--text-faint)] md:inline">
+                              私人源: {pkg.sourceRepo}
+                            </span>
+                          )}
                           {hasLowRisk && (
-                            <div
-                              className="mt-2 ml-[50px] rounded-lg border border-[var(--border-hairline)] px-3 py-2 text-[11.5px]"
-                              style={{ backgroundColor: "var(--warn-bg)" }}
+                            <StatusPill tone="warn">低危敏感提醒</StatusPill>
+                          )}
+                          {pkg.conflictBlocked && (
+                            <StatusPill tone="danger">ID 冲突已拦截</StatusPill>
+                          )}
+                          {pkg.size > 0 && (
+                            <span className="hidden shrink-0 text-[11px] tabular-nums text-[var(--text-faint)] lg:inline">
+                              · {formatBytes(pkg.size)}
+                            </span>
+                          )}
+                          {pkg.homepage && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenExternalUrl(pkg.homepage)}
+                              title={`打开主页：${pkg.homepage}`}
+                              className="inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--text-faint)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--link)]"
                             >
-                              <div className="font-semibold text-[var(--warn)]">
-                                自动筛查提醒（低危敏感行为）：
-                              </div>
-                              <ul className="mt-1 space-y-0.5 text-[var(--text-primary)]">
-                                {pkg.riskFindings.slice(0, 4).map((rf, i) => (
-                                  <li key={`${rf.code}-${i}`}>
-                                    · {rf.title}：{rf.detail}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
+                              <ExternalLink className="h-3 w-3" />
+                            </button>
                           )}
+                        </div>
+                        <p className="mt-0.5 truncate text-[12.5px] text-[var(--text-muted)]">
+                          {descText}
+                        </p>
+                      </div>
 
-                          {pkg.conflictBlocked && pkg.conflictReason && (
-                            <div
-                              className="mt-2 ml-[50px] rounded-lg border border-[var(--border-hairline)] px-3 py-1.5 text-[11.5px] text-[var(--danger)]"
-                              style={{ backgroundColor: "var(--danger-bg)" }}
+                      <div className="flex shrink-0 items-center gap-2">
+                        {pkg.conflictBlocked ? (
+                          <StatusPill tone="danger">禁止覆盖官方</StatusPill>
+                        ) : pkg.hasUpdate || pkg.status === "update-available" ? (
+                          <>
+                            <StatusPill tone="warn">
+                              可更新 {formatVersionText(pkg.installedVersion)} →{" "}
+                              {formatVersionText(pkg.version)}
+                            </StatusPill>
+                            <button
+                              type="button"
+                              disabled={busyAny}
+                              onClick={() => onInstallRemote(pkg)}
+                              className="agy-btn-primary px-3 py-1.5 text-[12.5px]"
                             >
-                              {pkg.conflictReason}
-                            </div>
-                          )}
+                              <Download className="h-3.5 w-3.5" />
+                              <span>{isInstalling ? "更新中..." : "立即更新"}</span>
+                            </button>
+                          </>
+                        ) : pkg.installed ? (
+                          <>
+                            <StatusPill tone="ok">已是最新</StatusPill>
+                            <button
+                              type="button"
+                              onClick={() => onManageInstalled(pkg.id)}
+                              className="agy-btn px-3 py-1.5 text-[12.5px]"
+                            >
+                              管理
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busyAny}
+                              onClick={() => onInstallRemote(pkg)}
+                              className="agy-btn px-3 py-1.5 text-[12.5px]"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              <span>{isInstalling ? "安装中..." : "重装"}</span>
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            {pkg.isNew || pkg.status === "new" ? (
+                              <StatusPill tone="info">新插件</StatusPill>
+                            ) : (
+                              <StatusPill tone="muted">未安装</StatusPill>
+                            )}
+                            <button
+                              type="button"
+                              disabled={busyAny}
+                              onClick={() => onInstallRemote(pkg)}
+                              className="agy-btn-primary px-3.5 py-1.5 text-[12.5px]"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              <span>{isInstalling ? "下载中..." : "下载安装"}</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
 
-                          {changelogText && (
-                            <section className="mt-2.5 ml-[50px] rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-3 py-2.5">
-                              <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--text-primary)]">
-                                更新日志
-                              </h3>
-                              <ReleaseNotes text={changelogText} onOpenUrl={onOpenExternalUrl} />
-                            </section>
-                          )}
-                        </motion.div>
-                      );
-                    })}
-                  </AnimatePresence>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                    {hasLowRisk && (
+                      <div
+                        className="mt-2 ml-[50px] rounded-lg border border-[var(--border-hairline)] px-3 py-2 text-[11.5px]"
+                        style={{ backgroundColor: "var(--warn-bg)" }}
+                      >
+                        <div className="font-semibold text-[var(--warn)]">
+                          自动筛查提醒（低危敏感行为）：
+                        </div>
+                        <ul className="mt-1 space-y-0.5 text-[var(--text-primary)]">
+                          {pkg.riskFindings.slice(0, 4).map((rf, i) => (
+                            <li key={`${rf.code}-${i}`}>
+                              · {rf.title}：{rf.detail}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {pkg.conflictBlocked && pkg.conflictReason && (
+                      <div
+                        className="mt-2 ml-[50px] rounded-lg border border-[var(--border-hairline)] px-3 py-1.5 text-[11.5px] text-[var(--danger)]"
+                        style={{ backgroundColor: "var(--danger-bg)" }}
+                      >
+                        {pkg.conflictReason}
+                      </div>
+                    )}
+
+                    {changelogText && (
+                      <section className="mt-2.5 ml-[50px] rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-3 py-2.5">
+                        <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--text-primary)]">
+                          更新日志
+                        </h3>
+                        <ReleaseNotes text={changelogText} onOpenUrl={onOpenExternalUrl} />
+                      </section>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </section>
       </div>

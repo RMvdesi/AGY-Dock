@@ -71,10 +71,6 @@ export function isCompanionPluginType(pluginType: string | null | undefined): bo
   return t === "node-companion" || t === "ps-companion" || t === "py-companion" || t === "companion";
 }
 
-export function formatPluginCategoryLabel(pluginType: string | null | undefined): string {
-  return isCompanionPluginType(pluginType) ? "后台伴随" : "界面增强";
-}
-
 export function isSupportedPackagePath(filePath: string): boolean {
   const lower = (filePath || "").trim().toLowerCase();
   return SUPPORTED_PACKAGE_EXTS.some((ext) => lower.endsWith(ext));

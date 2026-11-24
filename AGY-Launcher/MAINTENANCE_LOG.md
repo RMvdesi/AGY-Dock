@@ -6,13 +6,31 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.9.1] - 2026-11-24 18:40
+### Scope & Summary
+- Polish Marketplace UI & list clarity: eliminated the rectangular layout transition flash when toggling between Official and Third-Party tabs, hid raw plugin IDs from Marketplace/My Plugins list cards (showing `ID:` on the detail page instead), removed the misleading "界面增强" category badge across marketplace cards and editor options, compacted the third-party disclaimer strip, and removed the redundant manual config import entry from the Marketplace toolbar.
+- Relocate `AGY-Launcher/PLUGIN_INTEGRATION.md` to repository root `PLUGIN_INTEGRATION.md` alongside `CHANGELOG.md` and update workspace rule references.
+- Rewrite `README.md` completely in English with top navigation links (`Plugin Integration Spec`, `Changelog`, `Contributing`), add root `CONTRIBUTING.md`, bump synced manifests to `2.9.1`, and update `CHANGELOG.md`.
+
+### Files Changed
+- `PLUGIN_INTEGRATION.md` (moved from `AGY-Launcher/PLUGIN_INTEGRATION.md`), `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `AGENTS.md`, `AGY-Launcher/AGENTS.md` — root documentation restructure, English README rewrite, and release notes.
+- `src/pages/MarketplacePage.tsx`, `src/pages/MyPluginsPage.tsx`, `src/pages/ExternalPluginDetailPage.tsx`, `src/components/PluginEditorModal.tsx`, `src/lib/format.ts`, `src/App.tsx` — Marketplace layout polish, category label cleanup, detail-only plugin ID display, and removal of manual config import button.
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `AGY-Launcher/server.mjs`, `AGY-Launcher/lib/process-manager.mjs` — synchronized version bump from `2.9.0` to `2.9.1`.
+
+### Verification
+- `npx tsc --noEmit` & `npm run build` (`tsc --noEmit && vite build`) -> built 2280 modules in 3.71s, 0 errors.
+- `cargo test --manifest-path src-tauri/Cargo.toml` -> 59 passed, 0 failed (`agy_dock_lib`).
+- `node --test AGY-Launcher/tests/process-manager.test.mjs` -> 10 passed, 0 failed.
+- `node scripts/scan-plugin.mjs AGY-Launcher/plugin-packages/agy-telemetry-v1.3.6.zip` -> exited 0 (`[NONE]`, 5 files scanned).
+
 ## [v2.9.0] - 2026-11-24 17:50
 
 ### Summary
 
 - Implement dual-track plugin marketplace (`官方市场` + `第三方市场`) with 5-minute automatic refresh (`src-tauri/src/commands.rs`, `src-tauri/src/marketplace.rs`, `src/pages/MarketplacePage.tsx`):
   - Separate official plugins (`plugins-catalog.json`, first-time manual approval + automatic upstream release sync) from third-party plugins (`third-party-catalog.json` + user-added custom GitHub repositories) with a permanent third-party disclaimer banner, quick-submit preflight modal, and private repo manager.
-  - Enforce `<github-owner>.<slug>` plugin IDs for third-party plugins (preserving legacy IDs for existing first-party plugins), display plugin IDs visibly in Marketplace, My Plugins, and detail views, and enforce official priority + source-lock protection against cross-source overwrite hijacking.
+  - Enforce `<github-owner>.<slug>` plugin IDs for third-party plugins (preserving legacy IDs for existing first-party plugins), display plugin IDs on the plugin management detail page (`ExternalPluginDetailPage.tsx`) while keeping catalog and list rows uncluttered, and enforce official priority + source-lock protection against cross-source overwrite hijacking.
+  - Eliminate Marketplace tier-switch rectangular layout flash by removing nested `AnimatePresence` / `popLayout` transitions in `MarketplacePage.tsx`, compacting the third-party disclaimer strip, removing the redundant Marketplace manual import button (`onOpenManualCreate`), and displaying raw runtime `type` without `"界面增强"` labels.
 - Add two-tier automated code security screening (`src-tauri/src/security_scan.rs`, `scripts/scan-plugin.mjs`, `src/components/SecurityScanModal.tsx`):
   - Strictly block `.exe`/native binaries, `exe-cdp`, direct process killing (`taskkill`/`Stop-Process`/`TerminateProcess`), obfuscated execution, credential theft, and destructive OS commands; disclose low-risk external network calls, conversation data access, and safe manager bridge usage.
 - Add background companion plugin types (`node-companion`, `ps-companion`, `py-companion`) and loopback Manager Safe Process Bridge (`src-tauri/src/bridge.rs`, `src-tauri/src/supervisor.rs`, `src-tauri/src/lib.rs`):
