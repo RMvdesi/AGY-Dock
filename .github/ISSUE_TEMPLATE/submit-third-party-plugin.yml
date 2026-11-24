@@ -1,42 +1,47 @@
-name: 快捷上架第三方插件市场（自动筛查免审）
-description: 填好 GitHub 仓库与插件名，自动代码安全筛查通过后免人工审核进入第三方市场
-title: "[第三方插件上架] "
+name: 快捷上架第三方插件市场 / Third-Party Marketplace Quick Submit (Auto-Scan)
+description: 填好 GitHub 仓库与插件名，安全筛查通过后免人工审核进第三方市场 / Automated scan & instant listing in the Third-Party Marketplace
+title: "[Third-Party Plugin] "
 labels: ["plugin-third-party-submit"]
 body:
   - type: markdown
     attributes:
       value: |
-        提交后机器人将自动下载你仓库最新发布版本的 `.zip` 插件包并进行代码安全筛查：
-        - **无风险**：直接免人工审核进入公共「第三方市场」。
-        - **低危敏感行为**（如连接外部网址、请求管理器白名单清理子进程）：允许上架并在卡片标注提示。
-        - **高危风险**（含 `.exe`、直接强杀系统进程、加密混淆等）：自动拦截，需改走「官方认证插件申请」人工审核。
+        提交后机器人将自动下载你仓库最新发布版本的 `.zip` 插件包并执行代码安全筛查：
+        Upon submission, automation will download your latest Release `.zip` archive and run a security scan:
+
+        - **无风险 / Clean (`none`)**：直接免人工审核上架公共「第三方市场」。
+          Published automatically to the public **Third-Party Marketplace** with no warning badge.
+        - **低危敏感行为 / Low Risk (`low`)**：允许自动上架，并在卡片标注具体敏感行为与目标域名。
+          Published automatically with explicit risk disclosures and external domain badges.
+        - **高危风险 / High Risk (`high`)**：自动拦截（如含 `.exe`、直接强杀系统进程、加密混淆等），请改用「官方市场申请 / Official Marketplace Submission」人工审核。
+          Automatically blocked (e.g. `.exe` binaries, direct process killing, obfuscation); please apply via the **Official Marketplace** manual review form instead.
   - type: input
     id: repo
     attributes:
-      label: GitHub 仓库地址 (repo)
-      description: 你的公开插件仓库地址（如 https://github.com/zhangsan/my-plugin）
+      label: GitHub 仓库地址 / GitHub Repository URL (repo)
+      description: 你的公开插件仓库地址 / Your public plugin repository (e.g. https://github.com/zhangsan/my-plugin)
       placeholder: "https://github.com/username/repo"
     validations:
       required: true
   - type: input
     id: plugin_name
     attributes:
-      label: 插件名称 (plugin_name)
-      description: 显示在第三方市场中的插件名称
-      placeholder: "例如：子代理进程自动清理助手"
+      label: 插件名称 / Plugin Display Name (plugin_name)
+      description: 显示在第三方市场中的名称 / Display name shown in the Third-Party Marketplace
+      placeholder: "例如 / e.g.: Subagent Process Cleaner"
     validations:
       required: true
   - type: input
     id: author
     attributes:
-      label: 作者展示名 (author)
-      description: 可选，留空时默认使用仓库用户名
+      label: 作者展示名 / Author Display Name (author)
+      description: 可选，留空时默认使用仓库用户名 / Optional; defaults to the repository owner when omitted
     validations:
       required: false
   - type: textarea
     id: description
     attributes:
-      label: 一句话功能简介 (description)
-      description: 简洁说明插件功能
+      label: 功能简介 / Short Description (description)
+      description: 一句话说明插件功能（纯文本）/ Concise one-line plain-text summary
     validations:
       required: false

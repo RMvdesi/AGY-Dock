@@ -1,43 +1,48 @@
-name: 申请上架官方插件市场（人工审核）
-description: 首次提交插件到 AGY Dock 官方认证市场，审核通过后后续新版将自动同步
-title: "[官方认证插件申请] "
+name: 申请上架官方插件市场 / Official Marketplace Submission (Manual Review)
+description: 首次提交插件到 AGY Dock 官方认证市场 / First-time submission to the Official Marketplace (auto-syncs future releases once approved)
+title: "[Official Plugin] "
 labels: ["plugin-official-submit"]
 body:
   - type: markdown
     attributes:
       value: |
-        请填写你的 GitHub 插件仓库信息。系统会自动检查最新 Release 压缩包格式与代码安全性，确认无误后将创建审核单，由仓库维护者点击通过即可进入「官方市场」。
-        **注意**：
-        - 插件包 `agy-plugin.json` 中的 `id` 必须使用 `你的GitHub用户名.插件名`（例如 `zhangsan.auto-cleaner`）。
-        - 不允许包含 `.exe` / `.dll` 等黑盒可执行文件；如需关闭卡死子进程，请使用管理器安全代办接口 (`AGY_BRIDGE_URL`)。
+        请填写你的公开 GitHub 插件仓库信息。系统会自动检查最新 Release 压缩包格式与代码安全性，通过后将创建审核单，由仓库维护者合并即可进入「官方市场」（后续新版自动同步）。
+
+        Please fill in your public GitHub plugin repository details. Automation will scan your latest Release `.zip` archive and open a review PR for the **Official Marketplace** (future updates auto-sync after initial approval).
+
+        **注意 / Requirements**：
+        - 压缩包内 `agy-plugin.json` 的 `id` 必须使用 `你的GitHub用户名.插件名`（例如 `zhangsan.subagent-cleaner`）。
+          `id` in `agy-plugin.json` MUST use `<github-owner>.<slug>` (e.g. `zhangsan.subagent-cleaner`).
+        - 严禁包含 `.exe` / `.dll` 等二进制程序；清理卡死子进程请使用管理器安全代办接口 (`AGY_BRIDGE_URL`)。
+          No `.exe` / `.dll` binaries allowed; use the Manager Safe Process Bridge (`AGY_BRIDGE_URL`) for subagent cleanup.
   - type: input
     id: repo
     attributes:
-      label: GitHub 仓库地址 (repo)
-      description: 你的公开插件仓库地址（如 https://github.com/zhangsan/my-plugin 或 zhangsan/my-plugin）
+      label: GitHub 仓库地址 / GitHub Repository URL (repo)
+      description: 你的公开插件仓库地址 / Your public plugin repository (e.g. https://github.com/zhangsan/my-plugin or zhangsan/my-plugin)
       placeholder: "https://github.com/username/repo"
     validations:
       required: true
   - type: input
     id: plugin_name
     attributes:
-      label: 插件名称 (plugin_name)
-      description: 显示在市场列表中的中文或英文名称
-      placeholder: "例如：子代理进程自动清理助手"
+      label: 插件名称 / Plugin Display Name (plugin_name)
+      description: 显示在市场列表中的名称 / Display name shown in the Marketplace list
+      placeholder: "例如 / e.g.: Subagent Process Cleaner"
     validations:
       required: true
   - type: input
     id: author
     attributes:
-      label: 作者展示名 (author)
-      description: 可选，留空时默认显示仓库拥有者名称
-      placeholder: "例如：张三"
+      label: 作者展示名 / Author Display Name (author)
+      description: 可选，留空时默认显示仓库拥有者名称 / Optional; defaults to the repository owner when omitted
+      placeholder: "例如 / e.g.: zhangsan"
     validations:
       required: false
   - type: textarea
     id: description
     attributes:
-      label: 一句话功能简介 (description)
-      description: 简洁说明插件用途，方便用户在市场中了解
+      label: 功能简介 / Short Description (description)
+      description: 一句话说明插件用途（纯文本）/ Concise one-line plain-text summary of what the plugin does
     validations:
       required: false
