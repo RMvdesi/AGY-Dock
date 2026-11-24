@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 import { scanZipBuffer } from './scan-plugin.mjs';
+
+const MAX_PLUGIN_ARCHIVE_BYTES = 100 * 1024 * 1024;
 
 function parseIssueFormFields(body) {
   const fields = {};
@@ -90,30 +93,127 @@ async function githubFetch(url, headers = {}) {
   return fetch(url, { headers: merged, signal: AbortSignal.timeout(25000) });
 }
 
-async function fetchLatestPluginAsset(repo) {
+export function rankPluginAssetCandidate(assetName, ownerLower = '') {
+  const name = String(assetName || '').trim();
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.exe') || !/\.(zip|agypkg|agy-plugin)$/i.test(lower)) {
+    return -1;
+  }
+  const stem = name.replace(/\.(zip|agypkg|agy-plugin)$/i, '');
+  const versionMatch = stem.match(/^([A-Za-z0-9][A-Za-z0-9._-]{1,63})-v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/);
+  if (versionMatch) {
+    const idLower = versionMatch[1].toLowerCase();
+    if (ownerLower && idLower.startsWith(`${ownerLower}.`)) {
+      return 3;
+    }
+    return 2;
+  }
+  if (lower.endsWith('.agypkg') || lower.endsWith('.agy-plugin') || (ownerLower && stem.toLowerCase().startsWith(`${ownerLower}.`))) {
+    return 1;
+  }
+  return 0;
+}
+
+export function collectReleaseAssetCandidates(releases, ownerLower = '') {
+  const candidates = [];
+  if (!Array.isArray(releases)) return candidates;
+  releases.forEach((rel, releaseIdx) => {
+    if (!rel || rel.draft) return;
+    for (const asset of rel.assets || []) {
+      const name = String(asset?.name || '').trim();
+      const score = rankPluginAssetCandidate(name, ownerLower);
+      if (score < 0) continue;
+      const size = Number(asset?.size || 0);
+      if (size > MAX_PLUGIN_ARCHIVE_BYTES) continue;
+      const downloadUrl = String(asset?.browser_download_url || '').trim();
+      if (!downloadUrl) continue;
+      candidates.push({
+        releaseIdx,
+        score,
+        assetName: name,
+        downloadUrl,
+        size,
+        tagName: String(rel.tag_name || ''),
+        publishedAt: String(rel.published_at || ''),
+        changelog: String(rel.body || '').trim(),
+      });
+    }
+  });
+  candidates.sort((a, b) => (a.releaseIdx - b.releaseIdx) || (b.score - a.score));
+  return candidates;
+}
+
+export async function selectValidPluginFromReleases(releases, repo, pluginNameInput, downloadBufferFn) {
+  const [ownerRaw = '', repoNameRaw = ''] = String(repo || '').split('/');
+  const ownerLower = ownerRaw.toLowerCase();
+  const repoNameLower = repoNameRaw.toLowerCase();
+  const pluginNameLower = String(pluginNameInput || '').trim().toLowerCase();
+  const candidates = collectReleaseAssetCandidates(releases, ownerLower);
+
+  let idx = 0;
+  while (idx < candidates.length) {
+    const currentReleaseIdx = candidates[idx].releaseIdx;
+    const validById = new Map();
+
+    while (idx < candidates.length && candidates[idx].releaseIdx === currentReleaseIdx) {
+      const candidate = candidates[idx];
+      idx += 1;
+      let zipBuf;
+      try {
+        zipBuf = await downloadBufferFn(candidate.downloadUrl);
+      } catch {
+        continue;
+      }
+      if (!Buffer.isBuffer(zipBuf) || zipBuf.length === 0 || zipBuf.length > MAX_PLUGIN_ARCHIVE_BYTES) {
+        continue;
+      }
+      let manifest;
+      try {
+        manifest = readManifestFromZipBuffer(zipBuf);
+      } catch {
+        // Unrelated zip archive (e.g. docs.zip, macOS bundle, source archive); skip cleanly.
+        continue;
+      }
+      const idKey = String(manifest?.id || candidate.assetName).trim().toLowerCase();
+      if (!validById.has(idKey)) {
+        validById.set(idKey, { assetInfo: candidate, zipBuf, manifest });
+      }
+    }
+
+    if (validById.size === 1) {
+      return Array.from(validById.values())[0];
+    }
+    if (validById.size > 1) {
+      const list = Array.from(validById.values());
+      const exactMatches = list.filter((item) => {
+        const rawId = String(item.manifest?.id || '').trim().toLowerCase();
+        const slug = rawId.includes('.') ? rawId.split('.').slice(1).join('.') : rawId;
+        const manifestName = String(item.manifest?.name || '').trim().toLowerCase();
+        return (pluginNameLower && manifestName === pluginNameLower) || (repoNameLower && slug === repoNameLower);
+      });
+      if (exactMatches.length === 1) {
+        return exactMatches[0];
+      }
+      const ids = list.map((item) => String(item.manifest?.id || item.assetInfo.assetName)).join(', ');
+      throw new Error(`在同一个 Release 中发现了多个不同插件包 (${ids})，请每个插件单独发布或确保名称与仓库一致`);
+    }
+  }
+
+  throw new Error(`未在仓库 ${repo} 的公开 Release 中找到包含 agy-plugin.json 的有效插件包 (.zip / .agypkg / .agy-plugin)`);
+}
+
+async function fetchValidPluginPackage(repo, pluginNameInput) {
   const relRes = await githubFetch(`https://api.github.com/repos/${repo}/releases?per_page=10`);
   if (!relRes.ok) {
     throw new Error(`读取仓库 ${repo} Release 失败 (HTTP ${relRes.status})`);
   }
   const releases = await relRes.json();
   if (!Array.isArray(releases)) throw new Error('Release 返回格式无效');
-  for (const rel of releases) {
-    if (rel.draft) continue;
-    for (const asset of rel.assets || []) {
-      const name = String(asset.name || '');
-      if (/\.(zip|agypkg|agy-plugin)$/i.test(name) && !name.toLowerCase().endsWith('.exe')) {
-        return {
-          assetName: name,
-          downloadUrl: asset.browser_download_url,
-          size: Number(asset.size || 0),
-          tagName: String(rel.tag_name || ''),
-          publishedAt: String(rel.published_at || ''),
-          changelog: String(rel.body || '').trim(),
-        };
-      }
-    }
-  }
-  throw new Error(`未在仓库 ${repo} 的公开 Release 中找到 .zip 插件包`);
+  return selectValidPluginFromReleases(releases, repo, pluginNameInput, async (downloadUrl) => {
+    const dlRes = await githubFetch(downloadUrl, { Accept: 'application/octet-stream' });
+    if (!dlRes.ok) throw new Error(`HTTP ${dlRes.status}`);
+    return Buffer.from(await dlRes.arrayBuffer());
+  });
 }
 
 function writeJsonAtomic(filePath, obj) {
@@ -133,13 +233,8 @@ async function main() {
 
   const repo = parseRepoSlug(rawRepo);
   const ownerLower = repo.split('/')[0].toLowerCase();
-  const assetInfo = await fetchLatestPluginAsset(repo);
-
-  const dlRes = await githubFetch(assetInfo.downloadUrl, { Accept: 'application/octet-stream' });
-  if (!dlRes.ok) throw new Error(`下载插件压缩包失败 (HTTP ${dlRes.status})`);
-  const zipBuf = Buffer.from(await dlRes.arrayBuffer());
+  const { assetInfo, zipBuf, manifest } = await fetchValidPluginPackage(repo, pluginNameInput);
   const sha256 = createHash('sha256').update(zipBuf).digest('hex');
-  const manifest = readManifestFromZipBuffer(zipBuf);
   const scanReport = scanZipBuffer(zipBuf);
 
   const rawId = String(manifest.id || '').trim();
@@ -213,7 +308,9 @@ async function main() {
   console.log(`[OK] ${lockedId} v${entry.version} (${scanReport.riskLevel}) -> ${targetFile}`);
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exit(1);
-});
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  });
+}

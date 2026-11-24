@@ -35,7 +35,7 @@ fn repo_slug_re() -> &'static Regex {
 fn asset_name_version_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"^([A-Za-z0-9][A-Za-z0-9_-]{1,63})-v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$")
+        Regex::new(r"^([A-Za-z0-9][A-Za-z0-9._-]{1,63})-v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$")
             .unwrap()
     })
 }
@@ -1214,13 +1214,59 @@ fn url_encode_query(raw: &str) -> String {
     out
 }
 
+fn rank_preflight_asset(filename: &str, owner_lower: &str) -> Option<u8> {
+    let lower = filename.trim().to_ascii_lowercase();
+    if lower.ends_with(".exe") || lower == "release-manifest.json" {
+        return None;
+    }
+    let ext_match = SUPPORTED_PACKAGE_EXTS
+        .iter()
+        .find(|ext| lower.ends_with(&format!(".{ext}")))?;
+    if let Some((raw_id, ver)) = parse_release_asset_identity(filename) {
+        if !ver.is_empty() {
+            if !owner_lower.is_empty()
+                && raw_id
+                    .to_ascii_lowercase()
+                    .starts_with(&format!("{owner_lower}."))
+            {
+                return Some(3);
+            }
+            return Some(2);
+        }
+        return Some(1);
+    }
+    if *ext_match != "zip" {
+        return Some(1);
+    }
+    Some(0)
+}
+
 pub async fn preflight_third_party_submission(
     paths: &ManagerPaths,
     repo_input: String,
     plugin_name: String,
 ) -> Result<ThirdPartyPreflightResult, String> {
+    preflight_third_party_submission_with_api_base(
+        paths,
+        repo_input,
+        plugin_name,
+        DEFAULT_GITHUB_API_BASE,
+    )
+    .await
+}
+
+pub async fn preflight_third_party_submission_with_api_base(
+    paths: &ManagerPaths,
+    repo_input: String,
+    plugin_name: String,
+    github_api_base: &str,
+) -> Result<ThirdPartyPreflightResult, String> {
     let repo = parse_github_repo_slug(&repo_input)?;
     let owner = repo_owner_lower(&repo);
+    let repo_name_lower = repo
+        .split_once('/')
+        .map(|(_, name)| name.to_ascii_lowercase())
+        .unwrap_or_default();
     let clean_name = sanitize_text(&plugin_name);
     if clean_name.is_empty() {
         return Err("请填写插件名称".to_string());
@@ -1229,7 +1275,8 @@ pub async fn preflight_third_party_submission(
     let cfg = load_config(paths).unwrap_or_default();
     let market_repo = resolve_marketplace_repo(&cfg);
     let client = build_http_client(&cfg, 20)?;
-    let releases_url = format!("{DEFAULT_GITHUB_API_BASE}/repos/{repo}/releases?per_page=5");
+    let api_base = github_api_base.trim_end_matches('/');
+    let releases_url = format!("{api_base}/repos/{repo}/releases?per_page=5");
     let resp = client
         .get(&releases_url)
         .header("Accept", "application/vnd.github+json")
@@ -1250,8 +1297,15 @@ pub async fn preflight_third_party_submission(
         .as_array()
         .ok_or_else(|| "GitHub 发布版本列表格式无效".to_string())?;
 
-    let mut chosen: Option<(String, String, String, u64)> = None;
-    for rel in arr {
+    struct CandidateAsset {
+        release_idx: usize,
+        score: u8,
+        asset_ver: String,
+        download_url: String,
+    }
+
+    let mut candidates: Vec<CandidateAsset> = Vec::new();
+    for (release_idx, rel) in arr.iter().enumerate() {
         let Some(ro) = rel.as_object() else { continue };
         if ro.get("draft").and_then(|v| v.as_bool()) == Some(true) {
             continue;
@@ -1262,43 +1316,147 @@ pub async fn preflight_third_party_submission(
         for asset in assets {
             let Some(ao) = asset.as_object() else { continue };
             let name = sanitize_json_str(ao.get("name"));
-            if let Some((raw_id, ver)) = parse_release_asset_identity(&name) {
-                let dl = sanitize_json_str(ao.get("browser_download_url"));
-                if validate_download_url(&dl).is_ok() {
-                    let sz = ao.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-                    chosen = Some((raw_id, ver, dl, sz));
-                    break;
-                }
+            let Some(score) = rank_preflight_asset(&name, &owner) else {
+                continue;
+            };
+            let sz = ao.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+            if sz > MAX_DOWNLOAD_BYTES as u64 {
+                continue;
             }
+            let dl = sanitize_json_str(ao.get("browser_download_url"));
+            if validate_download_url(&dl).is_err() {
+                continue;
+            }
+            let asset_ver = parse_release_asset_identity(&name)
+                .map(|(_, ver)| ver)
+                .unwrap_or_default();
+            candidates.push(CandidateAsset {
+                release_idx,
+                score,
+                asset_ver,
+                download_url: dl,
+            });
         }
-        if chosen.is_some() {
+    }
+    candidates.sort_by(|a, b| {
+        a.release_idx
+            .cmp(&b.release_idx)
+            .then_with(|| b.score.cmp(&a.score))
+    });
+
+    struct ValidPluginCandidate {
+        entry: PluginConfigEntry,
+        version: String,
+        download_url: String,
+        sha256: String,
+        pkg_bytes: Vec<u8>,
+    }
+
+    let mut chosen_plugin: Option<ValidPluginCandidate> = None;
+    let mut c_idx = 0usize;
+    while c_idx < candidates.len() {
+        let current_rel = candidates[c_idx].release_idx;
+        let mut valid_in_rel: Vec<ValidPluginCandidate> = Vec::new();
+        let mut seen_ids: HashSet<String> = HashSet::new();
+
+        while c_idx < candidates.len() && candidates[c_idx].release_idx == current_rel {
+            let cand = &candidates[c_idx];
+            c_idx += 1;
+
+            let Ok(pkg_resp) = client
+                .get(&cand.download_url)
+                .timeout(Duration::from_secs(60))
+                .send()
+                .await
+            else {
+                continue;
+            };
+            if !pkg_resp.status().is_success() {
+                continue;
+            }
+            let Ok(pkg_bytes) = read_bounded_bytes(pkg_resp, MAX_DOWNLOAD_BYTES).await else {
+                continue;
+            };
+            let cursor = std::io::Cursor::new(&pkg_bytes);
+            let Ok(mut archive) = zip::ZipArchive::new(cursor) else {
+                continue;
+            };
+            let Ok((entry, _, _)) = read_manifest_from_zip(&mut archive) else {
+                // Skip non-plugin archives such as docs.zip or standalone asset zips
+                continue;
+            };
+            let id_key = entry.id.trim().to_ascii_lowercase();
+            if seen_ids.contains(&id_key) {
+                continue;
+            }
+            seen_ids.insert(id_key);
+
+            let mut hasher = Sha256::new();
+            hasher.update(&pkg_bytes);
+            let sha256 = format!("{:x}", hasher.finalize());
+            let version = entry
+                .version
+                .clone()
+                .filter(|v| !v.is_empty())
+                .or_else(|| (!cand.asset_ver.is_empty()).then_some(cand.asset_ver.clone()))
+                .unwrap_or_else(|| "1.0.0".to_string());
+
+            valid_in_rel.push(ValidPluginCandidate {
+                entry,
+                version,
+                download_url: cand.download_url.clone(),
+                sha256,
+                pkg_bytes,
+            });
+        }
+
+        if valid_in_rel.len() == 1 {
+            chosen_plugin = valid_in_rel.into_iter().next();
             break;
+        } else if valid_in_rel.len() > 1 {
+            let clean_name_lower = clean_name.to_ascii_lowercase();
+            let match_indices: Vec<usize> = valid_in_rel
+                .iter()
+                .enumerate()
+                .filter_map(|(i, item)| {
+                    let slug = item
+                        .entry
+                        .id
+                        .split_once('.')
+                        .map(|(_, s)| s)
+                        .unwrap_or(item.entry.id.as_str())
+                        .to_ascii_lowercase();
+                    let name_match = item.entry.name.trim().eq_ignore_ascii_case(&clean_name_lower);
+                    let slug_match = !repo_name_lower.is_empty() && slug == repo_name_lower;
+                    (name_match || slug_match).then_some(i)
+                })
+                .collect();
+            if match_indices.len() == 1 {
+                let idx = match_indices[0];
+                chosen_plugin = Some(valid_in_rel.swap_remove(idx));
+                break;
+            }
+            let ids = valid_in_rel
+                .iter()
+                .map(|item| item.entry.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "在同一个 Release 中发现了多个不同的插件包 ({ids})，请每个插件单独发布或确保插件名称与目标插件一致"
+            ));
         }
     }
 
-    let (asset_id, asset_ver, download_url, asset_size) = chosen.ok_or_else(|| {
-        format!("未在仓库 {repo} 的最新发布版本中找到合规的插件 .zip 安装包")
+    let chosen_plugin = chosen_plugin.ok_or_else(|| {
+        format!(
+            "未在仓库 {repo} 的最新发布版本中找到包含 agy-plugin.json 的有效插件安装包（.zip / .agypkg / .agy-plugin）"
+        )
     })?;
-
-    let pkg_resp = client
-        .get(&download_url)
-        .timeout(Duration::from_secs(60))
-        .send()
-        .await
-        .map_err(|e| format!("下载插件压缩包失败: {e}"))?;
-    if !pkg_resp.status().is_success() {
-        return Err(format!("下载插件压缩包失败 (HTTP {})", pkg_resp.status().as_u16()));
-    }
-    let pkg_bytes = read_bounded_bytes(pkg_resp, MAX_DOWNLOAD_BYTES).await?;
-    let size = pkg_bytes.len() as u64;
-    let mut hasher = Sha256::new();
-    hasher.update(&pkg_bytes);
-    let sha256 = format!("{:x}", hasher.finalize());
-
-    let cursor = std::io::Cursor::new(&pkg_bytes);
-    let mut archive =
-        zip::ZipArchive::new(cursor).map_err(|e| format!("解析插件压缩包失败: {e}"))?;
-    let (entry, _, _) = read_manifest_from_zip(&mut archive)?;
+    let entry = chosen_plugin.entry;
+    let version = chosen_plugin.version;
+    let download_url = chosen_plugin.download_url;
+    let sha256 = chosen_plugin.sha256;
+    let size = chosen_plugin.pkg_bytes.len() as u64;
     let slug_part = entry
         .id
         .split_once('.')
@@ -1308,12 +1466,7 @@ pub async fn preflight_third_party_submission(
     if !is_valid_plugin_id(&locked_id) {
         return Err(format!("自动生成的插件 ID ({locked_id}) 不符合规范"));
     }
-    let version = entry
-        .version
-        .filter(|v| !v.is_empty())
-        .or_else(|| (!asset_ver.is_empty()).then_some(asset_ver))
-        .unwrap_or_else(|| "1.0.0".to_string());
-    let scan_report = security_scan::scan_zip_bytes(&pkg_bytes)?;
+    let scan_report = security_scan::scan_zip_bytes(&chosen_plugin.pkg_bytes)?;
 
     let title_tp = url_encode_query(&format!("[第三方插件上架] {clean_name} ({locked_id})"));
     let title_off = url_encode_query(&format!("[官方认证插件申请] {clean_name} ({locked_id})"));
@@ -1330,7 +1483,6 @@ pub async fn preflight_third_party_submission(
         url_encode_query(&entry.description),
     );
 
-    let _ = (asset_id, asset_size);
     Ok(ThirdPartyPreflightResult {
         repo,
         owner,
@@ -1906,6 +2058,123 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.contains("禁止"));
+
+        let _ = fs::remove_dir_all(&paths.base_dir);
+    }
+
+    #[test]
+    fn parse_release_asset_identity_supports_dotted_third_party_ids() {
+        assert_eq!(
+            parse_release_asset_identity("zhangsan.cleaner-v1.2.3.zip"),
+            Some(("zhangsan.cleaner".to_string(), "1.2.3".to_string()))
+        );
+        assert_eq!(
+            parse_release_asset_identity("office-viewer-v1.0.2.zip"),
+            Some(("office-viewer".to_string(), "1.0.2".to_string()))
+        );
+        assert_eq!(parse_release_asset_identity("Tool-Setup-v1.0.0.exe"), None);
+        assert_eq!(parse_release_asset_identity("source-v1.0.0.tar.gz"), None);
+    }
+
+    #[tokio::test]
+    async fn preflight_skips_non_plugin_zips_and_other_formats() {
+        let mut docs_zip = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw = zip::ZipWriter::new(&mut docs_zip);
+            let opts = SimpleFileOptions::default();
+            zw.start_file("README.txt", opts).unwrap();
+            zw.write_all(b"just docs").unwrap();
+            zw.finish().unwrap();
+        }
+        let docs_bytes = docs_zip.into_inner();
+
+        let mut plugin_zip = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw = zip::ZipWriter::new(&mut plugin_zip);
+            let opts = SimpleFileOptions::default();
+            zw.start_file("agy-plugin.json", opts).unwrap();
+            zw.write_all(
+                br#"{
+                    "schemaVersion": 1,
+                    "id": "zhangsan.cleaner",
+                    "name": "Subagent Cleaner",
+                    "version": "1.0.0",
+                    "type": "node-cdp",
+                    "command": "node",
+                    "launchArgs": ["plugins\\zhangsan.cleaner\\index.js"]
+                }"#,
+            )
+            .unwrap();
+            zw.start_file("index.js", opts).unwrap();
+            zw.write_all(b"console.log('clean');").unwrap();
+            zw.finish().unwrap();
+        }
+        let plugin_bytes = plugin_zip.into_inner();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let docs_clone = docs_bytes.clone();
+        let plugin_clone = plugin_bytes.clone();
+
+        let server_handle = std::thread::spawn(move || {
+            for _ in 0..3 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut req_buf = [0u8; 2048];
+                let n = stream.read(&mut req_buf).unwrap_or(0);
+                let req_str = String::from_utf8_lossy(&req_buf[..n]);
+                if req_str.contains("/repos/zhangsan/cleaner/releases") {
+                    let body = format!(
+                        r#"[{{"tag_name":"v1.0.0","published_at":"2026-11-24T00:00:00Z","body":"notes","assets":[
+                            {{"name":"installer.exe","size":100,"browser_download_url":"http://{addr}/installer.exe"}},
+                            {{"name":"source.tar.gz","size":100,"browser_download_url":"http://{addr}/source.tar.gz"}},
+                            {{"name":"00-docs-v1.0.0.zip","size":{},"browser_download_url":"http://{addr}/00-docs-v1.0.0.zip"}},
+                            {{"name":"zhangsan.cleaner-v1.0.0.zip","size":{},"browser_download_url":"http://{addr}/zhangsan.cleaner-v1.0.0.zip"}}
+                        ]}}]"#,
+                        docs_clone.len(),
+                        plugin_clone.len()
+                    );
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                } else if req_str.contains("/00-docs-v1.0.0.zip") {
+                    let hdr = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        docs_clone.len()
+                    );
+                    let _ = stream.write_all(hdr.as_bytes());
+                    let _ = stream.write_all(&docs_clone);
+                } else if req_str.contains("/zhangsan.cleaner-v1.0.0.zip") {
+                    let hdr = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        plugin_clone.len()
+                    );
+                    let _ = stream.write_all(hdr.as_bytes());
+                    let _ = stream.write_all(&plugin_clone);
+                }
+            }
+        });
+
+        let paths = create_temp_paths("preflight-multi-zip");
+        let base_url = format!("http://{addr}");
+        let res = preflight_third_party_submission_with_api_base(
+            &paths,
+            "https://github.com/zhangsan/cleaner".to_string(),
+            "Subagent Cleaner".to_string(),
+            &base_url,
+        )
+        .await
+        .unwrap();
+
+        let _ = server_handle.join();
+        assert_eq!(res.locked_id, "zhangsan.cleaner");
+        assert_eq!(res.version, "1.0.0");
+        assert!(res.download_url.ends_with("zhangsan.cleaner-v1.0.0.zip"));
+        assert!(!res.scan_report.blocked);
 
         let _ = fs::remove_dir_all(&paths.base_dir);
     }

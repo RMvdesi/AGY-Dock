@@ -6,6 +6,22 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.9.2] - 2026-11-24 21:10
+### Scope & Summary
+- Harden multi-asset GitHub Release resolution for both GitHub submission processing (`scripts/process-plugin-submission.mjs`) and desktop preflight (`src-tauri/src/marketplace.rs`): prioritize owner-prefixed / SemVer-named packages, skip non-plugin `.zip` archives lacking `agy-plugin.json` as well as other binary/source formats, and disambiguate multiple distinct plugin archives in one release cleanly.
+- Fix `asset_name_version_re()` in `src-tauri/src/marketplace.rs` so dotted third-party plugin IDs (`<owner>.<slug>-vX.Y.Z.zip`) extract their version cleanly during preflight and fallback release scanning.
+- Bump synchronized version manifests to `2.9.2` and add regression tests for both Node and Rust pipelines.
+
+### Files Changed
+- `scripts/process-plugin-submission.mjs`, `scripts/process-plugin-submission.test.mjs` — prioritized multi-zip candidate selection with `agy-plugin.json` verification and 3 unit tests.
+- `src-tauri/src/marketplace.rs` — fixed dotted ID asset version parsing, hardened `preflight_third_party_submission` with testable `preflight_third_party_submission_with_api_base`, and added 2 unit tests.
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `AGY-Launcher/server.mjs`, `AGY-Launcher/lib/process-manager.mjs`, `CHANGELOG.md`, `README.md` — synchronized `2.9.2` version bump and changelog notes.
+
+### Verification
+- `npx tsc --noEmit` & `npm run build` (`tsc --noEmit && vite build`) -> built 2280 modules in 6.52s, 0 errors.
+- `cargo test --manifest-path src-tauri/Cargo.toml` -> 61 passed, 0 failed (`agy_dock_lib`).
+- `node --test scripts/process-plugin-submission.test.mjs AGY-Launcher/tests/process-manager.test.mjs` -> 13 passed, 0 failed.
+
 ## [v2.9.1] - 2026-11-24 18:40
 ### Scope & Summary
 - Polish Marketplace UI & list clarity: eliminated the rectangular layout transition flash when toggling between Official and Third-Party tabs, hid raw plugin IDs from Marketplace/My Plugins list cards (showing `ID:` on the detail page instead), removed the misleading "界面增强" category badge across marketplace cards and editor options, compacted the third-party disclaimer strip, and removed the redundant manual config import entry from the Marketplace toolbar.
