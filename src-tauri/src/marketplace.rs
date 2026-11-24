@@ -6,7 +6,7 @@ use crate::models::{
 };
 use crate::paths::ManagerPaths;
 use crate::plugins::{
-    discover_local_plugins, install_plugin_package_bytes_with_options, read_manifest_from_zip,
+    discover_local_plugins, install_plugin_package_bytes_with_policy, read_manifest_from_zip,
     read_plugin_dir_manifest, resolve_plugin_version, SUPPORTED_PACKAGE_EXTS,
 };
 use crate::security_scan;
@@ -1036,6 +1036,29 @@ pub async fn install_remote_plugin_with_options(
     upstream_repo: Option<String>,
     allow_low_risk: bool,
 ) -> Result<InstallPackageResult, String> {
+    install_remote_plugin_with_policy(
+        paths,
+        plugin_id,
+        download_url,
+        sha256,
+        install_source,
+        upstream_repo,
+        allow_low_risk,
+        false,
+    )
+    .await
+}
+
+pub async fn install_remote_plugin_with_policy(
+    paths: &ManagerPaths,
+    plugin_id: String,
+    download_url: String,
+    sha256: Option<String>,
+    install_source: Option<String>,
+    upstream_repo: Option<String>,
+    allow_low_risk: bool,
+    allow_official_high_risk: bool,
+) -> Result<InstallPackageResult, String> {
     let clean_id = plugin_id.trim().to_string();
     if !is_valid_plugin_id(&clean_id) {
         return Err("无效的插件 ID".to_string());
@@ -1113,8 +1136,10 @@ pub async fn install_remote_plugin_with_options(
 
     let p_clone = paths.clone();
     let source_url = parsed_url.to_string();
+    let official_reviewed =
+        allow_official_high_risk && target_source == "official";
     let install_res = tokio::task::spawn_blocking(move || {
-        install_plugin_package_bytes_with_options(
+        install_plugin_package_bytes_with_policy(
             &p_clone,
             &buf,
             true,
@@ -1122,6 +1147,7 @@ pub async fn install_remote_plugin_with_options(
             Some(target_source),
             upstream_repo,
             allow_low_risk,
+            official_reviewed,
         )
     })
     .await
@@ -1524,7 +1550,7 @@ pub fn mark_marketplace_seen(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::install_plugin_package_bytes;
+    use crate::plugins::{install_plugin_package_bytes, install_plugin_package_bytes_with_options};
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;

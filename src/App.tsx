@@ -118,6 +118,7 @@ export default function App() {
     pluginLabel: string;
     pluginId?: string;
     report: SecurityScanReport | null;
+    allowConfirmHighRisk?: boolean;
     busy: boolean;
     onConfirm?: () => Promise<void>;
   }>({ open: false, pluginLabel: "", report: null, busy: false });
@@ -802,6 +803,30 @@ export default function App() {
   const handleInstallRemotePlugin = useCallback(
     async (pkg: RemotePluginInfo) => {
       if (!pkg?.id || !pkg?.downloadUrl || pkg.conflictBlocked || remoteInstallInFlightRef.current) return;
+      if (pkg.tier === "official" && pkg.riskLevel === "high") {
+        const report: SecurityScanReport = {
+          riskLevel: "high",
+          blocked: false,
+          summary: "该官方插件包含需额外权限或二进制的能力，已通过仓库维护者人工复核放行；请确认后再安装。",
+          externalDomains: pkg.riskFindings.flatMap((f) => f.targets ?? []),
+          findings: pkg.riskFindings,
+          scannedFiles: 0,
+        };
+        setScanModalState({
+          open: true,
+          pluginLabel: pkg.name || pkg.id,
+          pluginId: pkg.id,
+          report,
+          allowConfirmHighRisk: true,
+          busy: false,
+          onConfirm: async () => {
+            setScanModalState((prev) => ({ ...prev, busy: true }));
+            await performRemotePluginInstall(pkg, true);
+            setScanModalState({ open: false, pluginLabel: "", report: null, busy: false });
+          },
+        });
+        return;
+      }
       if (pkg.tier !== "official" && pkg.riskLevel === "low" && pkg.riskFindings.length > 0) {
         const report: SecurityScanReport = {
           riskLevel: "low",
@@ -1278,6 +1303,7 @@ export default function App() {
         pluginLabel={scanModalState.pluginLabel}
         pluginId={scanModalState.pluginId}
         report={scanModalState.report}
+        allowConfirmHighRisk={Boolean(scanModalState.allowConfirmHighRisk)}
         busy={scanModalState.busy}
         onCancel={() => {
           if (!scanModalState.busy) {

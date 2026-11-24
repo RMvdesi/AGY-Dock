@@ -746,8 +746,32 @@ pub fn install_plugin_package_bytes_with_options(
     upstream_repo: Option<String>,
     allow_low_risk: bool,
 ) -> Result<InstallPackageResult, String> {
+    install_plugin_package_bytes_with_policy(
+        paths,
+        bytes,
+        overwrite,
+        source_label,
+        install_source,
+        upstream_repo,
+        allow_low_risk,
+        false,
+    )
+}
+
+pub fn install_plugin_package_bytes_with_policy(
+    paths: &ManagerPaths,
+    bytes: &[u8],
+    overwrite: bool,
+    source_label: &str,
+    install_source: Option<String>,
+    upstream_repo: Option<String>,
+    allow_low_risk: bool,
+    allow_official_high_risk: bool,
+) -> Result<InstallPackageResult, String> {
     let report = security_scan::scan_zip_bytes(bytes)?;
-    if report.blocked {
+    let official_reviewed_override =
+        allow_official_high_risk && install_source.as_deref() == Some("official");
+    if report.blocked && !official_reviewed_override {
         let reasons: Vec<String> = report
             .findings
             .iter()
@@ -1950,6 +1974,102 @@ mod tests {
 
         let cfg_after: Value = serde_json::from_str(&read_text_strip_bom(&paths.gemini_config_path).unwrap()).unwrap();
         assert!(cfg_after["plugins"].get("demo-ext").is_none());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn high_risk_install_only_permitted_for_verified_official_source() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("agy-policy-test-{}-{nanos}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = ManagerPaths::from_runtime_dirs(crate::paths::RuntimeDirs {
+            data_dir: root.join("data"),
+            assets_dir: root.join("data"),
+            is_portable: true,
+        });
+        fs::create_dir_all(&paths.plugins_dir).unwrap();
+
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw = zip::ZipWriter::new(&mut buf);
+            let opts = zip::write::SimpleFileOptions::default();
+            zw.start_file("agy-plugin.json", opts).unwrap();
+            std::io::Write::write_all(
+                &mut zw,
+                br#"{
+                    "schemaVersion": 1,
+                    "id": "alice.special-helper",
+                    "name": "Special Helper",
+                    "version": "1.0.0",
+                    "type": "node-cdp",
+                    "command": "node",
+                    "launchArgs": ["plugins\\alice.special-helper\\index.js"]
+                }"#,
+            )
+            .unwrap();
+            zw.start_file("index.js", opts).unwrap();
+            std::io::Write::write_all(&mut zw, b"console.log('ok');").unwrap();
+            zw.start_file("native.exe", opts).unwrap();
+            std::io::Write::write_all(&mut zw, b"MZfake").unwrap();
+            zw.finish().unwrap();
+        }
+        let pkg_bytes = buf.into_inner();
+
+        // Blocked for local-file and third-party even if override bool is set
+        assert!(install_plugin_package_bytes_with_policy(
+            &paths,
+            &pkg_bytes,
+            true,
+            "local-file",
+            Some("local-file".to_string()),
+            None,
+            true,
+            true,
+        )
+        .is_err());
+
+        assert!(install_plugin_package_bytes_with_policy(
+            &paths,
+            &pkg_bytes,
+            true,
+            "third-party",
+            Some("third-party:alice/demo".to_string()),
+            Some("alice/demo".to_string()),
+            true,
+            true,
+        )
+        .is_err());
+
+        // Blocked for official when policy flag is false
+        assert!(install_plugin_package_bytes_with_policy(
+            &paths,
+            &pkg_bytes,
+            true,
+            "official-unapproved",
+            Some("official".to_string()),
+            None,
+            true,
+            false,
+        )
+        .is_err());
+
+        // Allowed for verified official source when maintainer approved
+        let ok = install_plugin_package_bytes_with_policy(
+            &paths,
+            &pkg_bytes,
+            true,
+            "official-approved",
+            Some("official".to_string()),
+            None,
+            true,
+            true,
+        )
+        .unwrap();
+        assert_eq!(ok.plugin.id, "alice.special-helper");
 
         let _ = fs::remove_dir_all(&root);
     }

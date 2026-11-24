@@ -13,8 +13,8 @@ body:
         **注意 / Requirements**：
         - 压缩包内 `agy-plugin.json` 的 `id` 必须使用 `你的GitHub用户名.插件名`（例如 `zhangsan.subagent-cleaner`）。
           `id` in `agy-plugin.json` MUST use `<github-owner>.<slug>` (e.g. `zhangsan.subagent-cleaner`).
-        - 严禁包含 `.exe` / `.dll` 等二进制程序；清理卡死子进程请使用管理器安全代办接口 (`AGY_BRIDGE_URL`)。
-          No `.exe` / `.dll` binaries allowed; use the Manager Safe Process Bridge (`AGY_BRIDGE_URL`) for subagent cleanup.
+        - 建议优先使用纯脚本与管理器安全代办接口 (`AGY_BRIDGE_URL`)；若功能确实需要附带特殊能力或二进制程序，提交后仍会生成审核单由仓库维护者人工审阅源码后再决定是否放行。
+          Prefer pure scripts and the Manager Safe Process Bridge (`AGY_BRIDGE_URL`); if your plugin genuinely requires privileged capabilities or binaries, submission will still open a review PR for manual source audit by the maintainer.
   - type: input
     id: repo
     attributes:

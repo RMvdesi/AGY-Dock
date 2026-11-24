@@ -377,6 +377,8 @@ export function MarketplacePage({
                 const changelogText = pkg.hasUpdate ? pkg.changelog.trim() : "";
                 const hasLowRisk =
                   pkg.riskLevel === "low" && (pkg.riskFindings?.length ?? 0) > 0;
+                const hasOfficialHighRisk =
+                  pkg.tier === "official" && pkg.riskLevel === "high";
 
                 return (
                   <div
@@ -408,6 +410,9 @@ export function MarketplacePage({
                             <span className="hidden shrink-0 rounded-md border border-[var(--border-hairline)] px-1.5 py-[1px] font-mono-code text-[10.5px] text-[var(--text-faint)] md:inline">
                               私人源: {pkg.sourceRepo}
                             </span>
+                          )}
+                          {hasOfficialHighRisk && (
+                            <StatusPill tone="warn">官方人工复核放行</StatusPill>
                           )}
                           {hasLowRisk && (
                             <StatusPill tone="warn">低危敏感提醒</StatusPill>

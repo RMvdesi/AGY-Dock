@@ -222,6 +222,14 @@ function writeJsonAtomic(filePath, obj) {
   fs.renameSync(tmp, filePath);
 }
 
+export function evaluateSubmissionRiskPolicy(track, scanReport) {
+  const isOfficialBlockedOverride = track === 'official' && Boolean(scanReport?.blocked);
+  return {
+    blocked: track === 'third-party' ? Boolean(scanReport?.blocked) : false,
+    highRiskWarning: isOfficialBlockedOverride,
+  };
+}
+
 async function main() {
   const track = process.argv.includes('--official') ? 'official' : 'third-party';
   const issueBody = process.env.ISSUE_BODY || fs.readFileSync(process.argv[2] || 0, 'utf8');
@@ -253,16 +261,18 @@ async function main() {
     throw new Error(`插件 ID (${lockedId}) 与官方商店已有插件冲突，禁止上架第三方市场`);
   }
 
+  const riskPolicy = evaluateSubmissionRiskPolicy(track, scanReport);
   const resultMeta = {
     track,
     repo,
     lockedId,
     version: String(manifest.version || '1.0.0').replace(/^v/i, ''),
     scanReport,
-    blocked: scanReport.blocked,
+    blocked: riskPolicy.blocked,
+    highRiskWarning: riskPolicy.highRiskWarning,
   };
 
-  if (scanReport.blocked) {
+  if (resultMeta.blocked) {
     fs.writeFileSync('submission-result.json', JSON.stringify(resultMeta, null, 2));
     console.error(`[BLOCKED] ${scanReport.summary}`);
     process.exit(2);

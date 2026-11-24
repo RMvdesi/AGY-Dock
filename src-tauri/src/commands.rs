@@ -889,7 +889,30 @@ pub async fn install_remote_plugin(
     upstream_repo: Option<String>,
     allow_low_risk: Option<bool>,
 ) -> Result<InstallPackageResult, String> {
-    let res = marketplace::install_remote_plugin_with_options(
+    let allow_official_high_risk = {
+        let is_official = install_source
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("official")
+            == "official";
+        if !is_official {
+            false
+        } else {
+            let guard = state.marketplace_cache.lock().await;
+            let expected_sha = sha256.as_deref().unwrap_or("").trim();
+            guard.as_ref().is_some_and(|snap| {
+                snap.plugins.iter().any(|item| {
+                    (item.tier.is_empty() || item.tier == "official")
+                        && item.id.eq_ignore_ascii_case(plugin_id.trim())
+                        && item.download_url == download_url.trim()
+                        && !item.sha256.is_empty()
+                        && (expected_sha.is_empty() || item.sha256.eq_ignore_ascii_case(expected_sha))
+                })
+            })
+        }
+    };
+    let res = marketplace::install_remote_plugin_with_policy(
         &state.paths,
         plugin_id,
         download_url,
@@ -897,6 +920,7 @@ pub async fn install_remote_plugin(
         install_source,
         upstream_repo,
         allow_low_risk.unwrap_or(true),
+        allow_official_high_risk,
     )
     .await?;
     emit_overview_bg(&app, &state.paths).await;

@@ -7,6 +7,7 @@ interface SecurityScanModalProps {
   pluginLabel: string;
   pluginId?: string;
   report: SecurityScanReport | null;
+  allowConfirmHighRisk?: boolean;
   busy?: boolean;
   onCancel: () => void;
   onConfirmInstall?: () => void;
@@ -17,11 +18,13 @@ export function SecurityScanModal({
   pluginLabel,
   pluginId,
   report,
+  allowConfirmHighRisk = false,
   busy = false,
   onCancel,
   onConfirmInstall,
 }: SecurityScanModalProps) {
-  const blocked = Boolean(report?.blocked || report?.riskLevel === "high");
+  const highRisk = Boolean(report?.blocked || report?.riskLevel === "high");
+  const blocked = highRisk && !allowConfirmHighRisk;
 
   return (
     <AnimatePresence>
@@ -48,13 +51,17 @@ export function SecurityScanModal({
               <div className="flex items-center gap-2">
                 {blocked ? (
                   <ShieldAlert className="h-4.5 w-4.5 text-[var(--danger)]" />
-                ) : report.riskLevel === "low" ? (
+                ) : highRisk || report.riskLevel === "low" ? (
                   <AlertTriangle className="h-4.5 w-4.5 text-[var(--warn)]" />
                 ) : (
                   <ShieldCheck className="h-4.5 w-4.5 text-[var(--ok)]" />
                 )}
                 <h2 className="text-[14.5px] font-bold text-[var(--text-primary)]">
-                  {blocked ? "安全筛查未通过（已拦截）" : "安装前安全提醒"}
+                  {blocked
+                    ? "安全筛查未通过（已拦截）"
+                    : highRisk
+                      ? "官方人工复核放行提醒"
+                      : "安装前安全提醒"}
                 </h2>
               </div>
               <button

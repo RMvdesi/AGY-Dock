@@ -6,6 +6,24 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.9.3] - 2026-11-24 21:28
+### Scope & Summary
+- Support Option B manual review & approval in the Official Marketplace pipeline: `scripts/process-plugin-submission.mjs` (`--official`) and `.github/workflows/plugin-submission.yml` now create a clearly flagged Pull Request (`[人工复核 · 含高敏行为]`) with upstream repo links and full finding details when high-risk rules trigger, leaving final merge approval to the repository maintainer while keeping Third-Party auto-publishing and 15-minute unattended auto-sync strictly blocked on high risk.
+- Enable verified official installs for maintainer-approved packages containing special/high-risk capabilities: `commands::install_remote_plugin` validates `official` tier + exact catalog `download_url` + matching `sha256` against the fetched catalog cache before granting `allow_official_high_risk` to `plugins::install_plugin_package_bytes_with_policy` (local files and third-party/custom sources remain hard-blocked even if invoked directly).
+- Update `SecurityScanModal.tsx`, `MarketplacePage.tsx`, and `App.tsx` to badge maintainer-reviewed high-risk official plugins (`官方人工复核放行`) and show a confirmation dialog instead of silently failing on install.
+- Bump synchronized version manifests to `2.9.3` and add regression tests in `src-tauri/src/plugins.rs` and `scripts/process-plugin-submission.test.mjs`.
+
+### Files Changed
+- `scripts/process-plugin-submission.mjs`, `scripts/process-plugin-submission.test.mjs`, `.github/workflows/plugin-submission.yml`, `.github/ISSUE_TEMPLATE/submit-official-plugin.yml` — official track high-risk PR review support and submission policy test.
+- `src-tauri/src/plugins.rs`, `src-tauri/src/marketplace.rs`, `src-tauri/src/commands.rs` — catalog-verified official high-risk install policy and regression tests.
+- `src/components/SecurityScanModal.tsx`, `src/pages/MarketplacePage.tsx`, `src/App.tsx` — official reviewed badge and install-time user confirmation modal.
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `AGY-Launcher/server.mjs`, `AGY-Launcher/lib/process-manager.mjs`, `CHANGELOG.md`, `README.md` — synchronized `2.9.3` version bump and changelog notes.
+
+### Verification
+- `npx tsc --noEmit` & `npm run build` (`tsc --noEmit && vite build`) -> built 2280 modules in 8.95s, 0 errors.
+- `cargo test --manifest-path src-tauri/Cargo.toml` -> 62 passed, 0 failed (`agy_dock_lib`).
+- `node --test scripts/process-plugin-submission.test.mjs AGY-Launcher/tests/process-manager.test.mjs` -> 14 passed, 0 failed.
+
 ## [v2.9.2] - 2026-11-24 21:10
 ### Scope & Summary
 - Harden multi-asset GitHub Release resolution for both GitHub submission processing (`scripts/process-plugin-submission.mjs`) and desktop preflight (`src-tauri/src/marketplace.rs`): prioritize owner-prefixed / SemVer-named packages, skip non-plugin `.zip` archives lacking `agy-plugin.json` as well as other binary/source formats, and disambiguate multiple distinct plugin archives in one release cleanly.

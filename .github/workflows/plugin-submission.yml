@@ -49,8 +49,11 @@ jobs:
           git config user.name "agy-dock-bot"
           git config user.email "bot@haoanlab.xyz"
           PLUGIN_ID=$(node -e "const r=JSON.parse(require('fs').readFileSync('submission-result.json','utf8'));console.log(r.lockedId)")
+          UPSTREAM_REPO=$(node -e "const r=JSON.parse(require('fs').readFileSync('submission-result.json','utf8'));console.log(r.repo)")
           RISK=$(node -e "const r=JSON.parse(require('fs').readFileSync('submission-result.json','utf8'));console.log(r.scanReport.riskLevel)")
+          HIGH_WARN=$(node -e "const r=JSON.parse(require('fs').readFileSync('submission-result.json','utf8'));console.log(r.highRiskWarning?'true':'false')")
           SUMMARY=$(node -e "const r=JSON.parse(require('fs').readFileSync('submission-result.json','utf8'));console.log(r.scanReport.summary)")
+          FINDINGS_MD=$(node -e "const r=JSON.parse(require('fs').readFileSync('submission-result.json','utf8'));console.log((r.scanReport.findings||[]).map(f=>'- ['+f.severity+'] '+f.title+(f.file?' ('+f.file+')':'')+': '+f.detail).join('\n'))")
           if [ "$TRACK" = "third-party" ]; then
             git add third-party-catalog.json
             git diff --cached --quiet || git commit -m "chore(marketplace): publish third-party plugin ${PLUGIN_ID}"
@@ -63,8 +66,17 @@ jobs:
             git add plugins-catalog.json
             git commit -m "feat(marketplace): add official plugin candidate ${PLUGIN_ID}"
             git push origin "$BRANCH" --force
-            PR_URL=$(gh pr create --base main --head "$BRANCH" --title "上架官方市场申请：${PLUGIN_ID}" --body "关联申请单 #${ISSUE_NUMBER}\n\n- 插件 ID：\`${PLUGIN_ID}\`\n- 安全筛查：\`${RISK}\` — ${SUMMARY}\n\n合并本 PR 后即正式收录到官方市场，后续新版将自动同步。")
-            gh issue comment "$ISSUE_NUMBER" --body "🔍 已完成初审压缩包校验与代码安全筛查，并已为你创建官方审核单：${PR_URL}\n\n等待仓库维护者确认通过后即可正式进入官方市场。"
+            if [ "$HIGH_WARN" = "true" ]; then
+              PR_TITLE="[人工复核 · 含高敏行为] 上架官方市场申请：${PLUGIN_ID}"
+              PR_BODY="⚠️ **本申请触发了高风险静态规则，仅在你人工审阅源码并合并本 PR 后才会正式上架生效。**\n\n关联申请单 #${ISSUE_NUMBER}\n- 插件 ID：\`${PLUGIN_ID}\`\n- 作者仓库：https://github.com/${UPSTREAM_REPO}\n- 安全筛查：\`${RISK}\` — ${SUMMARY}\n\n### 触发的风险项明细\n${FINDINGS_MD}\n\n> 核对确认安全后点击下方 **Merge pull request** 即可放行；若不通过，点击 **Close pull request** 即可拒绝。"
+              PR_URL=$(gh pr create --base main --head "$BRANCH" --title "$PR_TITLE" --body "$PR_BODY")
+              gh issue comment "$ISSUE_NUMBER" --body "🔍 已完成打包校验与安全扫描，检测到高风险规则项，已转入**官方人工复核审核单**：${PR_URL}\n\n### 风险提示明细\n${FINDINGS_MD}\n\n维护者将人工审阅你的仓库源码，确认通过并合并审核单后即可正式进入官方市场。"
+            else
+              PR_TITLE="上架官方市场申请：${PLUGIN_ID}"
+              PR_BODY="关联申请单 #${ISSUE_NUMBER}\n\n- 插件 ID：\`${PLUGIN_ID}\`\n- 作者仓库：https://github.com/${UPSTREAM_REPO}\n- 安全筛查：\`${RISK}\` — ${SUMMARY}\n\n合并本 PR 后即正式收录到官方市场，后续新版将自动同步。"
+              PR_URL=$(gh pr create --base main --head "$BRANCH" --title "$PR_TITLE" --body "$PR_BODY")
+              gh issue comment "$ISSUE_NUMBER" --body "🔍 已完成初审压缩包校验与代码安全筛查，并已为你创建官方审核单：${PR_URL}\n\n等待仓库维护者确认通过后即可正式进入官方市场。"
+            fi
           fi
 
       - name: Comment rejection details on failure
@@ -72,10 +84,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          TRACK: ${{ steps.scan.outputs.track }}
         run: |
           if [ -f submission-result.json ]; then
             SUMMARY=$(node -e "const r=JSON.parse(require('fs').readFileSync('submission-result.json','utf8'));console.log(r.scanReport.summary + '\n' + r.scanReport.findings.map(f=>'- ['+f.severity+'] '+f.title+' ('+f.file+'): '+f.detail).join('\n'))")
             gh issue comment "$ISSUE_NUMBER" --body "❌ 自动安全筛查未通过，已拦截本次快捷上架。\n\n${SUMMARY}\n\n如插件确属正当功能需要，请改用「申请上架官方插件市场（人工审核）」模板提交。"
+          elif [ "$TRACK" = "official" ]; then
+            gh issue comment "$ISSUE_NUMBER" --body "❌ 无法完成官方上架预检，请检查仓库是否为公开仓库、Release 是否包含合规范的 \`.zip\` 安装包及 \`agy-plugin.json\`（且 \`id\` 须以你的 GitHub 用户名开头）。"
           else
             gh issue comment "$ISSUE_NUMBER" --body "❌ 无法完成自动打包校验，请检查仓库是否为公开仓库、Release 是否包含合规范的 \`.zip\` 安装包及 \`agy-plugin.json\`（且 \`id\` 须以你的 GitHub 用户名开头）。"
           fi

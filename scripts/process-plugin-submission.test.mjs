@@ -3,6 +3,7 @@ import test from 'node:test';
 import zlib from 'node:zlib';
 import {
   collectReleaseAssetCandidates,
+  evaluateSubmissionRiskPolicy,
   rankPluginAssetCandidate,
   selectValidPluginFromReleases,
 } from './process-plugin-submission.mjs';
@@ -149,4 +150,16 @@ test('selectValidPluginFromReleases handles non-standard asset zip names by insp
   );
   assert.equal(picked.assetInfo.assetName, 'bundle.zip');
   assert.equal(picked.manifest.id, 'zhangsan.helper');
+});
+
+test('evaluateSubmissionRiskPolicy keeps third-party hard-blocked while routing official high-risk to manual PR review', () => {
+  const highReport = { riskLevel: 'high', blocked: true, findings: [{ severity: 'high', title: 'exe' }] };
+  assert.deepEqual(evaluateSubmissionRiskPolicy('third-party', highReport), {
+    blocked: true,
+    highRiskWarning: false,
+  });
+  assert.deepEqual(evaluateSubmissionRiskPolicy('official', highReport), {
+    blocked: false,
+    highRiskWarning: true,
+  });
 });
