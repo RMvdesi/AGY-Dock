@@ -7,7 +7,7 @@ import { AgyProcessManager } from './lib/process-manager.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, 'ui');
-const VERSION = '2.9.4';
+const VERSION = '2.9.5';
 
 function sendJson(res, status, payload) {
   if (res.writableEnded) return;

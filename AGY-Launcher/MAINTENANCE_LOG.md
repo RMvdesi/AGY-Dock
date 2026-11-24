@@ -6,6 +6,17 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.9.5] - 2026-11-24 21:58
+### Scope & Summary
+- Publish a clean release commit (`v2.9.5`) without modifying `.github/workflows/*` so GitHub Actions `GITHUB_TOKEN` release creation succeeds cleanly (resolving the `HTTP 403` integration restriction hit by `v2.9.3`/`v2.9.4`), shipping all v2.9.3–v2.9.4 security scanner, official manual review approval, and marketplace workflow fixes in the Windows installer release.
+
+### Files Changed
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `AGY-Launcher/server.mjs`, `AGY-Launcher/lib/process-manager.mjs`, `CHANGELOG.md`, `README.md`, `AGY-Launcher/MAINTENANCE_LOG.md` — synchronized `2.9.5` version bump and changelog entry with zero workflow file changes.
+
+### Verification
+- `npm run build` (`tsc --noEmit && vite build`) -> built 2280 modules in 4.34s, 0 errors.
+- `cargo test --manifest-path src-tauri/Cargo.toml` -> 63 passed, 0 failed (`agy_dock_lib`).
+
 ## [v2.9.4] - 2026-11-24 21:40
 ### Scope & Summary
 - Create missing `plugin-official-submit` and `plugin-third-party-submit` labels on GitHub (`haoan33/AGY-Dock`), update `.github/workflows/plugin-submission.yml` to also match submission title prefixes as a fallback, and resolve Issues `#1`, `#2`, and `#3`.
