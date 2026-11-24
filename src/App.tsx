@@ -5,8 +5,14 @@ import { ConfirmModal } from "./components/ConfirmModal";
 import { FloatingUpdateBanner, ToastStack, type ToastItem } from "./components/FloatingOverlays";
 import { MOTION_EASE } from "./components/MotionPrimitives";
 import { PluginEditorModal, type PluginEditorInitial } from "./components/PluginEditorModal";
+import { SecurityScanModal } from "./components/SecurityScanModal";
 import { TopBar, type NavTabId } from "./components/TopBar";
-import { basename, formatErrorMessage, isSupportedPackagePath } from "./lib/format";
+import {
+  basename,
+  formatErrorMessage,
+  isCompanionPluginType,
+  isSupportedPackagePath,
+} from "./lib/format";
 import { events, ipc, isTauriRuntime } from "./lib/ipc";
 import { ExternalPluginDetailPage } from "./pages/ExternalPluginDetailPage";
 import { LogsPage } from "./pages/LogsPage";
@@ -24,6 +30,7 @@ import type {
   PluginPayload,
   RemoteMarketplaceResult,
   RemotePluginInfo,
+  SecurityScanReport,
   StorageScanProgress,
   ThemeMode,
   TokenUsageSnapshot,
@@ -106,6 +113,14 @@ export default function App() {
   const [remoteMarketplace, setRemoteMarketplace] = useState<RemoteMarketplaceResult | null>(null);
   const [loadingMarketplace, setLoadingMarketplace] = useState(isTauriRuntime);
   const [installingRemoteId, setInstallingRemoteId] = useState<string | null>(null);
+  const [scanModalState, setScanModalState] = useState<{
+    open: boolean;
+    pluginLabel: string;
+    pluginId?: string;
+    report: SecurityScanReport | null;
+    busy: boolean;
+    onConfirm?: () => Promise<void>;
+  }>({ open: false, pluginLabel: "", report: null, busy: false });
   const [updatingAllRemote, setUpdatingAllRemote] = useState<boolean>(false);
 
   const [editorState, setEditorState] = useState<{
@@ -653,70 +668,111 @@ export default function App() {
     }
   };
 
+  const shouldAutoActivateInstalledPlugin = useCallback(
+    (plugin: { id?: string; enabled?: boolean; autoAttach?: boolean; type?: string } | null | undefined) => {
+      if (!plugin?.id || plugin.enabled === false || plugin.autoAttach === false) return false;
+      if (isCompanionPluginType(plugin.type)) {
+        return (overview?.cdp?.mainProcessCount ?? 0) > 0;
+      }
+      return Boolean(overview?.cdp?.ready);
+    },
+    [overview?.cdp?.mainProcessCount, overview?.cdp?.ready],
+  );
+
+  const performLocalPackageInstall = useCallback(
+    async (packagePath: string, allowLowRisk: boolean) => {
+      pushToast(`正在安装插件包 ${basename(packagePath)}...`, "info");
+      const res = await ipc.installPluginPackage(packagePath, true, allowLowRisk);
+      const plugin = res.plugin;
+      const label = plugin?.name || plugin?.id || basename(packagePath);
+      let activated = false;
+      let attachErr = "";
+
+      if (shouldAutoActivateInstalledPlugin(plugin)) {
+        try {
+          await ipc.startPlugin(plugin.id, "attach");
+          activated = true;
+        } catch (err) {
+          attachErr = formatErrorMessage(err);
+        }
+      }
+
+      if (activated) {
+        pushToast(`已安装并激活插件: ${label}`, "ok");
+      } else if (attachErr) {
+        pushToast(`已安装插件: ${label}（自动激活失败: ${attachErr}）`, "warn");
+      } else {
+        pushToast(`已安装插件: ${label}`, "ok");
+      }
+      await refreshAll(false);
+      await refreshRemoteMarketplace(false);
+    },
+    [pushToast, refreshAll, refreshRemoteMarketplace, shouldAutoActivateInstalledPlugin],
+  );
+
   const installPackagePath = useCallback(
     async (packagePath: string) => {
       if (!packagePath) return;
-      pushToast(`正在安装插件包 ${basename(packagePath)}...`, "info");
       try {
-        const res = await ipc.installPluginPackage(packagePath, true);
-        const plugin = res.plugin;
-        const label = plugin?.name || plugin?.id || basename(packagePath);
-        let activated = false;
-        let attachErr = "";
-
-        if (
-          plugin?.id &&
-          plugin.enabled !== false &&
-          plugin.autoAttach !== false &&
-          overview?.cdp?.ready
-        ) {
-          try {
-            await ipc.startPlugin(plugin.id, "attach");
-            activated = true;
-          } catch (err) {
-            attachErr = formatErrorMessage(err);
-          }
+        const scanReport = await ipc.scanLocalPluginPackage(packagePath);
+        if (scanReport.blocked || scanReport.riskLevel === "low") {
+          setScanModalState({
+            open: true,
+            pluginLabel: basename(packagePath),
+            report: scanReport,
+            busy: false,
+            onConfirm: scanReport.blocked
+              ? undefined
+              : async () => {
+                  setScanModalState((prev) => ({ ...prev, busy: true }));
+                  try {
+                    await performLocalPackageInstall(packagePath, true);
+                    setScanModalState({ open: false, pluginLabel: "", report: null, busy: false });
+                  } catch (err) {
+                    setScanModalState((prev) => ({ ...prev, busy: false }));
+                    pushToast(`安装失败：${formatErrorMessage(err)}`, "error");
+                  }
+                },
+          });
+          return;
         }
-
-        if (activated) {
-          pushToast(`已安装并激活插件: ${label}`, "ok");
-        } else if (attachErr) {
-          pushToast(`已安装插件: ${label}（自动激活失败: ${attachErr}）`, "warn");
-        } else {
-          pushToast(`已安装插件: ${label}`, "ok");
-        }
-        await refreshAll(false);
-        await refreshRemoteMarketplace(false);
+        await performLocalPackageInstall(packagePath, false);
       } catch (err) {
         pushToast(`安装失败：${formatErrorMessage(err)}`, "error");
       }
     },
-    [overview?.cdp?.ready, pushToast, refreshAll, refreshRemoteMarketplace],
+    [performLocalPackageInstall, pushToast],
   );
 
-  const handleInstallRemotePlugin = useCallback(
-    async (pkg: RemotePluginInfo) => {
+  const performRemotePluginInstall = useCallback(
+    async (pkg: RemotePluginInfo, allowLowRisk: boolean) => {
       if (!pkg?.id || !pkg?.downloadUrl || remoteInstallInFlightRef.current) return;
       remoteInstallInFlightRef.current = true;
       setInstallingRemoteId(pkg.id);
       const label = pkg.name || pkg.id;
-      pushToast(`正在从 GitHub 下载并安装 ${label}...`, "info");
+      const installSource =
+        pkg.tier === "custom"
+          ? `custom-repo:${pkg.sourceRepo.toLowerCase()}`
+          : pkg.tier === "third-party"
+            ? `third-party:${pkg.sourceRepo.toLowerCase()}`
+            : "official";
+      pushToast(`正在下载并安装 ${label}...`, "info");
       try {
         const res = await ipc.installRemotePlugin(
           pkg.id,
           pkg.downloadUrl,
           pkg.sha256 || undefined,
+          {
+            installSource,
+            upstreamRepo: pkg.upstreamRepo || pkg.sourceRepo || undefined,
+            allowLowRisk,
+          },
         );
         const plugin = res.plugin;
         let activated = false;
         let attachErr = "";
 
-        if (
-          plugin?.id &&
-          plugin.enabled !== false &&
-          plugin.autoAttach !== false &&
-          overview?.cdp?.ready
-        ) {
+        if (shouldAutoActivateInstalledPlugin(plugin)) {
           try {
             await ipc.startPlugin(plugin.id, "attach");
             activated = true;
@@ -740,11 +796,44 @@ export default function App() {
         setInstallingRemoteId(null);
       }
     },
-    [overview?.cdp?.ready, pushToast, refreshAll, refreshRemoteMarketplace],
+    [pushToast, refreshAll, refreshRemoteMarketplace, shouldAutoActivateInstalledPlugin],
+  );
+
+  const handleInstallRemotePlugin = useCallback(
+    async (pkg: RemotePluginInfo) => {
+      if (!pkg?.id || !pkg?.downloadUrl || pkg.conflictBlocked || remoteInstallInFlightRef.current) return;
+      if (pkg.tier !== "official" && pkg.riskLevel === "low" && pkg.riskFindings.length > 0) {
+        const report: SecurityScanReport = {
+          riskLevel: "low",
+          blocked: false,
+          summary: `第三方插件在自动筛查中发现 ${pkg.riskFindings.length} 项敏感行为提醒`,
+          externalDomains: pkg.riskFindings.flatMap((f) => f.targets ?? []),
+          findings: pkg.riskFindings,
+          scannedFiles: 0,
+        };
+        setScanModalState({
+          open: true,
+          pluginLabel: pkg.name || pkg.id,
+          pluginId: pkg.id,
+          report,
+          busy: false,
+          onConfirm: async () => {
+            setScanModalState((prev) => ({ ...prev, busy: true }));
+            await performRemotePluginInstall(pkg, true);
+            setScanModalState({ open: false, pluginLabel: "", report: null, busy: false });
+          },
+        });
+        return;
+      }
+      await performRemotePluginInstall(pkg, true);
+    },
+    [performRemotePluginInstall],
   );
 
   const handleUpdateAllRemotePlugins = useCallback(async () => {
-    const updates = (remoteMarketplace?.plugins ?? []).filter((p) => p.hasUpdate);
+    const updates = (remoteMarketplace?.plugins ?? []).filter(
+      (p) => p.hasUpdate && !p.conflictBlocked,
+    );
     if (updates.length === 0 || remoteInstallInFlightRef.current) return;
     remoteInstallInFlightRef.current = true;
     setUpdatingAllRemote(true);
@@ -754,19 +843,25 @@ export default function App() {
     let failCount = 0;
     for (const pkg of updates) {
       setInstallingRemoteId(pkg.id);
+      const installSource =
+        pkg.tier === "custom"
+          ? `custom-repo:${pkg.sourceRepo.toLowerCase()}`
+          : pkg.tier === "third-party"
+            ? `third-party:${pkg.sourceRepo.toLowerCase()}`
+            : "official";
       try {
         const res = await ipc.installRemotePlugin(
           pkg.id,
           pkg.downloadUrl,
           pkg.sha256 || undefined,
+          {
+            installSource,
+            upstreamRepo: pkg.upstreamRepo || pkg.sourceRepo || undefined,
+            allowLowRisk: true,
+          },
         );
         const plugin = res.plugin;
-        if (
-          plugin?.id &&
-          plugin.enabled !== false &&
-          plugin.autoAttach !== false &&
-          overview?.cdp?.ready
-        ) {
+        if (shouldAutoActivateInstalledPlugin(plugin)) {
           await ipc.startPlugin(plugin.id, "attach").catch(() => {});
         }
         okCount += 1;
@@ -784,7 +879,40 @@ export default function App() {
     } else {
       pushToast(`更新完成：成功 ${okCount} 个，失败 ${failCount} 个`, "warn");
     }
-  }, [overview?.cdp?.ready, pushToast, refreshAll, refreshRemoteMarketplace, remoteMarketplace]);
+  }, [pushToast, refreshAll, refreshRemoteMarketplace, remoteMarketplace, shouldAutoActivateInstalledPlugin]);
+
+  const handleAddCustomRepo = useCallback(
+    async (repoInput: string, label?: string) => {
+      await ipc.addCustomMarketplaceRepo(repoInput, label);
+      pushToast(`已添加私人仓库：${repoInput}`, "ok");
+      await refreshRemoteMarketplace(true);
+    },
+    [pushToast, refreshRemoteMarketplace],
+  );
+
+  const handleRemoveCustomRepo = useCallback(
+    async (repo: string) => {
+      await ipc.removeCustomMarketplaceRepo(repo);
+      pushToast(`已移除私人仓库：${repo}`, "info");
+      await refreshRemoteMarketplace(true);
+    },
+    [pushToast, refreshRemoteMarketplace],
+  );
+
+  const handleToggleCustomRepo = useCallback(
+    async (repo: string, enabled: boolean) => {
+      await ipc.toggleCustomMarketplaceRepo(repo, enabled);
+      await refreshRemoteMarketplace(true);
+    },
+    [refreshRemoteMarketplace],
+  );
+
+  const handlePreflightThirdParty = useCallback(
+    async (repoInput: string, pluginName: string) => {
+      return ipc.preflightThirdPartySubmission(repoInput, pluginName);
+    },
+    [],
+  );
 
   const handlePickPackageFile = async () => {
     try {
@@ -1006,6 +1134,10 @@ export default function App() {
                     saving: false,
                   })
                 }
+                onAddCustomRepo={handleAddCustomRepo}
+                onRemoveCustomRepo={handleRemoveCustomRepo}
+                onToggleCustomRepo={handleToggleCustomRepo}
+                onPreflightThirdParty={handlePreflightThirdParty}
               />
             )}
 
@@ -1146,6 +1278,20 @@ export default function App() {
         }
         onCancel={() => setDeleteTarget(null)}
         onConfirm={handleConfirmDeletePlugin}
+      />
+
+      <SecurityScanModal
+        open={scanModalState.open}
+        pluginLabel={scanModalState.pluginLabel}
+        pluginId={scanModalState.pluginId}
+        report={scanModalState.report}
+        busy={scanModalState.busy}
+        onCancel={() => {
+          if (!scanModalState.busy) {
+            setScanModalState({ open: false, pluginLabel: "", report: null, busy: false });
+          }
+        }}
+        onConfirmInstall={scanModalState.onConfirm}
       />
 
       <FloatingUpdateBanner

@@ -1,4 +1,5 @@
-use crate::config::{get_cached_detected_exe, load_config, normalize_no_proxy_list};
+use crate::bridge;
+use crate::config::{get_cached_detected_exe, is_companion_plugin_type, load_config, normalize_no_proxy_list};
 use crate::detector::{
     calculate_plugin_memory_bytes, classify_antigravity_processes, detect_antigravity_exe,
     find_antigravity_cleanup_targets, get_active_cdp_info, match_plugin_processes,
@@ -560,6 +561,14 @@ pub fn resolve_command_with_env(
         let resolved = fs::canonicalize(&joined).unwrap_or(joined);
         return Ok((resolved.to_string_lossy().into_owned(), HashMap::new()));
     }
+    if matches!(
+        lower.as_str(),
+        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" | "python" | "python3" | "pythonw"
+    ) {
+        if let Some(found) = find_in_path(&[cmd, &format!("{cmd}.exe")]) {
+            return Ok((found.to_string_lossy().into_owned(), HashMap::new()));
+        }
+    }
     Ok((cmd.to_string(), HashMap::new()))
 }
 
@@ -671,6 +680,8 @@ pub async fn get_overview(paths: &ManagerPaths) -> Result<OverviewSnapshot, Stri
             logs: get_plugin_log_info(paths, &plugin.id),
             has_settings,
             settings_entry,
+            install_source: plugin.install_source.clone(),
+            upstream_repo: plugin.upstream_repo.clone(),
         });
     }
 
@@ -763,6 +774,17 @@ pub fn start_plugin(
         .or(cfg.default_cdp_port)
         .unwrap_or(9222)
         .to_string();
+    let agy_pid = cdp
+        .main_pids
+        .first()
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| "0".to_string());
+    let agy_main_pids = cdp
+        .main_pids
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
 
     let raw_args = get_plugin_args(&plugin, mode);
     let base_dir_str = paths.base_dir.to_string_lossy().into_owned();
@@ -771,6 +793,7 @@ pub fn start_plugin(
         .map(|item| {
             item.replace("{CDP_PORT}", &cdp_port)
                 .replace("{BASE_DIR}", &base_dir_str)
+                .replace("{AGY_PID}", &agy_pid)
         })
         .collect();
 
@@ -805,6 +828,14 @@ pub fn start_plugin(
         .stderr(Stdio::from(err_file))
         .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
 
+    command.env("AGY_PLUGIN_ID", &plugin.id);
+    if !agy_main_pids.is_empty() {
+        command.env("AGY_MAIN_PIDS", &agy_main_pids);
+    }
+    if let Some(rt) = bridge::get_bridge_runtime() {
+        command.env("AGY_BRIDGE_URL", &rt.base_url);
+        command.env("AGY_BRIDGE_TOKEN", &rt.token);
+    }
     for (k, v) in &extra_env {
         command.env(k, v);
     }
@@ -841,12 +872,54 @@ pub fn start_plugin(
 }
 
 pub fn attach_enabled_plugins(paths: &ManagerPaths, mode: &str) -> Result<Vec<PluginActionResult>, String> {
+    attach_filtered_plugins(paths, mode, |_| true, false)
+}
+
+pub fn attach_companion_plugins(paths: &ManagerPaths, mode: &str) -> Result<Vec<PluginActionResult>, String> {
+    attach_filtered_plugins(
+        paths,
+        mode,
+        |p| p.auto_attach && is_companion_plugin_type(&p.plugin_type),
+        true,
+    )
+}
+
+pub fn attach_cdp_plugins(paths: &ManagerPaths, mode: &str) -> Result<Vec<PluginActionResult>, String> {
+    attach_filtered_plugins(
+        paths,
+        mode,
+        |p| !is_companion_plugin_type(&p.plugin_type),
+        false,
+    )
+}
+
+fn attach_filtered_plugins<F>(
+    paths: &ManagerPaths,
+    mode: &str,
+    predicate: F,
+    skip_if_running: bool,
+) -> Result<Vec<PluginActionResult>, String>
+where
+    F: Fn(&PluginConfigEntry) -> bool,
+{
     let cfg = load_config(paths)?;
+    let processes = if skip_if_running {
+        Some(snapshot_processes())
+    } else {
+        None
+    };
     let mut results = Vec::new();
     for plugin in &cfg.plugins {
-        if !plugin.enabled {
-            paths.log_info(&format!("跳过已禁用插件: {}", plugin.id));
+        if !plugin.enabled || !predicate(plugin) {
+            if !plugin.enabled {
+                paths.log_info(&format!("跳过已禁用插件: {}", plugin.id));
+            }
             continue;
+        }
+        if let Some(procs) = processes.as_deref() {
+            if !match_plugin_processes(procs, plugin, None).is_empty() {
+                continue;
+            }
         }
         match start_plugin(paths, &plugin.id, mode) {
             Ok(res) => results.push(res),
@@ -861,6 +934,19 @@ pub fn attach_enabled_plugins(paths: &ManagerPaths, mode: &str) -> Result<Vec<Pl
                     status: Some("error".to_string()),
                     error: Some(err),
                 });
+            }
+        }
+    }
+    Ok(results)
+}
+
+pub fn stop_companion_plugins(paths: &ManagerPaths) -> Result<Vec<PluginActionResult>, String> {
+    let cfg = load_config(paths)?;
+    let mut results = Vec::new();
+    for plugin in &cfg.plugins {
+        if is_companion_plugin_type(&plugin.plugin_type) {
+            if let Ok(res) = stop_plugin(paths, &plugin.id) {
+                results.push(res);
             }
         }
     }
@@ -1248,16 +1334,24 @@ pub async fn launch_antigravity_and_attach(
         }
     }
 
+    // Start companion plugins immediately once Antigravity is up (they don't wait for CDP)
+    let p_comp = paths.clone();
+    let mut companion_results = tokio::task::spawn_blocking(move || attach_companion_plugins(&p_comp, "launch"))
+        .await
+        .unwrap_or_else(|_| Ok(Vec::new()))
+        .unwrap_or_default();
+
     let p_attach = paths.clone();
-    let results = tokio::task::spawn_blocking(move || attach_enabled_plugins(&p_attach, "launch"))
+    let mut results = tokio::task::spawn_blocking(move || attach_cdp_plugins(&p_attach, "launch"))
         .await
         .map_err(|e| format!("附着插件任务失败: {e}"))??;
+    companion_results.append(&mut results);
     let overview = get_overview(paths).await?;
 
     Ok(LaunchResult {
         skipped: false,
         message: None,
-        results,
+        results: companion_results,
         overview,
     })
 }
@@ -1369,6 +1463,7 @@ pub fn run_watch_exit(paths: &ManagerPaths, after_gui_exit: bool) -> i32 {
             std::thread::sleep(Duration::from_millis(1200));
             let confirm = get_active_cdp_info(paths, None);
             if confirm.main_process_count == 0 {
+                let _ = stop_companion_plugins(paths);
                 if let Ok(cfg) = load_config(paths) {
                     if cfg.lifecycle.auto_cleanup_on_exit {
                         paths.log_info("后台退出监听检测到 Antigravity 已退出，开始自动清理残留进程");

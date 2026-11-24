@@ -18,7 +18,25 @@ static DETECTED_EXE_CACHE: OnceLock<Mutex<String>> = OnceLock::new();
 
 pub fn valid_plugin_id_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{1,63}$").unwrap())
+    RE.get_or_init(|| Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{1,63}$").unwrap())
+}
+
+pub fn is_valid_plugin_id(id: &str) -> bool {
+    let clean = id.trim();
+    if !valid_plugin_id_re().is_match(clean) {
+        return false;
+    }
+    if clean.ends_with('.') || clean.contains("..") {
+        return false;
+    }
+    true
+}
+
+pub fn is_companion_plugin_type(plugin_type: &str) -> bool {
+    matches!(
+        plugin_type.trim().to_ascii_lowercase().as_str(),
+        "node-companion" | "ps-companion" | "py-companion" | "companion"
+    )
 }
 
 pub fn valid_log_id_re() -> &'static Regex {
@@ -265,8 +283,8 @@ pub fn save_plugin_entry(
 ) -> Result<PluginConfigEntry, String> {
     let mut cfg = load_config(paths)?;
     let plugin_id = payload.id.trim().to_string();
-    if !valid_plugin_id_re().is_match(&plugin_id) {
-        return Err("插件 ID 仅允许字母、数字、连字符和下划线（长度 2-64）".to_string());
+    if !is_valid_plugin_id(&plugin_id) {
+        return Err("插件 ID 仅允许字母、数字、点号、连字符和下划线（长度 2-64，不能以点号结尾或含 ..）".to_string());
     }
     let command = payload.command.trim().to_string();
     if command.is_empty() {
@@ -336,6 +354,18 @@ pub fn save_plugin_entry(
             process_match,
             has_settings: payload.has_settings,
             settings_entry,
+            install_source: payload
+                .install_source
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            upstream_repo: payload
+                .upstream_repo
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
             env: None,
             extra: HashMap::new(),
         };
@@ -345,6 +375,20 @@ pub fn save_plugin_entry(
     } else {
         let pos = idx.ok_or_else(|| format!("未找到待编辑插件: {plugin_id}"))?;
         let prev = cfg.plugins[pos].clone();
+        let next_install_source = payload
+            .install_source
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or(prev.install_source);
+        let next_upstream_repo = payload
+            .upstream_repo
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or(prev.upstream_repo);
         let entry = PluginConfigEntry {
             id: plugin_id.clone(),
             name,
@@ -363,6 +407,8 @@ pub fn save_plugin_entry(
             process_match,
             has_settings: payload.has_settings.or(prev.has_settings),
             settings_entry: settings_entry.or(prev.settings_entry),
+            install_source: next_install_source,
+            upstream_repo: next_upstream_repo,
             env: prev.env,
             extra: prev.extra,
         };
@@ -406,5 +452,19 @@ mod tests {
             "127.0.0.1,localhost,::1,play.googleapis.com"
         );
         assert_eq!(normalize_no_proxy_list(" , ; "), DEFAULT_NO_PROXY);
+    }
+
+    #[test]
+    fn plugin_id_dot_prefix_and_companion_type_checks() {
+        assert!(is_valid_plugin_id("office-viewer"));
+        assert!(is_valid_plugin_id("zhangsan.subagent-cleaner"));
+        assert!(!is_valid_plugin_id("zhangsan..bad"));
+        assert!(!is_valid_plugin_id("zhangsan."));
+        assert!(!is_valid_plugin_id(".hidden"));
+
+        assert!(is_companion_plugin_type("node-companion"));
+        assert!(is_companion_plugin_type("ps-companion"));
+        assert!(is_companion_plugin_type("py-companion"));
+        assert!(!is_companion_plugin_type("node-cdp"));
     }
 }

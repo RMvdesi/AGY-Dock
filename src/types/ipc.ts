@@ -1,5 +1,13 @@
 export type ThemeMode = "auto" | "light" | "dark";
-export type PluginType = "node-cdp" | "exe-cdp" | "custom-cdp" | string;
+export type PluginType =
+  | "node-cdp"
+  | "exe-cdp"
+  | "custom-cdp"
+  | "node-companion"
+  | "ps-companion"
+  | "py-companion"
+  | "companion"
+  | string;
 
 export interface ProxyConfig {
   enabled: boolean;
@@ -40,6 +48,8 @@ export interface PluginConfigEntry {
   processMatch?: string;
   hasSettings?: boolean;
   settingsEntry?: string;
+  installSource?: string;
+  upstreamRepo?: string;
   env?: Record<string, string>;
 }
 
@@ -87,6 +97,8 @@ export interface PluginRuntimeStatus {
   logs: PluginLogInfo;
   hasSettings?: boolean;
   settingsEntry?: string | null;
+  installSource?: string | null;
+  upstreamRepo?: string | null;
 }
 
 export interface PluginSettingsPageData {
@@ -293,6 +305,32 @@ export interface BundledPackageInfo {
 }
 
 export type RemotePluginStatus = "new" | "available" | "update-available" | "installed";
+export type MarketplaceTier = "official" | "third-party" | "custom";
+export type SecurityRiskLevel = "none" | "low" | "high";
+
+export interface SecurityFinding {
+  severity: SecurityRiskLevel | string;
+  code: string;
+  title: string;
+  detail: string;
+  file: string;
+  targets: string[];
+}
+
+export interface SecurityScanReport {
+  riskLevel: SecurityRiskLevel | string;
+  blocked: boolean;
+  summary: string;
+  externalDomains: string[];
+  findings: SecurityFinding[];
+  scannedFiles: number;
+}
+
+export interface CustomMarketplaceRepo {
+  repo: string;
+  label: string;
+  enabled: boolean;
+}
 
 export interface RemotePluginInfo {
   id: string;
@@ -309,6 +347,13 @@ export interface RemotePluginInfo {
   publishedAt: string;
   releaseTag: string;
   source: "catalog" | "github-release" | string;
+  tier: MarketplaceTier | string;
+  sourceRepo: string;
+  upstreamRepo: string;
+  riskLevel: SecurityRiskLevel | string;
+  riskFindings: SecurityFinding[];
+  conflictBlocked: boolean;
+  conflictReason: string;
   installed: boolean;
   installedVersion: string;
   hasUpdate: boolean;
@@ -325,8 +370,25 @@ export interface RemoteMarketplaceResult {
   updateCount: number;
   newPluginCount: number;
   uninstalledCount: number;
+  officialCount: number;
+  thirdPartyCount: number;
+  customRepos: CustomMarketplaceRepo[];
   message: string;
   checkedAt: string;
+}
+
+export interface ThirdPartyPreflightResult {
+  repo: string;
+  owner: string;
+  lockedId: string;
+  pluginName: string;
+  version: string;
+  downloadUrl: string;
+  sha256: string;
+  size: number;
+  scanReport: SecurityScanReport;
+  officialIssueUrl: string;
+  thirdPartyIssueUrl: string;
 }
 
 export interface PluginPayload {
@@ -347,12 +409,15 @@ export interface PluginPayload {
   autoAttach: boolean;
   hasSettings?: boolean;
   settingsEntry?: string;
+  installSource?: string;
+  upstreamRepo?: string;
 }
 
 export interface InstallPackageResult {
   plugin: PluginConfigEntry;
   installedDir: string;
   replaced: boolean;
+  scanReport?: SecurityScanReport | null;
 }
 
 export interface PluginActionResult {
@@ -685,9 +750,14 @@ export const TAURI_COMMANDS = {
   DELETE_PLUGIN_ENTRY: "delete_plugin_entry",
   DELETE_LOCAL_PLUGIN_DIR: "delete_local_plugin_dir",
   INSTALL_PLUGIN_PACKAGE: "install_plugin_package",
+  SCAN_LOCAL_PLUGIN_PACKAGE: "scan_local_plugin_package",
   FETCH_REMOTE_MARKETPLACE: "fetch_remote_marketplace",
   INSTALL_REMOTE_PLUGIN: "install_remote_plugin",
   MARK_MARKETPLACE_SEEN: "mark_marketplace_seen",
+  ADD_CUSTOM_MARKETPLACE_REPO: "add_custom_marketplace_repo",
+  REMOVE_CUSTOM_MARKETPLACE_REPO: "remove_custom_marketplace_repo",
+  TOGGLE_CUSTOM_MARKETPLACE_REPO: "toggle_custom_marketplace_repo",
+  PREFLIGHT_THIRD_PARTY_SUBMISSION: "preflight_third_party_submission",
   LOAD_PLUGIN_SETTINGS_PAGE: "load_plugin_settings_page",
   SAVE_PLUGIN_SETTINGS: "save_plugin_settings",
   DETECT_ANTIGRAVITY: "detect_antigravity",

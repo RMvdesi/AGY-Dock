@@ -13,7 +13,12 @@ LAUNCHER_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_REPOSITORY = "haoan33/AGY-Plugin-Manager"
 DEFAULT_RELEASE_TAG = "v2.2.1"
 
-VALID_PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-_]{1,63}$")
+VALID_PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,63}$", re.IGNORECASE)
+
+
+def is_valid_plugin_id(plugin_id: str) -> bool:
+    clean = plugin_id.strip()
+    return bool(VALID_PLUGIN_ID_RE.match(clean)) and not clean.endswith(".") and ".." not in clean
 PLUGIN_DIR_REF_RE = re.compile(
     r"(?:^|[\\/])plugins[\\/]([a-z0-9][a-z0-9._-]{0,63})(?:[\\/]|$)",
     re.IGNORECASE,
@@ -189,7 +194,7 @@ def _compute_sha256(file_path: Path) -> str:
 def build_manifest(entry: dict[str, Any], plugin_dir: Path) -> tuple[dict[str, Any], str]:
     """Builds a unified agy-plugin.json manifest and archive filename version suffix."""
     plugin_id = str(entry.get("id") or "").strip()
-    if not VALID_PLUGIN_ID_RE.match(plugin_id):
+    if not is_valid_plugin_id(plugin_id):
         raise ValueError(f"Invalid plugin id: {plugin_id!r}")
 
     dir_meta = read_plugin_dir_manifest(plugin_dir)
@@ -260,7 +265,7 @@ def verify_package_zip(zip_path: Path) -> dict[str, Any]:
         manifest = json.loads(zf.read("agy-plugin.json").decode("utf-8"))
         if manifest.get("schemaVersion") != 1:
             raise ValueError(f"Unsupported schemaVersion in {zip_path}: {manifest.get('schemaVersion')!r}")
-        if not VALID_PLUGIN_ID_RE.match(str(manifest.get("id") or "")):
+        if not is_valid_plugin_id(str(manifest.get("id") or "")):
             raise ValueError(f"Invalid manifest id in {zip_path}: {manifest.get('id')!r}")
         if not str(manifest.get("command") or "").strip():
             raise ValueError(f"Empty manifest command in {zip_path}")

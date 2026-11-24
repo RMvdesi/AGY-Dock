@@ -24,13 +24,17 @@ const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_BASE_DIR = path.resolve(__dirname, '..');
 export const DEFAULT_NO_PROXY = '127.0.0.1,localhost,::1';
-export const APP_VERSION = '2.8.1';
+export const APP_VERSION = '2.9.0';
 export const DEFAULT_UPDATE_SITE_URL = 'https://www.haoanlab.xyz';
 export const DEFAULT_PRODUCT_SLUG = 'agy-plugin-manager';
 const UPDATE_SEMVER_RE = /^\s*v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\s*$/;
 const PRODUCT_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SUPPORTED_PACKAGE_EXTS = new Set(['.zip', '.agypkg', '.agy-plugin']);
-const VALID_PLUGIN_ID_RE = /^[a-z0-9][a-z0-9-_]{1,63}$/i;
+const VALID_PLUGIN_ID_RE = /^[a-z0-9][a-z0-9._-]{1,63}$/i;
+function isValidPluginId(id) {
+  const clean = String(id || '').trim();
+  return VALID_PLUGIN_ID_RE.test(clean) && !clean.endsWith('.') && !clean.includes('..');
+}
 const PROXY_PROCESS_NAMES = [
   'clash-verge',
   'flclash',
@@ -1090,8 +1094,8 @@ function normalizePluginPackageManifest(manifest) {
     throw new Error(`不支持的插件包 schemaVersion: ${schemaVersion}`);
   }
   const id = String(manifest.id || '').trim();
-  if (!VALID_PLUGIN_ID_RE.test(id)) {
-    throw new Error('插件包 id 仅允许字母、数字、连字符和下划线（长度 2-64）');
+  if (!isValidPluginId(id)) {
+    throw new Error('插件包 id 仅允许字母、数字、点号、连字符和下划线（长度 2-64，不能以点号结尾或含 ..）');
   }
   const command = String(manifest.command || '').trim();
   if (!command) {

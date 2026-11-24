@@ -1,0 +1,36 @@
+name: Sync Approved Upstream Plugin Releases
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-releases:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check upstream releases and run security scan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/sync-third-party-releases.mjs
+
+      - name: Commit updated catalogs
+        run: |
+          git config user.name "agy-dock-bot"
+          git config user.email "bot@haoanlab.xyz"
+          git add plugins-catalog.json third-party-catalog.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(marketplace): sync upstream plugin releases"
+            git push origin HEAD:main
+          fi

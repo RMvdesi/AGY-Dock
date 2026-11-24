@@ -60,7 +60,19 @@ export function parseArgsText(text: string): string[] {
 }
 
 export function validatePluginId(pluginId: string): boolean {
-  return /^[a-z0-9][a-z0-9-_]{1,63}$/i.test(pluginId.trim());
+  const clean = pluginId.trim();
+  if (!/^[a-z0-9][a-z0-9._-]{1,63}$/i.test(clean)) return false;
+  if (clean.endsWith(".") || clean.includes("..")) return false;
+  return true;
+}
+
+export function isCompanionPluginType(pluginType: string | null | undefined): boolean {
+  const t = String(pluginType ?? "").trim().toLowerCase();
+  return t === "node-companion" || t === "ps-companion" || t === "py-companion" || t === "companion";
+}
+
+export function formatPluginCategoryLabel(pluginType: string | null | undefined): string {
+  return isCompanionPluginType(pluginType) ? "后台伴随" : "界面增强";
 }
 
 export function isSupportedPackagePath(filePath: string): boolean {

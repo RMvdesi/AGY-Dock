@@ -1,14 +1,16 @@
 use crate::config::{
-    load_config, read_text_strip_bom, save_config, save_plugin_entry, strip_utf8_bom,
-    valid_log_id_re, valid_plugin_id_re, write_json_atomic,
+    is_valid_plugin_id, load_config, read_text_strip_bom, save_config, save_plugin_entry,
+    strip_utf8_bom, valid_log_id_re, write_json_atomic,
 };
 use crate::detector::{match_plugin_processes, resolve_process_match_needle, snapshot_processes};
 use crate::models::{
     BundledPackageInfo, ClearLogResult, DeleteLocalDirResult, InstallPackageResult,
     LocalPluginPackage, LogTailResult, NativePluginInfo, NativeSidecar, PluginConfigEntry,
     PluginLogInfo, PluginPayload, PluginSettingsPageData, SavePluginSettingsResult,
+    SecurityScanReport,
 };
 use crate::paths::ManagerPaths;
+use crate::security_scan;
 use crate::supervisor;
 use regex::Regex;
 use reqwest::Client;
@@ -121,8 +123,8 @@ pub fn normalize_plugin_package_manifest(manifest: &Value) -> Result<PluginConfi
         .map(str::trim)
         .unwrap_or("")
         .to_string();
-    if !valid_plugin_id_re().is_match(&plugin_id) {
-        return Err("插件包 id 仅允许字母、数字、连字符和下划线（长度 2-64）".to_string());
+    if !is_valid_plugin_id(&plugin_id) {
+        return Err("插件包 id 仅允许字母、数字、点号、连字符和下划线（长度 2-64，不能以点号结尾或含 ..）".to_string());
     }
 
     let command = obj
@@ -232,6 +234,8 @@ pub fn normalize_plugin_package_manifest(manifest: &Value) -> Result<PluginConfi
         process_match,
         has_settings,
         settings_entry,
+        install_source: None,
+        upstream_repo: None,
         env: None,
         extra: HashMap::new(),
     };
@@ -477,7 +481,7 @@ pub async fn fetch_health(client: &Client, health_url: Option<&str>) -> Option<V
     resp.json::<Value>().await.ok()
 }
 
-fn read_manifest_from_zip<R: Read + std::io::Seek>(
+pub fn read_manifest_from_zip<R: Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<(PluginConfigEntry, Vec<(usize, String, bool)>, String), String> {
     let mut validated: Vec<(usize, String, bool)> = Vec::new();
@@ -553,6 +557,18 @@ pub fn install_plugin_archive<R: Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
     overwrite: bool,
     source_label: &str,
+) -> Result<InstallPackageResult, String> {
+    install_plugin_archive_with_meta(paths, archive, overwrite, source_label, None, None, None)
+}
+
+pub fn install_plugin_archive_with_meta<R: Read + std::io::Seek>(
+    paths: &ManagerPaths,
+    archive: &mut ZipArchive<R>,
+    overwrite: bool,
+    source_label: &str,
+    install_source: Option<String>,
+    upstream_repo: Option<String>,
+    scan_report: Option<SecurityScanReport>,
 ) -> Result<InstallPackageResult, String> {
     let (entry, validated, strip_prefix) = read_manifest_from_zip(archive)?;
     let plugin_id = entry.id.clone();
@@ -692,6 +708,8 @@ pub fn install_plugin_archive<R: Read + std::io::Seek>(
         auto_attach: entry.auto_attach,
         has_settings: entry.has_settings.or(dir_manifest.has_settings),
         settings_entry: entry.settings_entry.clone().or(dir_manifest.settings_entry),
+        install_source,
+        upstream_repo,
     };
     let mode = if existing_idx.is_some() { "edit" } else { "create" };
     let saved = save_plugin_entry(paths, mode, payload)?;
@@ -706,6 +724,7 @@ pub fn install_plugin_archive<R: Read + std::io::Seek>(
         plugin: saved,
         installed_dir: resolved_dest.to_string_lossy().into_owned(),
         replaced,
+        scan_report,
     })
 }
 
@@ -715,15 +734,75 @@ pub fn install_plugin_package_bytes(
     overwrite: bool,
     source_label: &str,
 ) -> Result<InstallPackageResult, String> {
+    install_plugin_package_bytes_with_options(paths, bytes, overwrite, source_label, None, None, true)
+}
+
+pub fn install_plugin_package_bytes_with_options(
+    paths: &ManagerPaths,
+    bytes: &[u8],
+    overwrite: bool,
+    source_label: &str,
+    install_source: Option<String>,
+    upstream_repo: Option<String>,
+    allow_low_risk: bool,
+) -> Result<InstallPackageResult, String> {
+    let report = security_scan::scan_zip_bytes(bytes)?;
+    if report.blocked {
+        let reasons: Vec<String> = report
+            .findings
+            .iter()
+            .filter(|f| f.severity == "high")
+            .map(|f| format!("{}（{}）", f.title, f.file))
+            .collect();
+        return Err(format!("安全筛查拦截：{}", reasons.join("；")));
+    }
+    if report.risk_level == "low" && !allow_low_risk {
+        return Err(format!("安全提示：{}", report.summary));
+    }
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = ZipArchive::new(cursor).map_err(|e| format!("无效的 ZIP 插件包: {e}"))?;
-    install_plugin_archive(paths, &mut archive, overwrite, source_label)
+    install_plugin_archive_with_meta(
+        paths,
+        &mut archive,
+        overwrite,
+        source_label,
+        install_source,
+        upstream_repo,
+        Some(report),
+    )
+}
+
+pub fn scan_local_plugin_package(package_path: &str) -> Result<SecurityScanReport, String> {
+    let raw_pkg = PathBuf::from(package_path.trim());
+    if !raw_pkg.is_file() {
+        return Err(format!("插件安装包不存在: {}", raw_pkg.display()));
+    }
+    let ext = raw_pkg
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
+        .unwrap_or_default();
+    if !SUPPORTED_PACKAGE_EXTS.iter().any(|e| *e == ext) {
+        return Err(format!(
+            "不支持的插件包格式: .{ext}（仅支持 .zip / .agypkg / .agy-plugin）"
+        ));
+    }
+    security_scan::scan_zip_file(&raw_pkg)
 }
 
 pub fn install_plugin_package(
     paths: &ManagerPaths,
     package_path: &str,
     overwrite: bool,
+) -> Result<InstallPackageResult, String> {
+    install_plugin_package_with_options(paths, package_path, overwrite, true)
+}
+
+pub fn install_plugin_package_with_options(
+    paths: &ManagerPaths,
+    package_path: &str,
+    overwrite: bool,
+    allow_low_risk: bool,
 ) -> Result<InstallPackageResult, String> {
     let raw_pkg = PathBuf::from(package_path.trim());
     if !raw_pkg.is_file() {
@@ -740,9 +819,16 @@ pub fn install_plugin_package(
         ));
     }
 
-    let file = fs::File::open(&raw_pkg).map_err(|e| format!("打开插件包失败: {e}"))?;
-    let mut archive = ZipArchive::new(file).map_err(|e| format!("无效的 ZIP 插件包: {e}"))?;
-    install_plugin_archive(paths, &mut archive, overwrite, "local-file")
+    let bytes = fs::read(&raw_pkg).map_err(|e| format!("读取插件包失败: {e}"))?;
+    install_plugin_package_bytes_with_options(
+        paths,
+        &bytes,
+        overwrite,
+        "local-file",
+        Some("local-file".to_string()),
+        None,
+        allow_low_risk,
+    )
 }
 
 pub fn list_bundled_packages(paths: &ManagerPaths) -> Vec<BundledPackageInfo> {
@@ -1409,7 +1495,7 @@ pub fn load_plugin_settings_page(
     plugin_id: &str,
 ) -> Result<PluginSettingsPageData, String> {
     let clean_id = plugin_id.trim();
-    if !valid_plugin_id_re().is_match(clean_id) {
+    if !is_valid_plugin_id(clean_id) {
         return Err("非法的插件 ID".to_string());
     }
     let cfg = load_config(paths)?;
@@ -1489,7 +1575,7 @@ pub fn save_plugin_settings(
     restart_if_running: bool,
 ) -> Result<SavePluginSettingsResult, String> {
     let clean_id = plugin_id.trim();
-    if !valid_plugin_id_re().is_match(clean_id) {
+    if !is_valid_plugin_id(clean_id) {
         return Err("非法的插件 ID".to_string());
     }
     if !settings.is_object() {
@@ -1672,6 +1758,8 @@ mod tests {
             process_match: None,
             has_settings: None,
             settings_entry: None,
+            install_source: None,
+            upstream_repo: None,
             env: None,
             extra: HashMap::new(),
         });
@@ -1738,6 +1826,8 @@ mod tests {
             process_match: Some(r"agy-quota-badge\index.js".to_string()),
             has_settings: None,
             settings_entry: None,
+            install_source: None,
+            upstream_repo: None,
             env: None,
             extra: HashMap::new(),
         });

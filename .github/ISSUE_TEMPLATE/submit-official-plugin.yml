@@ -1,0 +1,43 @@
+name: 申请上架官方插件市场（人工审核）
+description: 首次提交插件到 AGY Dock 官方认证市场，审核通过后后续新版将自动同步
+title: "[官方认证插件申请] "
+labels: ["plugin-official-submit"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请填写你的 GitHub 插件仓库信息。系统会自动检查最新 Release 压缩包格式与代码安全性，确认无误后将创建审核单，由仓库维护者点击通过即可进入「官方市场」。
+        **注意**：
+        - 插件包 `agy-plugin.json` 中的 `id` 必须使用 `你的GitHub用户名.插件名`（例如 `zhangsan.auto-cleaner`）。
+        - 不允许包含 `.exe` / `.dll` 等黑盒可执行文件；如需关闭卡死子进程，请使用管理器安全代办接口 (`AGY_BRIDGE_URL`)。
+  - type: input
+    id: repo
+    attributes:
+      label: GitHub 仓库地址 (repo)
+      description: 你的公开插件仓库地址（如 https://github.com/zhangsan/my-plugin 或 zhangsan/my-plugin）
+      placeholder: "https://github.com/username/repo"
+    validations:
+      required: true
+  - type: input
+    id: plugin_name
+    attributes:
+      label: 插件名称 (plugin_name)
+      description: 显示在市场列表中的中文或英文名称
+      placeholder: "例如：子代理进程自动清理助手"
+    validations:
+      required: true
+  - type: input
+    id: author
+    attributes:
+      label: 作者展示名 (author)
+      description: 可选，留空时默认显示仓库拥有者名称
+      placeholder: "例如：张三"
+    validations:
+      required: false
+  - type: textarea
+    id: description
+    attributes:
+      label: 一句话功能简介 (description)
+      description: 简洁说明插件用途，方便用户在市场中了解
+    validations:
+      required: false

@@ -1,0 +1,81 @@
+name: Plugin Marketplace Submission
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  process-submission:
+    if: >-
+      contains(github.event.issue.labels.*.name, 'plugin-third-party-submit') ||
+      contains(github.event.issue.labels.*.name, 'plugin-official-submit')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Process and scan plugin submission
+        id: scan
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          if echo '${{ join(github.event.issue.labels.*.name, ',') }}' | grep -q 'plugin-official-submit'; then
+            echo "track=official" >> "$GITHUB_OUTPUT"
+            node scripts/process-plugin-submission.mjs --official
+          else
+            echo "track=third-party" >> "$GITHUB_OUTPUT"
+            node scripts/process-plugin-submission.mjs --third-party
+          fi
+
+      - name: Publish approved third-party listing or open official review PR
+        if: steps.scan.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          TRACK: ${{ steps.scan.outputs.track }}
+        run: |
+          git config user.name "agy-dock-bot"
+          git config user.email "bot@haoanlab.xyz"
+          PLUGIN_ID=$(node -e "const r=JSON.parse(require('fs').readFileSync('submission-result.json','utf8'));console.log(r.lockedId)")
+          RISK=$(node -e "const r=JSON.parse(require('fs').readFileSync('submission-result.json','utf8'));console.log(r.scanReport.riskLevel)")
+          SUMMARY=$(node -e "const r=JSON.parse(require('fs').readFileSync('submission-result.json','utf8'));console.log(r.scanReport.summary)")
+          if [ "$TRACK" = "third-party" ]; then
+            git add third-party-catalog.json
+            git diff --cached --quiet || git commit -m "chore(marketplace): publish third-party plugin ${PLUGIN_ID}"
+            git push origin HEAD:main
+            gh issue comment "$ISSUE_NUMBER" --body "✅ 已通过自动安全筛查并上架到公共 **第三方市场**！\n\n- 插件 ID：\`${PLUGIN_ID}\`\n- 风险等级：\`${RISK}\`\n- 筛查结论：${SUMMARY}"
+            gh issue close "$ISSUE_NUMBER"
+          else
+            BRANCH="plugin-submit/${PLUGIN_ID//./-}-${ISSUE_NUMBER}"
+            git checkout -b "$BRANCH"
+            git add plugins-catalog.json
+            git commit -m "feat(marketplace): add official plugin candidate ${PLUGIN_ID}"
+            git push origin "$BRANCH" --force
+            PR_URL=$(gh pr create --base main --head "$BRANCH" --title "上架官方市场申请：${PLUGIN_ID}" --body "关联申请单 #${ISSUE_NUMBER}\n\n- 插件 ID：\`${PLUGIN_ID}\`\n- 安全筛查：\`${RISK}\` — ${SUMMARY}\n\n合并本 PR 后即正式收录到官方市场，后续新版将自动同步。")
+            gh issue comment "$ISSUE_NUMBER" --body "🔍 已完成初审压缩包校验与代码安全筛查，并已为你创建官方审核单：${PR_URL}\n\n等待仓库维护者确认通过后即可正式进入官方市场。"
+          fi
+
+      - name: Comment rejection details on failure
+        if: steps.scan.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          if [ -f submission-result.json ]; then
+            SUMMARY=$(node -e "const r=JSON.parse(require('fs').readFileSync('submission-result.json','utf8'));console.log(r.scanReport.summary + '\n' + r.scanReport.findings.map(f=>'- ['+f.severity+'] '+f.title+' ('+f.file+'): '+f.detail).join('\n'))")
+            gh issue comment "$ISSUE_NUMBER" --body "❌ 自动安全筛查未通过，已拦截本次快捷上架。\n\n${SUMMARY}\n\n如插件确属正当功能需要，请改用「申请上架官方插件市场（人工审核）」模板提交。"
+          else
+            gh issue comment "$ISSUE_NUMBER" --body "❌ 无法完成自动打包校验，请检查仓库是否为公开仓库、Release 是否包含合规范的 \`.zip\` 安装包及 \`agy-plugin.json\`（且 \`id\` 须以你的 GitHub 用户名开头）。"
+          fi

@@ -77,7 +77,7 @@ export function PluginEditorModal({
     const cleanId = id.trim();
     const cleanCmd = command.trim();
     if (!validatePluginId(cleanId)) {
-      setValidationError("插件 ID 仅支持字母、数字、连字符和下划线（2–64 位）。");
+      setValidationError("插件 ID 仅支持字母、数字、点号、连字符和下划线（2–64 位，不能以点号结尾或含 ..）。");
       return;
     }
     if (!cleanCmd) {
@@ -151,7 +151,7 @@ export function PluginEditorModal({
                     value={id}
                     onChange={(e) => setId(e.target.value)}
                     readOnly={mode === "edit"}
-                    placeholder="my-plugin"
+                    placeholder="zhangsan.my-plugin"
                     className="agy-input w-full font-mono-code"
                     autoFocus={mode === "create"}
                   />
@@ -193,9 +193,12 @@ export function PluginEditorModal({
                       onChange={(e) => setType(e.target.value)}
                       className="agy-input w-full cursor-pointer"
                     >
-                      <option value="custom-cdp">custom-cdp</option>
-                      <option value="node-cdp">node-cdp</option>
-                      <option value="exe-cdp">exe-cdp</option>
+                      <option value="node-cdp">界面增强 · Node (node-cdp)</option>
+                      <option value="custom-cdp">界面增强 · 自定义 (custom-cdp)</option>
+                      <option value="node-companion">后台伴随 · Node (node-companion)</option>
+                      <option value="ps-companion">后台伴随 · PowerShell (ps-companion)</option>
+                      <option value="py-companion">后台伴随 · Python (py-companion)</option>
+                      <option value="exe-cdp">旧版可执行 (exe-cdp)</option>
                     </select>
                   </FormRow>
                 </div>
@@ -225,7 +228,7 @@ export function PluginEditorModal({
                     rows={2}
                     value={launchArgsText}
                     onChange={(e) => setLaunchArgsText(e.target.value)}
-                    placeholder="支持 {CDP_PORT} / {BASE_DIR}（换行或空格分隔）"
+                    placeholder="支持 {CDP_PORT} / {BASE_DIR} / {AGY_PID}（换行或空格分隔）"
                     className="agy-input w-full resize-none font-mono-code text-[12px]"
                   />
                 </FormRow>

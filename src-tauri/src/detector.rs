@@ -1354,6 +1354,8 @@ mod tests {
             process_match: process_match.map(|s| s.to_string()),
             has_settings: None,
             settings_entry: None,
+            install_source: None,
+            upstream_repo: None,
             env: None,
             extra: HashMap::new(),
         }

@@ -18,7 +18,12 @@ import {
   SpringSwitch,
   StatusPill,
 } from "../components/MotionPrimitives";
-import { formatBytes, formatVersionText, isSupportedPackagePath } from "../lib/format";
+import {
+  formatBytes,
+  formatPluginCategoryLabel,
+  formatVersionText,
+  isSupportedPackagePath,
+} from "../lib/format";
 import type {
   PluginRuntimeStatus,
   RemoteMarketplaceResult,
@@ -249,8 +254,17 @@ export function MyPluginsPage({
                             <span className="truncate text-[13.5px] font-semibold text-[var(--text-primary)]">
                               {p.name || p.id}
                             </span>
+                            <span
+                              title={`插件编号：${p.id}`}
+                              className="shrink-0 rounded-md border border-[var(--border-hairline)] bg-[var(--bg-surface-soft)] px-1.5 py-[1px] font-mono-code text-[11px] text-[var(--text-muted)]"
+                            >
+                              ID: {p.id}
+                            </span>
                             <span className="shrink-0 rounded-md bg-[var(--bg-subtle)] px-1.5 py-[1px] font-mono-code text-[11px] font-medium text-[var(--text-muted)]">
                               {formatVersionText(p.version)}
+                            </span>
+                            <span className="hidden shrink-0 rounded-md bg-[var(--bg-subtle)] px-1.5 py-[1px] text-[10.5px] text-[var(--text-muted)] sm:inline">
+                              {formatPluginCategoryLabel(p.type)}
                             </span>
                             {p.hasSettings && (
                               <span

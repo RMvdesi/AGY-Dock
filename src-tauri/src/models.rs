@@ -117,11 +117,25 @@ pub struct UpdateConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct CustomMarketplaceRepo {
+    pub repo: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct MarketplaceConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub catalog_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_party_catalog_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_repos: Vec<CustomMarketplaceRepo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_check_on_startup: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -163,6 +177,10 @@ pub struct PluginConfigEntry {
     pub has_settings: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings_entry: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_repo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
     #[serde(flatten)]
@@ -271,6 +289,10 @@ pub struct PluginRuntimeStatus {
     pub has_settings: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings_entry: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_repo: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -529,6 +551,37 @@ pub struct PluginPayload {
     pub has_settings: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings_entry: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_repo: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SecurityFinding {
+    pub severity: String,
+    pub code: String,
+    pub title: String,
+    pub detail: String,
+    #[serde(default)]
+    pub file: String,
+    #[serde(default)]
+    pub targets: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SecurityScanReport {
+    pub risk_level: String,
+    pub blocked: bool,
+    pub summary: String,
+    #[serde(default)]
+    pub external_domains: Vec<String>,
+    #[serde(default)]
+    pub findings: Vec<SecurityFinding>,
+    #[serde(default)]
+    pub scanned_files: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -557,6 +610,8 @@ pub struct InstallPackageResult {
     pub plugin: PluginConfigEntry,
     pub installed_dir: String,
     pub replaced: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan_report: Option<SecurityScanReport>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -577,6 +632,20 @@ pub struct RemotePluginInfo {
     pub published_at: String,
     pub release_tag: String,
     pub source: String,
+    #[serde(default)]
+    pub tier: String,
+    #[serde(default)]
+    pub source_repo: String,
+    #[serde(default)]
+    pub upstream_repo: String,
+    #[serde(default)]
+    pub risk_level: String,
+    #[serde(default)]
+    pub risk_findings: Vec<SecurityFinding>,
+    #[serde(default)]
+    pub conflict_blocked: bool,
+    #[serde(default)]
+    pub conflict_reason: String,
     pub installed: bool,
     pub installed_version: String,
     pub has_update: bool,
@@ -595,8 +664,30 @@ pub struct RemoteMarketplaceResult {
     pub update_count: usize,
     pub new_plugin_count: usize,
     pub uninstalled_count: usize,
+    #[serde(default)]
+    pub official_count: usize,
+    #[serde(default)]
+    pub third_party_count: usize,
+    #[serde(default)]
+    pub custom_repos: Vec<CustomMarketplaceRepo>,
     pub message: String,
     pub checked_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThirdPartyPreflightResult {
+    pub repo: String,
+    pub owner: String,
+    pub locked_id: String,
+    pub plugin_name: String,
+    pub version: String,
+    pub download_url: String,
+    pub sha256: String,
+    pub size: u64,
+    pub scan_report: SecurityScanReport,
+    pub official_issue_url: String,
+    pub third_party_issue_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,5 +1,6 @@
 pub mod account_quota;
 pub mod agy_config;
+pub mod bridge;
 pub mod cli;
 pub mod commands;
 pub mod config;
@@ -8,6 +9,7 @@ pub mod marketplace;
 pub mod models;
 pub mod paths;
 pub mod plugins;
+pub mod security_scan;
 pub mod shortcuts;
 pub mod storage;
 mod storage_inventory;
@@ -81,21 +83,32 @@ fn spawn_background_monitor(app: tauri::AppHandle, paths: ManagerPaths) {
                 was_cdp_ready = cdp_ready;
 
                 if main_cnt > 0 {
-                    saw_antigravity_main = true;
-                } else if saw_antigravity_main {
-                    if !auto_cleanup {
-                        saw_antigravity_main = false;
-                    } else {
-                        tokio::time::sleep(Duration::from_millis(1200)).await;
-                        let p_chk = paths.clone();
-                        let confirm = tokio::task::spawn_blocking(move || {
-                            detector::get_active_cdp_info(&p_chk, None)
+                    if !saw_antigravity_main {
+                        saw_antigravity_main = true;
+                        let p_comp = paths.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            supervisor::attach_companion_plugins(&p_comp, "attach")
                         })
-                        .await
-                        .unwrap_or_default();
+                        .await;
+                    }
+                } else if saw_antigravity_main {
+                    tokio::time::sleep(Duration::from_millis(1200)).await;
+                    let p_chk = paths.clone();
+                    let confirm = tokio::task::spawn_blocking(move || {
+                        detector::get_active_cdp_info(&p_chk, None)
+                    })
+                    .await
+                    .unwrap_or_default();
 
-                        if confirm.main_process_count == 0 {
-                            saw_antigravity_main = false;
+                    if confirm.main_process_count == 0 {
+                        saw_antigravity_main = false;
+                        let p_stop_comp = paths.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            supervisor::stop_companion_plugins(&p_stop_comp)
+                        })
+                        .await;
+
+                        if auto_cleanup {
                             let p_has = paths.clone();
                             let has_targets = confirm.child_process_count > 0
                                 || confirm.sidecar_process_count > 0
@@ -241,6 +254,7 @@ pub fn run() {
                 });
             }
 
+            bridge::start_bridge_server(paths.clone());
             spawn_background_monitor(app.handle().clone(), paths);
             Ok(())
         })
@@ -276,6 +290,7 @@ pub fn run() {
             commands::delete_plugin_entry,
             commands::delete_local_plugin_dir,
             commands::install_plugin_package,
+            commands::scan_local_plugin_package,
             commands::detect_antigravity,
             commands::save_antigravity_exe,
             commands::detect_system_proxy,
@@ -307,6 +322,10 @@ pub fn run() {
             commands::fetch_remote_marketplace,
             commands::install_remote_plugin,
             commands::mark_marketplace_seen,
+            commands::add_custom_marketplace_repo,
+            commands::remove_custom_marketplace_repo,
+            commands::toggle_custom_marketplace_repo,
+            commands::preflight_third_party_submission,
             commands::load_plugin_settings_page,
             commands::save_plugin_settings,
             commands::toggle_native_plugin,

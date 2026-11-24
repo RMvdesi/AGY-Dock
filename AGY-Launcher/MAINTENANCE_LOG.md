@@ -6,6 +6,37 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.9.0] - 2026-11-24 17:50
+
+### Summary
+
+- Implement dual-track plugin marketplace (`官方市场` + `第三方市场`) with 5-minute automatic refresh (`src-tauri/src/commands.rs`, `src-tauri/src/marketplace.rs`, `src/pages/MarketplacePage.tsx`):
+  - Separate official plugins (`plugins-catalog.json`, first-time manual approval + automatic upstream release sync) from third-party plugins (`third-party-catalog.json` + user-added custom GitHub repositories) with a permanent third-party disclaimer banner, quick-submit preflight modal, and private repo manager.
+  - Enforce `<github-owner>.<slug>` plugin IDs for third-party plugins (preserving legacy IDs for existing first-party plugins), display plugin IDs visibly in Marketplace, My Plugins, and detail views, and enforce official priority + source-lock protection against cross-source overwrite hijacking.
+- Add two-tier automated code security screening (`src-tauri/src/security_scan.rs`, `scripts/scan-plugin.mjs`, `src/components/SecurityScanModal.tsx`):
+  - Strictly block `.exe`/native binaries, `exe-cdp`, direct process killing (`taskkill`/`Stop-Process`/`TerminateProcess`), obfuscated execution, credential theft, and destructive OS commands; disclose low-risk external network calls, conversation data access, and safe manager bridge usage.
+- Add background companion plugin types (`node-companion`, `ps-companion`, `py-companion`) and loopback Manager Safe Process Bridge (`src-tauri/src/bridge.rs`, `src-tauri/src/supervisor.rs`, `src-tauri/src/lib.rs`):
+  - Auto-start enabled companion plugins when Antigravity runs (even without CDP) and auto-stop them when Antigravity exits.
+  - Provide authenticated local endpoints (`GET /v1/antigravity/status`, `GET /v1/antigravity/children`, `POST /v1/antigravity/children/kill`) strictly whitelisting Antigravity sidecar/language_server/subagent child processes while rejecting main windows, AGY Dock, managed plugins, and Windows system processes.
+- Add GitHub Issue submission templates, automated submission & 15-minute upstream release sync workflows, fully English `AGY-Launcher/PLUGIN_INTEGRATION.md` specification, and synchronized `v2.9.0` version manifests.
+
+### Files Changed
+
+- `src-tauri/src/security_scan.rs`, `src-tauri/src/bridge.rs` — new automated plugin ZIP security scanner and whitelisted process-control loopback bridge.
+- `src-tauri/src/{config,models,plugins,marketplace,supervisor,commands,detector,lib}.rs` — dot-ID validation, dual-track marketplace & source-lock, pre-install security gate, 5-minute marketplace timer, and companion lifecycle hooks.
+- `src/components/SecurityScanModal.tsx`, `src/components/PluginEditorModal.tsx`, `src/pages/{MarketplacePage,MyPluginsPage,ExternalPluginDetailPage}.tsx`, `src/{App,lib/format,lib/ipc,types/ipc}.ts*` — Official/Third-Party marketplace UI, disclaimer, plugin ID badges, risk disclosure modal, quick-submit & custom repo modals, and companion type selectors.
+- `scripts/{scan-plugin,process-plugin-submission,sync-third-party-releases}.mjs`, `.github/ISSUE_TEMPLATE/*.yml`, `.github/workflows/{plugin-submission,sync-third-party-releases}.yml`, `third-party-catalog.json` — GitHub automated submission, scanning, and upstream release sync pipeline.
+- `AGY-Launcher/PLUGIN_INTEGRATION.md`, `AGY-Launcher/scripts/package_plugins.py`, `AGY-Launcher/lib/process-manager.mjs`, `AGY-Launcher/server.mjs`, `VERSION`, `package.json`, `src-tauri/{Cargo.toml,tauri.conf.json}` — documentation updates and `2.9.0` version sync.
+
+### Verification
+
+- `npx tsc --noEmit` & `npm run build` -> passed (`dist/index.html`, `dist/assets/index-DUWI_7Jz.css`, `dist/assets/index-C4O9Idsg.js`).
+- `cargo test --manifest-path src-tauri/Cargo.toml` -> 59 passed, 0 failed.
+- `node scripts/scan-plugin.mjs` on all 4 official `.zip` packages in `AGY-Launcher/plugin-packages/` -> all 4 passed (`[NONE]`).
+- `node --test AGY-Launcher/tests/process-manager.test.mjs` -> 10 passed, 0 failed.
+
+---
+
 ## [v2.8.1] - 2026-11-21 17:17
 
 ### Summary

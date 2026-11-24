@@ -792,6 +792,9 @@ export function ExternalPluginDetailPage({
                 <SpecRow label="作者" value={plugin.author?.trim() || "未填写"} />
                 <SpecRow label="当前版本" value={formatVersionText(plugin.version)} mono />
                 <SpecRow label="运行类型" value={plugin.type || "custom-cdp"} mono />
+                {plugin.installSource && (
+                  <SpecRow label="安装来源" value={plugin.installSource} mono />
+                )}
                 {plugin.homepage?.trim() && (
                   <SpecRow
                     label="项目主页"

@@ -6,13 +6,14 @@ use crate::events;
 use crate::marketplace;
 use crate::models::{
     AccountQuotaSnapshot, AntigravityDetectResult, AutoProxyResult, BundledPackageInfo,
-    CleanupResult, ClearLogResult, DeleteLocalDirResult, DeletePluginResult, FileFilterSpec,
-    InstallPackageResult, LaunchResult, LifecycleConfig, LocalPluginPackage, LogTailResult,
-    McpEndpointProbe, McpOverview, NativePluginInfo, OverviewSnapshot, PluginActionResult,
-    PluginConfigEntry, PluginPayload, PluginSettingsPageData, ProjectRulesOverview, ProxyConfig,
-    RemoteMarketplaceResult, RuleFileContent, RuleFileInfo, SaveExeResult,
-    SavePluginSettingsResult, ShortcutResult, SkillDetail, SkillInfo, StorageDeleteResult,
-    StorageTreeResponse, SystemProxyDetection, TokenUsageSnapshot, UiPreferences, UpdateCheckResult,
+    CleanupResult, ClearLogResult, CustomMarketplaceRepo, DeleteLocalDirResult, DeletePluginResult,
+    FileFilterSpec, InstallPackageResult, LaunchResult, LifecycleConfig, LocalPluginPackage,
+    LogTailResult, McpEndpointProbe, McpOverview, NativePluginInfo, OverviewSnapshot,
+    PluginActionResult, PluginConfigEntry, PluginPayload, PluginSettingsPageData,
+    ProjectRulesOverview, ProxyConfig, RemoteMarketplaceResult, RuleFileContent, RuleFileInfo,
+    SaveExeResult, SavePluginSettingsResult, SecurityScanReport, ShortcutResult, SkillDetail,
+    SkillInfo, StorageDeleteResult, StorageTreeResponse, SystemProxyDetection,
+    ThirdPartyPreflightResult, TokenUsageSnapshot, UiPreferences, UpdateCheckResult,
 };
 use crate::paths::ManagerPaths;
 use crate::plugins;
@@ -255,15 +256,28 @@ pub async fn delete_local_plugin_dir(
 }
 
 #[tauri::command]
+pub async fn scan_local_plugin_package(package_path: String) -> Result<SecurityScanReport, String> {
+    tokio::task::spawn_blocking(move || plugins::scan_local_plugin_package(&package_path))
+        .await
+        .map_err(|e| format!("安全扫描插件包失败: {e}"))?
+}
+
+#[tauri::command]
 pub async fn install_plugin_package(
     app: AppHandle,
     state: State<'_, AppState>,
     package_path: String,
     overwrite: Option<bool>,
+    allow_low_risk: Option<bool>,
 ) -> Result<InstallPackageResult, String> {
     let paths = state.paths.clone();
     let res = tokio::task::spawn_blocking(move || {
-        plugins::install_plugin_package(&paths, &package_path, overwrite.unwrap_or(true))
+        plugins::install_plugin_package_with_options(
+            &paths,
+            &package_path,
+            overwrite.unwrap_or(true),
+            allow_low_risk.unwrap_or(true),
+        )
     })
     .await
     .map_err(|e| format!("安装插件包失败: {e}"))??;
@@ -438,10 +452,10 @@ pub async fn create_all_shortcuts(state: State<'_, AppState>) -> Result<Shortcut
         .map_err(|e| format!("创建桌面快捷方式失败: {e}"))?
 }
 
-const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(15 * 60);
+const MARKETPLACE_CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 fn automatic_update_timer() -> tokio::time::Interval {
-    let mut timer = tokio::time::interval(UPDATE_CHECK_INTERVAL);
+    let mut timer = tokio::time::interval(MARKETPLACE_CHECK_INTERVAL);
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     timer
 }
@@ -453,16 +467,23 @@ pub fn start_automatic_update_checks(app: AppHandle, state: State<'_, AppState>)
     }
     tauri::async_runtime::spawn(async move {
         let mut timer = automatic_update_timer();
+        let mut tick_idx: u64 = 0;
         loop {
             timer.tick().await;
             let state = app.state::<AppState>();
-            tokio::join!(
-                async {
-                    let result = run_update_check(&state).await;
-                    let _ = app.emit(events::UPDATE_AVAILABLE, result);
-                },
-                refresh_remote_marketplace(&app, &state, true)
-            );
+            let run_app_update = tick_idx % 3 == 0;
+            tick_idx = tick_idx.wrapping_add(1);
+            if run_app_update {
+                tokio::join!(
+                    async {
+                        let result = run_update_check(&state).await;
+                        let _ = app.emit(events::UPDATE_AVAILABLE, result);
+                    },
+                    refresh_remote_marketplace(&app, &state, true)
+                );
+            } else {
+                refresh_remote_marketplace(&app, &state, true).await;
+            }
         }
     });
 }
@@ -472,12 +493,12 @@ mod update_schedule_tests {
     use super::*;
 
     #[tokio::test(start_paused = true)]
-    async fn automatic_check_ticks_at_startup_and_every_fifteen_minutes() {
+    async fn automatic_check_ticks_at_startup_and_every_five_minutes() {
         let started = tokio::time::Instant::now();
         let mut timer = automatic_update_timer();
         assert_eq!(timer.tick().await, started);
-        assert_eq!(timer.tick().await - started, Duration::from_secs(900));
-        assert_eq!(timer.tick().await - started, Duration::from_secs(1800));
+        assert_eq!(timer.tick().await - started, Duration::from_secs(300));
+        assert_eq!(timer.tick().await - started, Duration::from_secs(600));
     }
 }
 
@@ -864,12 +885,82 @@ pub async fn install_remote_plugin(
     plugin_id: String,
     download_url: String,
     sha256: Option<String>,
+    install_source: Option<String>,
+    upstream_repo: Option<String>,
+    allow_low_risk: Option<bool>,
 ) -> Result<InstallPackageResult, String> {
-    let res =
-        marketplace::install_remote_plugin(&state.paths, plugin_id, download_url, sha256).await?;
+    let res = marketplace::install_remote_plugin_with_options(
+        &state.paths,
+        plugin_id,
+        download_url,
+        sha256,
+        install_source,
+        upstream_repo,
+        allow_low_risk.unwrap_or(true),
+    )
+    .await?;
     emit_overview_bg(&app, &state.paths).await;
     refresh_marketplace_cache_if_present(&app, &state).await;
     Ok(res)
+}
+
+#[tauri::command]
+pub async fn add_custom_marketplace_repo(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_input: String,
+    label: Option<String>,
+) -> Result<Vec<CustomMarketplaceRepo>, String> {
+    let paths = state.paths.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        marketplace::add_custom_marketplace_repo(&paths, &repo_input, label)
+    })
+    .await
+    .map_err(|e| format!("添加私人仓库失败: {e}"))??;
+    refresh_remote_marketplace(&app, &state, true).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn remove_custom_marketplace_repo(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo: String,
+) -> Result<Vec<CustomMarketplaceRepo>, String> {
+    let paths = state.paths.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        marketplace::remove_custom_marketplace_repo(&paths, &repo)
+    })
+    .await
+    .map_err(|e| format!("移除私人仓库失败: {e}"))??;
+    refresh_remote_marketplace(&app, &state, true).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn toggle_custom_marketplace_repo(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo: String,
+    enabled: bool,
+) -> Result<Vec<CustomMarketplaceRepo>, String> {
+    let paths = state.paths.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        marketplace::toggle_custom_marketplace_repo(&paths, &repo, enabled)
+    })
+    .await
+    .map_err(|e| format!("切换私人仓库状态失败: {e}"))??;
+    refresh_remote_marketplace(&app, &state, true).await;
+    Ok(res)
+}
+
+#[tauri::command]
+pub async fn preflight_third_party_submission(
+    state: State<'_, AppState>,
+    repo_input: String,
+    plugin_name: String,
+) -> Result<ThirdPartyPreflightResult, String> {
+    marketplace::preflight_third_party_submission(&state.paths, repo_input, plugin_name).await
 }
 
 #[tauri::command]

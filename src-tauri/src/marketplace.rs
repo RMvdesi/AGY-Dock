@@ -1,13 +1,15 @@
-use crate::config::{load_config, save_config, valid_plugin_id_re};
+use crate::config::{is_valid_plugin_id, load_config, save_config};
 use crate::models::{
-    AppConfig, InstallPackageResult, MarketplaceConfig, PluginConfigEntry, RemoteMarketplaceResult,
-    RemotePluginInfo, APP_VERSION, DEFAULT_MARKETPLACE_REPO,
+    AppConfig, CustomMarketplaceRepo, InstallPackageResult, MarketplaceConfig, PluginConfigEntry,
+    RemoteMarketplaceResult, RemotePluginInfo, SecurityFinding, ThirdPartyPreflightResult,
+    APP_VERSION, DEFAULT_MARKETPLACE_REPO,
 };
 use crate::paths::ManagerPaths;
 use crate::plugins::{
-    discover_local_plugins, install_plugin_package_bytes, read_plugin_dir_manifest,
-    resolve_plugin_version, SUPPORTED_PACKAGE_EXTS,
+    discover_local_plugins, install_plugin_package_bytes_with_options, read_manifest_from_zip,
+    read_plugin_dir_manifest, resolve_plugin_version, SUPPORTED_PACKAGE_EXTS,
 };
+use crate::security_scan;
 use chrono::Local;
 use regex::Regex;
 use reqwest::Client;
@@ -127,6 +129,112 @@ fn resolve_catalog_url(cfg: &AppConfig, repo: &str) -> String {
     }
 }
 
+fn resolve_third_party_catalog_url(cfg: &AppConfig, repo: &str) -> String {
+    let custom = cfg
+        .marketplace
+        .as_ref()
+        .and_then(|m| m.third_party_catalog_url.as_deref())
+        .map(str::trim)
+        .unwrap_or("");
+    if !custom.is_empty() {
+        custom.to_string()
+    } else {
+        format!("https://raw.githubusercontent.com/{repo}/main/third-party-catalog.json")
+    }
+}
+
+pub fn parse_github_repo_slug(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("请输入 GitHub 仓库地址（例如 https://github.com/作者/项目 或 作者/项目）".to_string());
+    }
+    let candidate = if let Some(rest) = trimmed
+        .strip_prefix("https://github.com/")
+        .or_else(|| trimmed.strip_prefix("http://github.com/"))
+    {
+        let parts: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+        if parts.len() < 2 {
+            return Err("GitHub 仓库链接格式无效".to_string());
+        }
+        format!("{}/{}", parts[0], parts[1].trim_end_matches(".git"))
+    } else {
+        trimmed.trim_end_matches(".git").to_string()
+    };
+
+    if !repo_slug_re().is_match(&candidate) {
+        return Err("仓库格式无效，请输入「用户名/仓库名」或完整 GitHub 仓库网址".to_string());
+    }
+    Ok(candidate)
+}
+
+fn repo_owner_lower(repo: &str) -> String {
+    repo.split('/')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn enforce_owner_prefixed_id(id: &str, owner_lower: &str) -> String {
+    let prefix = format!("{owner_lower}.");
+    if id.to_ascii_lowercase().starts_with(&prefix) {
+        id.to_string()
+    } else {
+        let candidate = format!("{prefix}{id}");
+        if is_valid_plugin_id(&candidate) {
+            candidate
+        } else {
+            id.to_string()
+        }
+    }
+}
+
+fn id_matches_owner_prefix(id: &str, owner_lower: &str) -> bool {
+    if owner_lower.is_empty() {
+        return false;
+    }
+    id.to_ascii_lowercase().starts_with(&format!("{owner_lower}."))
+}
+
+fn parse_risk_findings(val: Option<&Value>) -> Vec<SecurityFinding> {
+    let Some(arr) = val.and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in arr {
+        let Some(obj) = item.as_object() else {
+            continue;
+        };
+        let title = sanitize_json_str(obj.get("title"));
+        if title.is_empty() {
+            continue;
+        }
+        let targets = obj
+            .get("targets")
+            .and_then(|v| v.as_array())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|t| t.as_str())
+                    .map(sanitize_text)
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.push(SecurityFinding {
+            severity: {
+                let s = sanitize_json_str(obj.get("severity"));
+                if s.is_empty() { "low".to_string() } else { s }
+            },
+            code: sanitize_json_str(obj.get("code")),
+            title,
+            detail: sanitize_json_str(obj.get("detail")),
+            file: sanitize_json_str(obj.get("file")),
+            targets,
+        });
+    }
+    out
+}
+
 fn default_owner_author(repo: &str) -> String {
     let owner = repo.split('/').next().unwrap_or("").trim();
     if owner.eq_ignore_ascii_case("haoan33") {
@@ -185,7 +293,16 @@ pub fn is_newer_semver(candidate: &str, current: &str) -> bool {
     }
 }
 
+#[cfg(test)]
 fn parse_catalog_json(bytes: &[u8]) -> Result<Vec<RemotePluginInfo>, String> {
+    parse_catalog_json_with_tier(bytes, "official", "")
+}
+
+fn parse_catalog_json_with_tier(
+    bytes: &[u8],
+    default_tier: &str,
+    default_repo: &str,
+) -> Result<Vec<RemotePluginInfo>, String> {
     let val: Value =
         serde_json::from_slice(bytes).map_err(|e| format!("解析插件市场目录 JSON 失败: {e}"))?;
     let Some(obj) = val.as_object() else {
@@ -203,18 +320,62 @@ fn parse_catalog_json(bytes: &[u8]) -> Result<Vec<RemotePluginInfo>, String> {
         return Err("插件市场目录缺少 plugins 数组".to_string());
     };
 
+    let catalog_repo = sanitize_json_str(obj.get("repository"));
     let fallback_updated_at = sanitize_json_str(obj.get("updatedAt"));
     let mut items = Vec::new();
     for entry in arr {
         let Some(p) = entry.as_object() else {
             continue;
         };
-        let id = sanitize_json_str(p.get("id"));
-        if !valid_plugin_id_re().is_match(&id) {
+        let mut id = sanitize_json_str(p.get("id"));
+        if !is_valid_plugin_id(&id) {
             continue;
         }
         let download_url = sanitize_json_str(p.get("downloadUrl"));
         if validate_download_url(&download_url).is_err() {
+            continue;
+        }
+        let upstream_repo = sanitize_json_str(p.get("upstreamRepo"));
+        let source_repo = if !upstream_repo.is_empty() {
+            upstream_repo.clone()
+        } else if !default_repo.is_empty() {
+            default_repo.to_string()
+        } else {
+            catalog_repo.clone()
+        };
+        let tier = {
+            let t = sanitize_json_str(p.get("tier"));
+            if t.is_empty() {
+                default_tier.to_string()
+            } else {
+                t
+            }
+        };
+        if tier == "custom" && !source_repo.is_empty() {
+            let owner = repo_owner_lower(&source_repo);
+            if !owner.is_empty() {
+                id = enforce_owner_prefixed_id(&id, &owner);
+            }
+        } else if tier == "third-party" && !upstream_repo.is_empty() {
+            let owner = repo_owner_lower(&upstream_repo);
+            if !id_matches_owner_prefix(&id, &owner) {
+                continue;
+            }
+        }
+        let risk_findings = parse_risk_findings(p.get("riskFindings"));
+        let risk_level = {
+            let rl = sanitize_json_str(p.get("riskLevel")).to_ascii_lowercase();
+            if matches!(rl.as_str(), "none" | "low" | "high") {
+                rl
+            } else if risk_findings.iter().any(|f| f.severity == "high") {
+                "high".to_string()
+            } else if !risk_findings.is_empty() {
+                "low".to_string()
+            } else {
+                "none".to_string()
+            }
+        };
+        if risk_level == "high" && tier == "third-party" {
             continue;
         }
         let name = {
@@ -265,6 +426,13 @@ fn parse_catalog_json(bytes: &[u8]) -> Result<Vec<RemotePluginInfo>, String> {
             published_at,
             release_tag,
             source: "catalog".to_string(),
+            tier,
+            source_repo,
+            upstream_repo,
+            risk_level,
+            risk_findings,
+            conflict_blocked: false,
+            conflict_reason: String::new(),
             installed: false,
             installed_version: String::new(),
             has_update: false,
@@ -293,12 +461,12 @@ fn parse_release_asset_identity(filename: &str) -> Option<(String, String)> {
     if let Some(caps) = asset_name_version_re().captures(stem) {
         let id = caps.get(1)?.as_str().to_string();
         let ver = caps.get(2)?.as_str().to_string();
-        if valid_plugin_id_re().is_match(&id) {
+        if is_valid_plugin_id(&id) {
             return Some((id, ver));
         }
     }
 
-    if valid_plugin_id_re().is_match(stem) {
+    if is_valid_plugin_id(stem) {
         return Some((stem.to_string(), String::new()));
     }
 
@@ -372,10 +540,20 @@ fn build_fallback_metadata_hints(paths: &ManagerPaths, cfg: &AppConfig) -> HashM
     hints
 }
 
+#[cfg(test)]
 fn parse_github_releases_json(
     bytes: &[u8],
     repo: &str,
     hints: &HashMap<String, FallbackMetadataHint>,
+) -> Result<Vec<RemotePluginInfo>, String> {
+    parse_github_releases_json_with_tier(bytes, repo, hints, "official")
+}
+
+fn parse_github_releases_json_with_tier(
+    bytes: &[u8],
+    repo: &str,
+    hints: &HashMap<String, FallbackMetadataHint>,
+    tier: &str,
 ) -> Result<Vec<RemotePluginInfo>, String> {
     let val: Value = serde_json::from_slice(bytes)
         .map_err(|e| format!("解析 GitHub Releases JSON 失败: {e}"))?;
@@ -384,6 +562,7 @@ fn parse_github_releases_json(
     };
 
     let owner_author = default_owner_author(repo);
+    let owner_lower = repo_owner_lower(repo);
     let repo_homepage = format!("https://github.com/{repo}");
     let mut best_by_id: HashMap<String, RemotePluginInfo> = HashMap::new();
 
@@ -407,8 +586,13 @@ fn parse_github_releases_json(
                 continue;
             };
             let asset_name = sanitize_json_str(a_obj.get("name"));
-            let Some((id, version)) = parse_release_asset_identity(&asset_name) else {
+            let Some((raw_id, version)) = parse_release_asset_identity(&asset_name) else {
                 continue;
+            };
+            let id = if tier == "custom" && !owner_lower.is_empty() {
+                enforce_owner_prefixed_id(&raw_id, &owner_lower)
+            } else {
+                raw_id
             };
             let download_url = sanitize_json_str(a_obj.get("browser_download_url"));
             if validate_download_url(&download_url).is_err() {
@@ -468,6 +652,17 @@ fn parse_github_releases_json(
                 published_at: published_at.clone(),
                 release_tag: release_tag.clone(),
                 source: "github-release".to_string(),
+                tier: tier.to_string(),
+                source_repo: repo.to_string(),
+                upstream_repo: if tier == "official" {
+                    String::new()
+                } else {
+                    repo.to_string()
+                },
+                risk_level: "none".to_string(),
+                risk_findings: Vec::new(),
+                conflict_blocked: false,
+                conflict_reason: String::new(),
                 installed: false,
                 installed_version: String::new(),
                 has_update: false,
@@ -497,6 +692,28 @@ fn parse_github_releases_json(
     Ok(best_by_id.into_values().collect())
 }
 
+fn item_install_source_key(item: &RemotePluginInfo) -> String {
+    if item.tier == "custom" {
+        format!("custom-repo:{}", item.source_repo.to_ascii_lowercase())
+    } else if item.tier == "third-party" {
+        format!("third-party:{}", item.source_repo.to_ascii_lowercase())
+    } else {
+        "official".to_string()
+    }
+}
+
+fn is_source_compatible_for_update(installed_entry: Option<&PluginConfigEntry>, item: &RemotePluginInfo) -> bool {
+    let Some(entry) = installed_entry else {
+        return true;
+    };
+    let item_src = item_install_source_key(item);
+    match entry.install_source.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        None => item.tier == "official",
+        Some("local-file") => true,
+        Some(existing_src) => existing_src.eq_ignore_ascii_case(&item_src),
+    }
+}
+
 pub fn refresh_marketplace_snapshot_status(
     paths: &ManagerPaths,
     snapshot: &mut RemoteMarketplaceResult,
@@ -518,13 +735,28 @@ pub fn refresh_marketplace_snapshot_status(
         .iter()
         .map(|p| (p.id.to_lowercase(), p))
         .collect();
+    let official_ids: HashSet<String> = snapshot
+        .plugins
+        .iter()
+        .filter(|p| p.tier == "official" || p.tier.is_empty())
+        .map(|p| p.id.to_lowercase())
+        .collect();
 
     let mut update_count = 0usize;
     let mut new_plugin_count = 0usize;
     let mut uninstalled_count = 0usize;
+    let mut official_count = 0usize;
+    let mut third_party_count = 0usize;
 
     for item in &mut snapshot.plugins {
+        if item.tier.is_empty() {
+            item.tier = "official".to_string();
+        }
         let key = item.id.to_lowercase();
+        if item.tier != "official" && official_ids.contains(&key) {
+            item.conflict_blocked = true;
+            item.conflict_reason = "与官方商店插件编号冲突，已禁止覆盖".to_string();
+        }
         let installed_entry = installed_map.get(&key).copied();
         let dir_candidate = paths.plugins_dir.join(&item.id);
         let dir_exists = dir_candidate.is_dir();
@@ -539,10 +771,13 @@ pub fn refresh_marketplace_snapshot_status(
         } else {
             String::new()
         };
+        let source_ok = is_source_compatible_for_update(installed_entry, item);
         let has_update = installed
+            && !item.conflict_blocked
+            && source_ok
             && !item.version.trim().is_empty()
             && is_newer_semver(&item.version, &installed_version);
-        let is_new = !installed && !seen_ids.contains(&key);
+        let is_new = !installed && !item.conflict_blocked && !seen_ids.contains(&key);
         let status = if has_update {
             "update-available"
         } else if installed {
@@ -565,8 +800,13 @@ pub fn refresh_marketplace_snapshot_status(
         if is_new {
             new_plugin_count += 1;
         }
-        if !installed {
+        if !installed && !item.conflict_blocked {
             uninstalled_count += 1;
+        }
+        if item.tier == "official" {
+            official_count += 1;
+        } else {
+            third_party_count += 1;
         }
     }
 
@@ -585,6 +825,8 @@ pub fn refresh_marketplace_snapshot_status(
     snapshot.update_count = update_count;
     snapshot.new_plugin_count = new_plugin_count;
     snapshot.uninstalled_count = uninstalled_count;
+    snapshot.official_count = official_count;
+    snapshot.third_party_count = third_party_count;
 }
 
 async fn read_bounded_bytes(resp: reqwest::Response, max_bytes: usize) -> Result<Vec<u8>, String> {
@@ -607,45 +849,21 @@ pub async fn fetch_remote_marketplace(paths: &ManagerPaths) -> RemoteMarketplace
     fetch_remote_marketplace_with_api_base(paths, DEFAULT_GITHUB_API_BASE).await
 }
 
-async fn fetch_remote_marketplace_with_api_base(
-    paths: &ManagerPaths,
-    github_api_base: &str,
-) -> RemoteMarketplaceResult {
-    let checked_at = Local::now().to_rfc3339();
-    let cfg = load_config(paths).unwrap_or_default();
-    let repo = resolve_marketplace_repo(&cfg);
-    let catalog_url = resolve_catalog_url(&cfg, &repo);
-
-    let err_result = |msg: String| RemoteMarketplaceResult {
-        status: "error".to_string(),
-        source: "none".to_string(),
-        repository: repo.clone(),
-        catalog_url: catalog_url.clone(),
-        plugins: Vec::new(),
-        update_count: 0,
-        new_plugin_count: 0,
-        uninstalled_count: 0,
-        message: msg,
-        checked_at: checked_at.clone(),
-    };
-
-    if let Err(err) = validate_marketplace_url(&catalog_url) {
-        return err_result(err);
-    }
-    let api_base = github_api_base.trim_end_matches('/');
+async fn fetch_repo_plugins(
+    client: &Client,
+    repo: &str,
+    catalog_url: &str,
+    api_base: &str,
+    tier: &str,
+    hints: &HashMap<String, FallbackMetadataHint>,
+) -> Result<(String, Vec<RemotePluginInfo>), String> {
+    validate_marketplace_url(catalog_url)?;
     let releases_url = format!("{api_base}/repos/{repo}/releases?per_page=10");
-    if let Err(err) = validate_marketplace_url(&releases_url) {
-        return err_result(err);
-    }
-
-    let client = match build_http_client(&cfg, 8) {
-        Ok(c) => c,
-        Err(err) => return err_result(err),
-    };
+    validate_marketplace_url(&releases_url)?;
 
     let primary_err;
     match client
-        .get(&catalog_url)
+        .get(catalog_url)
         .timeout(Duration::from_secs(8))
         .header("Accept", "application/json")
         .header("Cache-Control", "no-store")
@@ -655,23 +873,8 @@ async fn fetch_remote_marketplace_with_api_base(
         Ok(resp) => {
             if resp.status().is_success() {
                 match read_bounded_bytes(resp, MAX_CATALOG_BYTES).await {
-                    Ok(bytes) => match parse_catalog_json(&bytes) {
-                        Ok(plugins) => {
-                            let mut out = RemoteMarketplaceResult {
-                                status: "ok".to_string(),
-                                source: "catalog".to_string(),
-                                repository: repo.clone(),
-                                catalog_url: catalog_url.clone(),
-                                plugins,
-                                update_count: 0,
-                                new_plugin_count: 0,
-                                uninstalled_count: 0,
-                                message: "已从 GitHub 插件目录同步最新清单".to_string(),
-                                checked_at,
-                            };
-                            refresh_marketplace_snapshot_status(paths, &mut out);
-                            return out;
-                        }
+                    Ok(bytes) => match parse_catalog_json_with_tier(&bytes, tier, repo) {
+                        Ok(plugins) => return Ok(("catalog".to_string(), plugins)),
                         Err(err) => primary_err = err,
                     },
                     Err(err) => primary_err = err,
@@ -683,7 +886,6 @@ async fn fetch_remote_marketplace_with_api_base(
         Err(err) => primary_err = format!("请求插件目录失败: {err}"),
     }
 
-    // Fallback: GitHub Releases API
     match client
         .get(&releases_url)
         .timeout(Duration::from_secs(8))
@@ -695,44 +897,125 @@ async fn fetch_remote_marketplace_with_api_base(
         Ok(resp) => {
             if !resp.status().is_success() {
                 let code = resp.status().as_u16();
-                return err_result(format!(
+                return Err(format!(
                     "远程市场检查失败（目录: {primary_err}；Releases API 返回 HTTP {code}）"
                 ));
             }
-            match read_bounded_bytes(resp, MAX_RELEASES_BYTES).await {
-                Ok(bytes) => {
-                    let hints = build_fallback_metadata_hints(paths, &cfg);
-                    match parse_github_releases_json(&bytes, &repo, &hints) {
-                        Ok(plugins) => {
-                            let mut out = RemoteMarketplaceResult {
-                                status: "ok".to_string(),
-                                source: "github-release".to_string(),
-                                repository: repo.clone(),
-                                catalog_url: catalog_url.clone(),
-                                plugins,
-                                update_count: 0,
-                                new_plugin_count: 0,
-                                uninstalled_count: 0,
-                                message: "已从 GitHub Releases 扫描可用插件包".to_string(),
-                                checked_at,
-                            };
-                            refresh_marketplace_snapshot_status(paths, &mut out);
-                            out
-                        }
-                        Err(err) => err_result(format!(
-                            "远程市场检查失败（目录: {primary_err}；Releases: {err}）"
-                        )),
-                    }
-                }
-                Err(err) => err_result(format!(
-                    "远程市场检查失败（目录: {primary_err}；Releases: {err}）"
-                )),
-            }
+            let bytes = read_bounded_bytes(resp, MAX_RELEASES_BYTES)
+                .await
+                .map_err(|err| format!("远程市场检查失败（目录: {primary_err}；Releases: {err}）"))?;
+            let plugins = parse_github_releases_json_with_tier(&bytes, repo, hints, tier)
+                .map_err(|err| format!("远程市场检查失败（目录: {primary_err}；Releases: {err}）"))?;
+            Ok(("github-release".to_string(), plugins))
         }
-        Err(err) => err_result(format!(
+        Err(err) => Err(format!(
             "无法连接 GitHub 市场（目录: {primary_err}；Releases: {err}）"
         )),
     }
+}
+
+async fn fetch_remote_marketplace_with_api_base(
+    paths: &ManagerPaths,
+    github_api_base: &str,
+) -> RemoteMarketplaceResult {
+    let checked_at = Local::now().to_rfc3339();
+    let cfg = load_config(paths).unwrap_or_default();
+    let repo = resolve_marketplace_repo(&cfg);
+    let catalog_url = resolve_catalog_url(&cfg, &repo);
+    let third_party_catalog_url = resolve_third_party_catalog_url(&cfg, &repo);
+    let custom_repos = cfg
+        .marketplace
+        .as_ref()
+        .map(|m| m.custom_repos.clone())
+        .unwrap_or_default();
+
+    let err_result = |msg: String| RemoteMarketplaceResult {
+        status: "error".to_string(),
+        source: "none".to_string(),
+        repository: repo.clone(),
+        catalog_url: catalog_url.clone(),
+        plugins: Vec::new(),
+        update_count: 0,
+        new_plugin_count: 0,
+        uninstalled_count: 0,
+        official_count: 0,
+        third_party_count: 0,
+        custom_repos: custom_repos.clone(),
+        message: msg,
+        checked_at: checked_at.clone(),
+    };
+
+    let api_base = github_api_base.trim_end_matches('/');
+    let client = match build_http_client(&cfg, 8) {
+        Ok(c) => c,
+        Err(err) => return err_result(err),
+    };
+    let hints = build_fallback_metadata_hints(paths, &cfg);
+
+    let (source, mut all_plugins) =
+        match fetch_repo_plugins(&client, &repo, &catalog_url, api_base, "official", &hints).await {
+            Ok(pair) => pair,
+            Err(err) => return err_result(err),
+        };
+
+    // Fetch public third-party catalog (best-effort; missing 404 is non-fatal)
+    if validate_marketplace_url(&third_party_catalog_url).is_ok() {
+        if let Ok(resp) = client
+            .get(&third_party_catalog_url)
+            .timeout(Duration::from_secs(8))
+            .header("Accept", "application/json")
+            .header("Cache-Control", "no-store")
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                if let Ok(bytes) = read_bounded_bytes(resp, MAX_CATALOG_BYTES).await {
+                    if let Ok(tp_items) = parse_catalog_json_with_tier(&bytes, "third-party", &repo) {
+                        all_plugins.extend(tp_items);
+                    }
+                }
+            }
+        }
+    }
+
+    // Fetch enabled custom third-party repositories
+    for crepo in &custom_repos {
+        if !crepo.enabled {
+            continue;
+        }
+        let slug = crepo.repo.trim();
+        if !repo_slug_re().is_match(slug) {
+            continue;
+        }
+        let custom_cat = format!("https://raw.githubusercontent.com/{slug}/main/plugins-catalog.json");
+        if let Ok((_, items)) = fetch_repo_plugins(&client, slug, &custom_cat, api_base, "custom", &hints).await {
+            all_plugins.extend(items);
+        }
+    }
+
+    let message = if source == "catalog" {
+        "已从 GitHub 插件目录同步最新清单".to_string()
+    } else {
+        "已从 GitHub Releases 扫描可用插件包".to_string()
+    };
+
+    let mut out = RemoteMarketplaceResult {
+        status: "ok".to_string(),
+        source,
+        repository: repo,
+        catalog_url,
+        plugins: all_plugins,
+        update_count: 0,
+        new_plugin_count: 0,
+        uninstalled_count: 0,
+        official_count: 0,
+        third_party_count: 0,
+        custom_repos,
+        message,
+        checked_at,
+    };
+    refresh_marketplace_snapshot_status(paths, &mut out);
+    out
 }
 
 pub async fn install_remote_plugin(
@@ -741,12 +1024,48 @@ pub async fn install_remote_plugin(
     download_url: String,
     sha256: Option<String>,
 ) -> Result<InstallPackageResult, String> {
+    install_remote_plugin_with_options(paths, plugin_id, download_url, sha256, None, None, true).await
+}
+
+pub async fn install_remote_plugin_with_options(
+    paths: &ManagerPaths,
+    plugin_id: String,
+    download_url: String,
+    sha256: Option<String>,
+    install_source: Option<String>,
+    upstream_repo: Option<String>,
+    allow_low_risk: bool,
+) -> Result<InstallPackageResult, String> {
     let clean_id = plugin_id.trim().to_string();
-    if !valid_plugin_id_re().is_match(&clean_id) {
+    if !is_valid_plugin_id(&clean_id) {
         return Err("无效的插件 ID".to_string());
     }
     let parsed_url = validate_download_url(&download_url)?;
-    let cfg = load_config(paths).unwrap_or_default();
+    let cfg = load_config(paths)?;
+    let target_source = install_source
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("official")
+        .to_string();
+
+    if let Some(existing) = cfg.plugins.iter().find(|p| p.id.eq_ignore_ascii_case(&clean_id)) {
+        let existing_src = existing
+            .install_source
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("official");
+        if existing_src == "official" && target_source != "official" {
+            return Err("安全保护：该编号属于官方已安装插件，禁止被第三方来源覆盖".to_string());
+        }
+        if existing_src != "local-file" && !existing_src.eq_ignore_ascii_case(&target_source) {
+            return Err(format!(
+                "安全保护：该插件已绑定来源 ({existing_src})，禁止从其他来源 ({target_source}) 自动覆盖"
+            ));
+        }
+    }
+
     let client = build_http_client(&cfg, 120)?;
 
     let mut resp = client
@@ -795,12 +1114,236 @@ pub async fn install_remote_plugin(
     let p_clone = paths.clone();
     let source_url = parsed_url.to_string();
     let install_res = tokio::task::spawn_blocking(move || {
-        install_plugin_package_bytes(&p_clone, &buf, true, &source_url)
+        install_plugin_package_bytes_with_options(
+            &p_clone,
+            &buf,
+            true,
+            &source_url,
+            Some(target_source),
+            upstream_repo,
+            allow_low_risk,
+        )
     })
     .await
     .map_err(|e| format!("安装远程插件任务失败: {e}"))??;
 
     Ok(install_res)
+}
+
+pub fn add_custom_marketplace_repo(
+    paths: &ManagerPaths,
+    repo_input: &str,
+    label: Option<String>,
+) -> Result<Vec<CustomMarketplaceRepo>, String> {
+    let repo = parse_github_repo_slug(repo_input)?;
+    let mut cfg = load_config(paths)?;
+    let mut mkt = cfg.marketplace.unwrap_or_default();
+    let clean_label = label
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&repo)
+        .to_string();
+    if let Some(existing) = mkt
+        .custom_repos
+        .iter_mut()
+        .find(|r| r.repo.eq_ignore_ascii_case(&repo))
+    {
+        existing.enabled = true;
+        if !clean_label.is_empty() {
+            existing.label = clean_label;
+        }
+    } else {
+        mkt.custom_repos.push(CustomMarketplaceRepo {
+            repo,
+            label: clean_label,
+            enabled: true,
+        });
+    }
+    let out = mkt.custom_repos.clone();
+    cfg.marketplace = Some(mkt);
+    save_config(paths, &cfg)?;
+    Ok(out)
+}
+
+pub fn remove_custom_marketplace_repo(
+    paths: &ManagerPaths,
+    repo_input: &str,
+) -> Result<Vec<CustomMarketplaceRepo>, String> {
+    let target = parse_github_repo_slug(repo_input).unwrap_or_else(|_| repo_input.trim().to_string());
+    let mut cfg = load_config(paths)?;
+    let mut mkt = cfg.marketplace.unwrap_or_default();
+    mkt.custom_repos
+        .retain(|r| !r.repo.eq_ignore_ascii_case(&target));
+    let out = mkt.custom_repos.clone();
+    cfg.marketplace = Some(mkt);
+    save_config(paths, &cfg)?;
+    Ok(out)
+}
+
+pub fn toggle_custom_marketplace_repo(
+    paths: &ManagerPaths,
+    repo_input: &str,
+    enabled: bool,
+) -> Result<Vec<CustomMarketplaceRepo>, String> {
+    let target = parse_github_repo_slug(repo_input).unwrap_or_else(|_| repo_input.trim().to_string());
+    let mut cfg = load_config(paths)?;
+    let mut mkt = cfg.marketplace.unwrap_or_default();
+    for r in &mut mkt.custom_repos {
+        if r.repo.eq_ignore_ascii_case(&target) {
+            r.enabled = enabled;
+        }
+    }
+    let out = mkt.custom_repos.clone();
+    cfg.marketplace = Some(mkt);
+    save_config(paths, &cfg)?;
+    Ok(out)
+}
+
+fn url_encode_query(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for byte in raw.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char);
+            }
+            b' ' => out.push_str("%20"),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+pub async fn preflight_third_party_submission(
+    paths: &ManagerPaths,
+    repo_input: String,
+    plugin_name: String,
+) -> Result<ThirdPartyPreflightResult, String> {
+    let repo = parse_github_repo_slug(&repo_input)?;
+    let owner = repo_owner_lower(&repo);
+    let clean_name = sanitize_text(&plugin_name);
+    if clean_name.is_empty() {
+        return Err("请填写插件名称".to_string());
+    }
+
+    let cfg = load_config(paths).unwrap_or_default();
+    let market_repo = resolve_marketplace_repo(&cfg);
+    let client = build_http_client(&cfg, 20)?;
+    let releases_url = format!("{DEFAULT_GITHUB_API_BASE}/repos/{repo}/releases?per_page=5");
+    let resp = client
+        .get(&releases_url)
+        .header("Accept", "application/vnd.github+json")
+        .header("Cache-Control", "no-store")
+        .send()
+        .await
+        .map_err(|e| format!("请求仓库发布版本失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "无法读取仓库 {repo} 的发布版本（HTTP {}），请确认仓库为公开且已发布 Release 安装包",
+            resp.status().as_u16()
+        ));
+    }
+    let rel_bytes = read_bounded_bytes(resp, MAX_RELEASES_BYTES).await?;
+    let releases: Value =
+        serde_json::from_slice(&rel_bytes).map_err(|e| format!("解析发布版本列表失败: {e}"))?;
+    let arr = releases
+        .as_array()
+        .ok_or_else(|| "GitHub 发布版本列表格式无效".to_string())?;
+
+    let mut chosen: Option<(String, String, String, u64)> = None;
+    for rel in arr {
+        let Some(ro) = rel.as_object() else { continue };
+        if ro.get("draft").and_then(|v| v.as_bool()) == Some(true) {
+            continue;
+        }
+        let Some(assets) = ro.get("assets").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for asset in assets {
+            let Some(ao) = asset.as_object() else { continue };
+            let name = sanitize_json_str(ao.get("name"));
+            if let Some((raw_id, ver)) = parse_release_asset_identity(&name) {
+                let dl = sanitize_json_str(ao.get("browser_download_url"));
+                if validate_download_url(&dl).is_ok() {
+                    let sz = ao.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+                    chosen = Some((raw_id, ver, dl, sz));
+                    break;
+                }
+            }
+        }
+        if chosen.is_some() {
+            break;
+        }
+    }
+
+    let (asset_id, asset_ver, download_url, asset_size) = chosen.ok_or_else(|| {
+        format!("未在仓库 {repo} 的最新发布版本中找到合规的插件 .zip 安装包")
+    })?;
+
+    let pkg_resp = client
+        .get(&download_url)
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|e| format!("下载插件压缩包失败: {e}"))?;
+    if !pkg_resp.status().is_success() {
+        return Err(format!("下载插件压缩包失败 (HTTP {})", pkg_resp.status().as_u16()));
+    }
+    let pkg_bytes = read_bounded_bytes(pkg_resp, MAX_DOWNLOAD_BYTES).await?;
+    let size = pkg_bytes.len() as u64;
+    let mut hasher = Sha256::new();
+    hasher.update(&pkg_bytes);
+    let sha256 = format!("{:x}", hasher.finalize());
+
+    let cursor = std::io::Cursor::new(&pkg_bytes);
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| format!("解析插件压缩包失败: {e}"))?;
+    let (entry, _, _) = read_manifest_from_zip(&mut archive)?;
+    let slug_part = entry
+        .id
+        .split_once('.')
+        .map(|(_, s)| s)
+        .unwrap_or(entry.id.as_str());
+    let locked_id = format!("{owner}.{slug_part}");
+    if !is_valid_plugin_id(&locked_id) {
+        return Err(format!("自动生成的插件 ID ({locked_id}) 不符合规范"));
+    }
+    let version = entry
+        .version
+        .filter(|v| !v.is_empty())
+        .or_else(|| (!asset_ver.is_empty()).then_some(asset_ver))
+        .unwrap_or_else(|| "1.0.0".to_string());
+    let scan_report = security_scan::scan_zip_bytes(&pkg_bytes)?;
+
+    let title_tp = url_encode_query(&format!("[第三方插件上架] {clean_name} ({locked_id})"));
+    let title_off = url_encode_query(&format!("[官方认证插件申请] {clean_name} ({locked_id})"));
+    let third_party_issue_url = format!(
+        "https://github.com/{market_repo}/issues/new?template=submit-third-party-plugin.yml&title={title_tp}&repo={}&plugin_name={}&description={}",
+        url_encode_query(&repo),
+        url_encode_query(&clean_name),
+        url_encode_query(&entry.description),
+    );
+    let official_issue_url = format!(
+        "https://github.com/{market_repo}/issues/new?template=submit-official-plugin.yml&title={title_off}&repo={}&plugin_name={}&description={}",
+        url_encode_query(&repo),
+        url_encode_query(&clean_name),
+        url_encode_query(&entry.description),
+    );
+
+    let _ = (asset_id, asset_size);
+    Ok(ThirdPartyPreflightResult {
+        repo,
+        owner,
+        locked_id,
+        plugin_name: clean_name,
+        version,
+        download_url,
+        sha256,
+        size,
+        scan_report,
+        official_issue_url,
+        third_party_issue_url,
+    })
 }
 
 pub fn mark_marketplace_seen(
@@ -829,6 +1372,7 @@ pub fn mark_marketplace_seen(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::install_plugin_package_bytes;
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -1116,6 +1660,8 @@ mod tests {
         cfg.marketplace = Some(MarketplaceConfig {
             repository: Some("haoan33/AGY-Dock".to_string()),
             catalog_url: Some(format!("http://{addr}/catalog.json")),
+            third_party_catalog_url: None,
+            custom_repos: Vec::new(),
             auto_check_on_startup: Some(true),
             seen_plugin_ids: Vec::new(),
         });
@@ -1200,6 +1746,167 @@ mod tests {
             .contains("\"keep\""));
 
         let _ = server_handle.join();
+        let _ = fs::remove_dir_all(&paths.base_dir);
+    }
+
+    #[tokio::test]
+    async fn dual_track_conflict_and_source_lock_protection() {
+        let paths = create_temp_paths("conflict");
+        // Seed an official installed plugin
+        let mut zip_off = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw = zip::ZipWriter::new(&mut zip_off);
+            let opts = SimpleFileOptions::default();
+            zw.start_file("agy-plugin.json", opts).unwrap();
+            zw.write_all(
+                br#"{
+                    "schemaVersion": 1,
+                    "id": "office-viewer",
+                    "name": "Official Office Viewer",
+                    "version": "1.2.0",
+                    "type": "node-cdp",
+                    "command": "node",
+                    "launchArgs": ["plugins\\office-viewer\\index.js"]
+                }"#,
+            )
+            .unwrap();
+            zw.start_file("index.js", opts).unwrap();
+            zw.write_all(b"console.log('official');").unwrap();
+            zw.finish().unwrap();
+        }
+        install_plugin_package_bytes_with_options(
+            &paths,
+            &zip_off.into_inner(),
+            true,
+            "official-seed",
+            Some("official".to_string()),
+            None,
+            true,
+        )
+        .unwrap();
+
+        // Snapshot containing an official item and a colliding custom item
+        let mut snap = RemoteMarketplaceResult {
+            status: "ok".to_string(),
+            source: "catalog".to_string(),
+            repository: "haoan33/AGY-Dock".to_string(),
+            catalog_url: String::new(),
+            plugins: vec![
+                RemotePluginInfo {
+                    id: "office-viewer".to_string(),
+                    name: "Office Viewer".to_string(),
+                    version: "1.2.0".to_string(),
+                    author: "HaoAn".to_string(),
+                    description: String::new(),
+                    plugin_type: "node-cdp".to_string(),
+                    download_url: "https://github.com/haoan33/AGY-Dock/releases/download/v2.4.0/office-viewer-v1.2.0.zip".to_string(),
+                    homepage: String::new(),
+                    changelog: String::new(),
+                    sha256: String::new(),
+                    size: 100,
+                    published_at: String::new(),
+                    release_tag: String::new(),
+                    source: "catalog".to_string(),
+                    tier: "official".to_string(),
+                    source_repo: "haoan33/AGY-Dock".to_string(),
+                    upstream_repo: String::new(),
+                    risk_level: "none".to_string(),
+                    risk_findings: vec![],
+                    conflict_blocked: false,
+                    conflict_reason: String::new(),
+                    installed: false,
+                    installed_version: String::new(),
+                    has_update: false,
+                    is_new: false,
+                    status: "available".to_string(),
+                },
+                RemotePluginInfo {
+                    id: "office-viewer".to_string(),
+                    name: "Fake Office Viewer".to_string(),
+                    version: "9.9.9".to_string(),
+                    author: "attacker".to_string(),
+                    description: String::new(),
+                    plugin_type: "node-cdp".to_string(),
+                    download_url: "https://github.com/attacker/fake/releases/download/v9.9.9/office-viewer-v9.9.9.zip".to_string(),
+                    homepage: String::new(),
+                    changelog: String::new(),
+                    sha256: String::new(),
+                    size: 100,
+                    published_at: String::new(),
+                    release_tag: String::new(),
+                    source: "catalog".to_string(),
+                    tier: "custom".to_string(),
+                    source_repo: "attacker/fake".to_string(),
+                    upstream_repo: "attacker/fake".to_string(),
+                    risk_level: "none".to_string(),
+                    risk_findings: vec![],
+                    conflict_blocked: false,
+                    conflict_reason: String::new(),
+                    installed: false,
+                    installed_version: String::new(),
+                    has_update: false,
+                    is_new: false,
+                    status: "available".to_string(),
+                },
+                RemotePluginInfo {
+                    id: "zhangsan.cleaner".to_string(),
+                    name: "Subagent Cleaner".to_string(),
+                    version: "1.0.0".to_string(),
+                    author: "zhangsan".to_string(),
+                    description: String::new(),
+                    plugin_type: "node-companion".to_string(),
+                    download_url: "https://github.com/zhangsan/cleaner/releases/download/v1.0.0/zhangsan.cleaner-v1.0.0.zip".to_string(),
+                    homepage: String::new(),
+                    changelog: String::new(),
+                    sha256: String::new(),
+                    size: 100,
+                    published_at: String::new(),
+                    release_tag: String::new(),
+                    source: "catalog".to_string(),
+                    tier: "third-party".to_string(),
+                    source_repo: "zhangsan/cleaner".to_string(),
+                    upstream_repo: "zhangsan/cleaner".to_string(),
+                    risk_level: "low".to_string(),
+                    risk_findings: vec![],
+                    conflict_blocked: false,
+                    conflict_reason: String::new(),
+                    installed: false,
+                    installed_version: String::new(),
+                    has_update: false,
+                    is_new: false,
+                    status: "available".to_string(),
+                },
+            ],
+            update_count: 0,
+            new_plugin_count: 0,
+            uninstalled_count: 0,
+            official_count: 0,
+            third_party_count: 0,
+            custom_repos: vec![],
+            message: String::new(),
+            checked_at: String::new(),
+        };
+        refresh_marketplace_snapshot_status(&paths, &mut snap);
+        assert_eq!(snap.official_count, 1);
+        assert_eq!(snap.third_party_count, 2);
+        let fake = snap.plugins.iter().find(|p| p.tier == "custom").unwrap();
+        assert!(fake.conflict_blocked);
+        assert!(!fake.has_update);
+
+        // Cross-source overwrite of official plugin must fail
+        let err = install_remote_plugin_with_options(
+            &paths,
+            "office-viewer".to_string(),
+            "https://github.com/attacker/fake/releases/download/v9.9.9/office-viewer-v9.9.9.zip".to_string(),
+            None,
+            Some("custom-repo:attacker/fake".to_string()),
+            Some("attacker/fake".to_string()),
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("禁止"));
+
         let _ = fs::remove_dir_all(&paths.base_dir);
     }
 }

@@ -9,6 +9,7 @@ import {
   type BundledPackageInfo,
   type CleanupResult,
   type ClearLogResult,
+  type CustomMarketplaceRepo,
   type DeleteLocalDirResult,
   type DeletePluginResult,
   type FileFilterSpec,
@@ -33,6 +34,7 @@ import {
   type RuleFileInfo,
   type SaveExeResult,
   type SavePluginSettingsResult,
+  type SecurityScanReport,
   type ShortcutResult,
   type SkillDetail,
   type SkillInfo,
@@ -43,6 +45,7 @@ import {
   type StorageViewMode,
   type SystemProxyDetection,
   type ThemeMode,
+  type ThirdPartyPreflightResult,
   type ToastEventPayload,
   type TokenUsageSnapshot,
   type UiPreferences,
@@ -102,21 +105,57 @@ export const ipc = {
   deleteLocalPluginDir: (dirName: string) =>
     callCommand<DeleteLocalDirResult>(TAURI_COMMANDS.DELETE_LOCAL_PLUGIN_DIR, { dirName }),
 
-  installPluginPackage: (packagePath: string, overwrite = true) =>
-    callCommand<InstallPackageResult>(TAURI_COMMANDS.INSTALL_PLUGIN_PACKAGE, { packagePath, overwrite }),
+  installPluginPackage: (packagePath: string, overwrite = true, allowLowRisk = true) =>
+    callCommand<InstallPackageResult>(TAURI_COMMANDS.INSTALL_PLUGIN_PACKAGE, {
+      packagePath,
+      overwrite,
+      allowLowRisk,
+    }),
+
+  scanLocalPluginPackage: (packagePath: string) =>
+    callCommand<SecurityScanReport>(TAURI_COMMANDS.SCAN_LOCAL_PLUGIN_PACKAGE, { packagePath }),
 
   fetchRemoteMarketplace: (force = false) =>
     callCommand<RemoteMarketplaceResult>(TAURI_COMMANDS.FETCH_REMOTE_MARKETPLACE, { force }),
 
-  installRemotePlugin: (pluginId: string, downloadUrl: string, sha256?: string) =>
+  installRemotePlugin: (
+    pluginId: string,
+    downloadUrl: string,
+    sha256?: string,
+    options?: { installSource?: string; upstreamRepo?: string; allowLowRisk?: boolean },
+  ) =>
     callCommand<InstallPackageResult>(TAURI_COMMANDS.INSTALL_REMOTE_PLUGIN, {
       pluginId,
       downloadUrl,
       sha256: sha256 || null,
+      installSource: options?.installSource || null,
+      upstreamRepo: options?.upstreamRepo || null,
+      allowLowRisk: options?.allowLowRisk ?? true,
     }),
 
   markMarketplaceSeen: (pluginIds: string[]) =>
     callCommand<void>(TAURI_COMMANDS.MARK_MARKETPLACE_SEEN, { pluginIds }),
+
+  addCustomMarketplaceRepo: (repoInput: string, label?: string) =>
+    callCommand<CustomMarketplaceRepo[]>(TAURI_COMMANDS.ADD_CUSTOM_MARKETPLACE_REPO, {
+      repoInput,
+      label: label || null,
+    }),
+
+  removeCustomMarketplaceRepo: (repo: string) =>
+    callCommand<CustomMarketplaceRepo[]>(TAURI_COMMANDS.REMOVE_CUSTOM_MARKETPLACE_REPO, { repo }),
+
+  toggleCustomMarketplaceRepo: (repo: string, enabled: boolean) =>
+    callCommand<CustomMarketplaceRepo[]>(TAURI_COMMANDS.TOGGLE_CUSTOM_MARKETPLACE_REPO, {
+      repo,
+      enabled,
+    }),
+
+  preflightThirdPartySubmission: (repoInput: string, pluginName: string) =>
+    callCommand<ThirdPartyPreflightResult>(TAURI_COMMANDS.PREFLIGHT_THIRD_PARTY_SUBMISSION, {
+      repoInput,
+      pluginName,
+    }),
 
   loadPluginSettingsPage: (pluginId: string) =>
     callCommand<PluginSettingsPageData>(TAURI_COMMANDS.LOAD_PLUGIN_SETTINGS_PAGE, { pluginId }),
