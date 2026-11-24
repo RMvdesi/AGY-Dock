@@ -37,10 +37,13 @@ jobs:
           fi
 
       - name: Open review PRs for official high-risk updates
-        if: hashFiles('sync-pending-official.json') != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [ ! -f sync-pending-official.json ]; then
+            echo "No pending official high-risk updates."
+            exit 0
+          fi
           git config user.name "agy-dock-bot"
           git config user.email "bot@haoanlab.xyz"
           COUNT=$(node -e "const a=JSON.parse(require('fs').readFileSync('sync-pending-official.json','utf8'));console.log(Array.isArray(a)?a.length:0)")
@@ -73,19 +76,10 @@ jobs:
             if ! git diff --cached --quiet; then
               git commit -m "chore(marketplace): review official plugin update ${ID} v${VER}"
               git push origin "$BRANCH" --force
+              PR_BODY=$(printf '⚠️ **官方已收录插件发布了新版本，检测到高风险规则项，需人工复核后合并更新。**\n\n- 插件 ID：`%s`\n- 目标版本：`v%s`\n- 上游仓库：https://github.com/%s\n- 筛查结论：%s\n\n### 触发的风险项明细\n%s\n\n> 核对新版源码确认安全后点击 **Merge pull request** 即可更新到官方市场。\n' "$ID" "$VER" "$REPO" "$SUMMARY" "$FINDINGS")
               gh pr create --base main --head "$BRANCH" \
                 --title "[人工复核 · 新版更新] ${ID} v${VER}" \
-                --body "⚠️ **官方已收录插件发布了新版本，检测到高风险规则项，需人工复核后合并更新。**
-
-- 插件 ID：\`${ID}\`
-- 目标版本：\`v${VER}\`
-- 上游仓库：https://github.com/${REPO}
-- 筛查结论：${SUMMARY}
-
-### 触发的风险项明细
-${FINDINGS}
-
-> 核对新版源码确认安全后点击 **Merge pull request** 即可更新到官方市场。"
+                --body "$PR_BODY"
             fi
             git checkout main
           done
