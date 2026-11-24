@@ -32,6 +32,10 @@ AGY-Launcher/.app-profile/
 !AGY-Launcher/plugin-packages/
 !AGY-Launcher/plugin-packages/*.zip
 
+# Local AI assistant instructions (keep locally, do not publish to GitHub)
+AGENTS.md
+AGY-Launcher/AGENTS.md
+
 # CI Release staging artifacts
 .release-artifacts/
 dist-release/
