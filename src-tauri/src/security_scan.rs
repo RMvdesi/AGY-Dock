@@ -93,14 +93,208 @@ fn obfuscated_eval_re() -> &'static Regex {
     })
 }
 
-fn credential_theft_re() -> &'static Regex {
+fn hard_credential_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r"(?i)(?:Login Data|Local State|Web Data|CryptUnprotectData|\bcmdkey\b|\bvaultcmd\b|\.ssh[\\/]id_|\.aws[\\/]credentials|CurrentVersion[\\/]Run)",
+            r"(?i)(?:CryptUnprotectData|\bcmdkey\b|\bvaultcmd\b|\.ssh[\\/]id_|\.aws[\\/]credentials|CurrentVersion[\\/]Run)",
         )
         .unwrap()
     })
+}
+
+fn browser_cred_file_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)(?:Login Data|Local State|Web Data)").unwrap())
+}
+
+fn defensive_denylist_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?i)(?:sensitive|deny|block|forbid|blacklist|restricted|excluded|ignored|disallow|protected)",
+        )
+        .unwrap()
+    })
+}
+
+fn cred_access_context_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?i)(?:user data|\bchrome\b|\bedge\b|\bbrave\b|\bopera\b|\bappdata\b|localappdata|readfile|createreadstream|copyfile|\bsqlite\b|\bdatabase\b|\bopen\s*\()",
+        )
+        .unwrap()
+    })
+}
+
+fn quoted_cred_basename_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r#"(?i)(?:'login data'|"login data"|`login data`|'local state'|"local state"|`local state`|'web data'|"web data"|`web data`)"#,
+        )
+        .unwrap()
+    })
+}
+
+pub fn strip_comments(text: &str, ext: &str) -> String {
+    let e = ext.to_ascii_lowercase();
+    if matches!(e.as_str(), "html" | "htm") {
+        let bytes = text.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i..].starts_with(b"<!--") {
+                out.extend_from_slice(b"    ");
+                i += 4;
+                while i < bytes.len() && !bytes[i..].starts_with(b"-->") {
+                    out.push(if bytes[i] == b'\n' || bytes[i] == b'\r' {
+                        bytes[i]
+                    } else {
+                        b' '
+                    });
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    out.extend_from_slice(b"   ");
+                    i += 3;
+                }
+            } else {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+        return String::from_utf8(out).unwrap_or_else(|_| text.to_string());
+    }
+
+    let is_js_like = matches!(
+        e.as_str(),
+        "js" | "mjs" | "cjs" | "ts" | "mts" | "cts" | "jsx" | "tsx"
+    );
+    let is_py_sh = matches!(e.as_str(), "py" | "pyw" | "sh");
+    let is_ps = matches!(e.as_str(), "ps1" | "psm1" | "psd1");
+    if !is_js_like && !is_py_sh && !is_ps {
+        return text.to_string();
+    }
+
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    let mut quote: Option<u8> = None;
+    let n = bytes.len();
+
+    while i < n {
+        let b = bytes[i];
+        if let Some(q) = quote {
+            out.push(b);
+            if b == b'\\' && !is_ps && i + 1 < n {
+                i += 1;
+                out.push(bytes[i]);
+            } else if b == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+
+        if b == b'\'' || b == b'"' || (is_js_like && b == b'`') {
+            quote = Some(b);
+            out.push(b);
+            i += 1;
+            continue;
+        }
+
+        if is_js_like && b == b'/' && i + 1 < n {
+            if bytes[i + 1] == b'/' {
+                while i < n && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                    out.push(b' ');
+                    i += 1;
+                }
+                continue;
+            }
+            if bytes[i + 1] == b'*' {
+                out.extend_from_slice(b"  ");
+                i += 2;
+                while i < n && !(bytes[i] == b'*' && i + 1 < n && bytes[i + 1] == b'/') {
+                    out.push(if bytes[i] == b'\n' || bytes[i] == b'\r' {
+                        bytes[i]
+                    } else {
+                        b' '
+                    });
+                    i += 1;
+                }
+                if i < n {
+                    out.extend_from_slice(b"  ");
+                    i += 2;
+                }
+                continue;
+            }
+        }
+
+        if is_ps && b == b'<' && i + 1 < n && bytes[i + 1] == b'#' {
+            out.extend_from_slice(b"  ");
+            i += 2;
+            while i < n && !(bytes[i] == b'#' && i + 1 < n && bytes[i + 1] == b'>') {
+                out.push(if bytes[i] == b'\n' || bytes[i] == b'\r' {
+                    bytes[i]
+                } else {
+                    b' '
+                });
+                i += 1;
+            }
+            if i < n {
+                out.extend_from_slice(b"  ");
+                i += 2;
+            }
+            continue;
+        }
+
+        if (is_py_sh || is_ps) && b == b'#' {
+            while i < n && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                out.push(b' ');
+                i += 1;
+            }
+            continue;
+        }
+
+        out.push(b);
+        i += 1;
+    }
+
+    String::from_utf8(out).unwrap_or_else(|_| text.to_string())
+}
+
+pub fn has_credential_theft_risk(code_text: &str) -> bool {
+    if hard_credential_re().is_match(code_text) {
+        return true;
+    }
+    if !browser_cred_file_re().is_match(code_text) {
+        return false;
+    }
+
+    let lines: Vec<&str> = code_text.lines().collect();
+    for (idx, line) in lines.iter().enumerate() {
+        if !browser_cred_file_re().is_match(line) {
+            continue;
+        }
+        if cred_access_context_re().is_match(line) {
+            return true;
+        }
+        let without_benign_quoted = quoted_cred_basename_re().replace_all(line, " ");
+        if browser_cred_file_re().is_match(&without_benign_quoted) {
+            return true;
+        }
+        let start = idx.saturating_sub(12);
+        let end = (idx + 2).min(lines.len().saturating_sub(1));
+        let has_defensive_context = lines[start..=end]
+            .iter()
+            .any(|l| defensive_denylist_re().is_match(l));
+        if !has_defensive_context {
+            return true;
+        }
+    }
+    false
 }
 
 fn destructive_os_re() -> &'static Regex {
@@ -322,12 +516,14 @@ pub fn scan_zip_bytes(bytes: &[u8]) -> Result<SecurityScanReport, String> {
         let Ok(text) = std::str::from_utf8(&buf) else {
             continue;
         };
+        let code_text = strip_comments(text, ext);
+        let code_str = code_text.as_str();
         let is_vendored = is_vendored_minified_asset(&rel_lower);
 
         // High-risk checks (skip vendored minified browser libs like pdf.min.mjs on heuristic obfuscation)
         if !is_vendored {
             let is_ps = matches!(ext, "ps1" | "psm1" | "psd1");
-            if direct_kill_re().is_match(text) || (is_ps && ps_dotnet_kill_re().is_match(text)) {
+            if direct_kill_re().is_match(code_str) || (is_ps && ps_dotnet_kill_re().is_match(code_str)) {
                 add_finding(
                     &mut findings,
                     SecurityFinding {
@@ -341,7 +537,7 @@ pub fn scan_zip_bytes(bytes: &[u8]) -> Result<SecurityScanReport, String> {
                 );
             }
 
-            if obfuscated_eval_re().is_match(text) || hex_obf_re().find_iter(text).count() >= 5 {
+            if obfuscated_eval_re().is_match(code_str) || hex_obf_re().find_iter(code_str).count() >= 5 {
                 add_finding(
                     &mut findings,
                     SecurityFinding {
@@ -355,7 +551,7 @@ pub fn scan_zip_bytes(bytes: &[u8]) -> Result<SecurityScanReport, String> {
                 );
             }
 
-            if credential_theft_re().is_match(text) {
+            if has_credential_theft_risk(code_str) {
                 add_finding(
                     &mut findings,
                     SecurityFinding {
@@ -369,7 +565,7 @@ pub fn scan_zip_bytes(bytes: &[u8]) -> Result<SecurityScanReport, String> {
                 );
             }
 
-            if destructive_os_re().is_match(text) {
+            if destructive_os_re().is_match(code_str) {
                 add_finding(
                     &mut findings,
                     SecurityFinding {
@@ -386,9 +582,9 @@ pub fn scan_zip_bytes(bytes: &[u8]) -> Result<SecurityScanReport, String> {
 
         // Low-risk / sensitivity checks
         let mut file_domains: Vec<String> = Vec::new();
-        if !is_vendored && outbound_net_api_re().is_match(text) {
-            for line in text.lines() {
-                if is_url_only_for_browser_open(text, line) {
+        if !is_vendored && outbound_net_api_re().is_match(code_str) {
+            for line in code_str.lines() {
+                if is_url_only_for_browser_open(code_str, line) {
                     continue;
                 }
                 for cap in url_re().captures_iter(line) {
@@ -420,7 +616,7 @@ pub fn scan_zip_bytes(bytes: &[u8]) -> Result<SecurityScanReport, String> {
             }
         }
 
-        if !is_vendored && chat_or_brain_re().is_match(text) {
+        if !is_vendored && chat_or_brain_re().is_match(code_str) {
             add_finding(
                 &mut findings,
                 SecurityFinding {
@@ -435,14 +631,14 @@ pub fn scan_zip_bytes(bytes: &[u8]) -> Result<SecurityScanReport, String> {
         }
 
         if !is_vendored
-            && outside_fs_re().is_match(text)
-            && !text.contains("DevToolsActivePort")
-            && (text.contains("writeFile")
-                || text.contains("mkdir")
-                || text.contains("rmSync")
-                || text.contains("unlink")
-                || text.contains("Set-Content")
-                || text.contains("Out-File"))
+            && outside_fs_re().is_match(code_str)
+            && !code_str.contains("DevToolsActivePort")
+            && (code_str.contains("writeFile")
+                || code_str.contains("mkdir")
+                || code_str.contains("rmSync")
+                || code_str.contains("unlink")
+                || code_str.contains("Set-Content")
+                || code_str.contains("Out-File"))
         {
             add_finding(
                 &mut findings,
@@ -457,7 +653,7 @@ pub fn scan_zip_bytes(bytes: &[u8]) -> Result<SecurityScanReport, String> {
             );
         }
 
-        if !is_vendored && manager_bridge_re().is_match(text) {
+        if !is_vendored && manager_bridge_re().is_match(code_str) {
             add_finding(
                 &mut findings,
                 SecurityFinding {
@@ -657,5 +853,81 @@ mod tests {
             .findings
             .iter()
             .any(|f| f.code == "MANAGER_BRIDGE_PROCESS_CONTROL"));
+    }
+
+    #[test]
+    fn ignores_comments_and_defensive_denylist_while_catching_real_theft() {
+        let zip_clean = make_test_zip(&[
+            (
+                "agy-plugin.json",
+                br#"{"schemaVersion":1,"id":"demo.safe","command":"node","launchArgs":["plugins\\demo.safe\\index.js"]}"#,
+            ),
+            (
+                "index.js",
+                r#"
+                    // 固定无插值 PowerShell 文件选择脚本（通过 powershell -EncodedCommand 执行）
+                    /* taskkill /F /PID 9999 示例说明，实际并未执行 */
+                    const SENSITIVE_BASENAMES = new Set([
+                      'login data',
+                      'local state',
+                      'web data',
+                    ]);
+                    const api = 'https://example.invalid/keep-literal-slash//comment';
+                    console.log(SENSITIVE_BASENAMES.has('readme.md'), api);
+                "#
+                .as_bytes(),
+            ),
+        ]);
+        let r_clean = scan_zip_bytes(&zip_clean).unwrap();
+        assert!(!r_clean.blocked, "Unexpected findings: {:?}", r_clean.findings);
+        assert_eq!(r_clean.risk_level, "none");
+
+        let zip_eval = make_test_zip(&[
+            (
+                "agy-plugin.json",
+                br#"{"schemaVersion":1,"id":"bad.eval","command":"node","launchArgs":["plugins\\bad.eval\\index.js"]}"#,
+            ),
+            (
+                "index.js",
+                br#"const { execSync } = require('child_process'); execSync('powershell -EncodedCommand abc');"#,
+            ),
+        ]);
+        let r_eval = scan_zip_bytes(&zip_eval).unwrap();
+        assert!(r_eval.blocked);
+        assert!(r_eval.findings.iter().any(|f| f.code == "OBFUSCATED_EXECUTION"));
+
+        let zip_path_theft = make_test_zip(&[
+            (
+                "agy-plugin.json",
+                br#"{"schemaVersion":1,"id":"bad.theft","command":"node","launchArgs":["plugins\\bad.theft\\index.js"]}"#,
+            ),
+            (
+                "index.js",
+                br#"const p = fs.readFileSync(path.join(base, 'Chrome/User Data/Default/Login Data'));"#,
+            ),
+        ]);
+        let r_theft = scan_zip_bytes(&zip_path_theft).unwrap();
+        assert!(r_theft.blocked);
+        assert!(r_theft
+            .findings
+            .iter()
+            .any(|f| f.code == "CREDENTIAL_OR_PERSISTENCE"));
+
+        let zip_hard_near_denylist = make_test_zip(&[
+            (
+                "agy-plugin.json",
+                br#"{"schemaVersion":1,"id":"bad.crypt","command":"node","launchArgs":["plugins\\bad.crypt\\index.js"]}"#,
+            ),
+            (
+                "index.js",
+                br#"const SENSITIVE_BASENAMES = new Set(['login data']); const fn = 'CryptUnprotectData';"#,
+            ),
+        ]);
+        let r_hard = scan_zip_bytes(&zip_hard_near_denylist).unwrap();
+        assert!(r_hard.blocked);
+        assert!(r_hard
+            .findings
+            .iter()
+            .any(|f| f.code == "CREDENTIAL_OR_PERSISTENCE"));
     }
 }

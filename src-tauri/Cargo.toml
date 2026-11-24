@@ -1,6 +1,6 @@
 [package]
 name = "agy-dock"
-version = "2.9.3"
+version = "2.9.4"
 description = "AGY Dock — Antigravity desktop control center, process supervisor, and sandboxed plugin hub"
 authors = ["HaoAn"]
 edition = "2021"

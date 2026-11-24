@@ -13,7 +13,11 @@ jobs:
   process-submission:
     if: >-
       contains(github.event.issue.labels.*.name, 'plugin-third-party-submit') ||
-      contains(github.event.issue.labels.*.name, 'plugin-official-submit')
+      contains(github.event.issue.labels.*.name, 'plugin-official-submit') ||
+      startsWith(github.event.issue.title, '[Official Plugin]') ||
+      startsWith(github.event.issue.title, '[Third-Party Plugin]') ||
+      startsWith(github.event.issue.title, '[官方认证插件申请]') ||
+      startsWith(github.event.issue.title, '[第三方插件上架]')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -30,8 +34,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
         run: |
-          if echo '${{ join(github.event.issue.labels.*.name, ',') }}' | grep -q 'plugin-official-submit'; then
+          if echo "$ISSUE_LABELS" | grep -q 'plugin-official-submit' || [[ "$ISSUE_TITLE" == "[Official Plugin]"* ]] || [[ "$ISSUE_TITLE" == "[官方认证插件申请]"* ]]; then
             echo "track=official" >> "$GITHUB_OUTPUT"
             node scripts/process-plugin-submission.mjs --official
           else

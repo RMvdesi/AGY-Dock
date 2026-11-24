@@ -7,6 +7,8 @@ import {
   rankPluginAssetCandidate,
   selectValidPluginFromReleases,
 } from './process-plugin-submission.mjs';
+import { hasCredentialTheftRisk, scanZipBuffer, stripComments } from './scan-plugin.mjs';
+import { isNewerSemver, pickBestReleaseAsset } from './sync-third-party-releases.mjs';
 
 function buildStoredZip(files) {
   const localParts = [];
@@ -162,4 +164,77 @@ test('evaluateSubmissionRiskPolicy keeps third-party hard-blocked while routing 
     blocked: false,
     highRiskWarning: true,
   });
+});
+
+test('scanner ignores comments and defensive credential denylist while catching real threats', () => {
+  const safeZip = buildStoredZip({
+    'agy-plugin.json': JSON.stringify({
+      schemaVersion: 1,
+      id: 'demo.safe',
+      name: 'Safe Plugin',
+      version: '1.0.0',
+      type: 'node-cdp',
+      command: 'node',
+      launchArgs: ['plugins\\demo.safe\\index.js'],
+    }),
+    'index.js': `
+      // 固定无插值 PowerShell 脚本说明（通过 powershell -EncodedCommand 执行）
+      /* taskkill /F /PID 9999 示例说明 */
+      const SENSITIVE_BASENAMES = new Set([
+        'login data',
+        'local state',
+        'web data',
+      ]);
+      const url = 'https://example.invalid/keep//inside-string';
+      console.log(SENSITIVE_BASENAMES.size, url);
+    `,
+  });
+  const safeReport = scanZipBuffer(safeZip);
+  assert.equal(safeReport.blocked, false);
+  assert.equal(safeReport.riskLevel, 'none');
+
+  const stripped = stripComments("// taskkill /F\nconst s = 'https://a.b//c';", 'js');
+  assert.equal(stripped.includes('taskkill'), false);
+  assert.equal(stripped.includes('https://a.b//c'), true);
+
+  assert.equal(hasCredentialTheftRisk("const SENSITIVE_BASENAMES = new Set(['login data', 'local state']);"), false);
+  assert.equal(hasCredentialTheftRisk("fs.readFileSync(path.join(dir, 'Chrome/User Data/Default/Login Data'));"), true);
+  assert.equal(hasCredentialTheftRisk("const SENSITIVE_BASENAMES = []; const x = 'CryptUnprotectData';"), true);
+
+  const evalZip = buildStoredZip({
+    'agy-plugin.json': JSON.stringify({ schemaVersion: 1, id: 'bad.eval', command: 'node', launchArgs: [] }),
+    'index.js': "execSync('powershell -EncodedCommand abc');",
+  });
+  const evalReport = scanZipBuffer(evalZip);
+  assert.equal(evalReport.blocked, true);
+  assert.ok(evalReport.findings.some((f) => f.code === 'OBFUSCATED_EXECUTION'));
+});
+
+test('sync-third-party-releases skips prereleases and ranks stable semver higher than beta', () => {
+  assert.equal(isNewerSemver('1.0.8', '1.0.8-beta.1'), true);
+  assert.equal(isNewerSemver('1.0.8-beta.1', '1.0.8'), false);
+  assert.equal(isNewerSemver('1.0.8-beta.2', '1.0.8-beta.1'), true);
+
+  const releases = [
+    {
+      draft: false,
+      prerelease: true,
+      tag_name: 'v1.0.9-beta.1',
+      assets: [
+        { name: 'alice.tool-v1.0.9-beta.1.zip', browser_download_url: 'https://example.invalid/beta.zip' },
+      ],
+    },
+    {
+      draft: false,
+      prerelease: false,
+      tag_name: 'v1.0.8',
+      assets: [
+        { name: 'alice.tool-v1.0.8-rc.1.zip', browser_download_url: 'https://example.invalid/rc.zip' },
+        { name: 'alice.tool-v1.0.8.zip', browser_download_url: 'https://example.invalid/stable.zip' },
+      ],
+    },
+  ];
+  const picked = pickBestReleaseAsset(releases, 'alice.tool');
+  assert.equal(picked?.version, '1.0.8');
+  assert.equal(picked?.downloadUrl, 'https://example.invalid/stable.zip');
 });

@@ -27,7 +27,11 @@ const HEX_OBF_RE = /\b_0x[a-fA-F0-9]{4,}\b/g;
 const DIRECT_KILL_RE = /(?:\btaskkill\b|\bStop-Process\b|\bTerminateProcess\b|\bpskill\b|wmic\s+process\b[^\r\n;]*\bdelete\b|(?:execSync|execFileSync|exec|spawnSync|spawn|system|popen)\s*\([^)]*\b(?:killall|pkill)\b)/i;
 const PS_DOTNET_KILL_RE = /\.\s*Kill\s*\(/;
 const OBFUSCATED_EVAL_RE = /(?:eval\s*\(\s*(?:atob|Buffer\.from|unescape|decodeURIComponent)\s*\(|new\s+Function\s*\(\s*(?:atob|Buffer\.from)\s*\(|powershell(?:\.exe)?\b[^\r\n]*\s-(?:e|enc|encodedcommand)\b|Invoke-Expression\b|\biex\s+[($])/i;
-const CREDENTIAL_THEFT_RE = /(?:Login Data|Local State|Web Data|CryptUnprotectData|\bcmdkey\b|\bvaultcmd\b|\.ssh[\\/]id_|\.aws[\\/]credentials|CurrentVersion[\\/]Run)/i;
+const HARD_CREDENTIAL_RE = /(?:CryptUnprotectData|\bcmdkey\b|\bvaultcmd\b|\.ssh[\\/]id_|\.aws[\\/]credentials|CurrentVersion[\\/]Run)/i;
+const BROWSER_CRED_FILE_RE = /(?:Login Data|Local State|Web Data)/i;
+const DEFENSIVE_DENYLIST_RE = /(?:sensitive|deny|block|forbid|blacklist|restricted|excluded|ignored|disallow|protected)/i;
+const CRED_ACCESS_CONTEXT_RE = /(?:user data|\bchrome\b|\bedge\b|\bbrave\b|\bopera\b|\bappdata\b|localappdata|readfile|createreadstream|copyfile|\bsqlite\b|\bdatabase\b|\bopen\s*\()/i;
+const QUOTED_CRED_BASENAME_RE = /(['"`])(?:login data|local state|web data)\1/gi;
 const DESTRUCTIVE_OS_RE = /(?:\brm\s+-rf\b|\brmdir\s+\/s\b|\brd\s+\/s\s+\/q\b|\bdel\s+\/f\s+\/s\b|\breg\s+(?:add|delete)\b|\bschtasks\b|\bsc\s+(?:create|delete)\b|\bbcdedit\b|\bvssadmin\b|\bSet-MpPreference\b|\bAdd-MpPreference\b)/i;
 const OUTBOUND_NET_API_RE = /(?:\bfetch\s*\(|https?\.(?:request|get)\s*\(|new\s+WebSocket\s*\(|XMLHttpRequest|Invoke-WebRequest|Invoke-RestMethod|urllib\.request|\brequests\.(?:get|post|put|request)\b|\baxios\b|net\.connect|tls\.connect)/i;
 const CHAT_OR_BRAIN_RE = /(?:\.gemini[\\/](?:antigravity[\\/])?(?:conversations|brain)|state\.vscdb|conversation_history|chat_history)/i;
@@ -136,6 +140,121 @@ function isUrlOnlyForBrowserOpen(text, line) {
   return false;
 }
 
+export function stripComments(text, ext) {
+  const src = String(text || '');
+  const e = String(ext || '').toLowerCase();
+  if (['html', 'htm'].includes(e)) {
+    return src.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\r\n]/g, ' '));
+  }
+  const isJsLike = ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts', 'jsx', 'tsx'].includes(e);
+  const isPySh = ['py', 'pyw', 'sh'].includes(e);
+  const isPs = ['ps1', 'psm1', 'psd1'].includes(e);
+  if (!isJsLike && !isPySh && !isPs) return src;
+
+  const out = [];
+  let i = 0;
+  let quote = '';
+  const n = src.length;
+  while (i < n) {
+    const ch = src[i];
+    if (quote) {
+      out.push(ch);
+      if (ch === '\\' && !isPs && i + 1 < n) {
+        i += 1;
+        out.push(src[i]);
+      } else if (ch === quote) {
+        quote = '';
+      }
+      i += 1;
+      continue;
+    }
+
+    if (ch === '\'' || ch === '"' || (isJsLike && ch === '`')) {
+      quote = ch;
+      out.push(ch);
+      i += 1;
+      continue;
+    }
+
+    if (isJsLike && ch === '/' && i + 1 < n) {
+      const next = src[i + 1];
+      if (next === '/') {
+        while (i < n && src[i] !== '\n' && src[i] !== '\r') {
+          out.push(' ');
+          i += 1;
+        }
+        continue;
+      }
+      if (next === '*') {
+        out.push(' ', ' ');
+        i += 2;
+        while (i < n && !(src[i] === '*' && src[i + 1] === '/')) {
+          out.push(src[i] === '\n' || src[i] === '\r' ? src[i] : ' ');
+          i += 1;
+        }
+        if (i < n) {
+          out.push(' ', ' ');
+          i += 2;
+        }
+        continue;
+      }
+    }
+
+    if (isPs && ch === '<' && src[i + 1] === '#') {
+      out.push(' ', ' ');
+      i += 2;
+      while (i < n && !(src[i] === '#' && src[i + 1] === '>')) {
+        out.push(src[i] === '\n' || src[i] === '\r' ? src[i] : ' ');
+        i += 1;
+      }
+      if (i < n) {
+        out.push(' ', ' ');
+        i += 2;
+      }
+      continue;
+    }
+
+    if ((isPySh || isPs) && ch === '#') {
+      while (i < n && src[i] !== '\n' && src[i] !== '\r') {
+        out.push(' ');
+        i += 1;
+      }
+      continue;
+    }
+
+    out.push(ch);
+    i += 1;
+  }
+  return out.join('');
+}
+
+export function hasCredentialTheftRisk(codeText) {
+  const src = String(codeText || '');
+  if (HARD_CREDENTIAL_RE.test(src)) return true;
+  if (!BROWSER_CRED_FILE_RE.test(src)) return false;
+
+  const lines = src.split(/\r?\n/);
+  for (let idx = 0; idx < lines.length; idx += 1) {
+    const line = lines[idx];
+    if (!BROWSER_CRED_FILE_RE.test(line)) continue;
+    if (CRED_ACCESS_CONTEXT_RE.test(line)) return true;
+    const withoutBenignQuoted = line.replace(QUOTED_CRED_BASENAME_RE, ' ');
+    if (BROWSER_CRED_FILE_RE.test(withoutBenignQuoted)) return true;
+
+    const start = Math.max(0, idx - 12);
+    const end = Math.min(lines.length - 1, idx + 2);
+    let hasDefensiveContext = false;
+    for (let j = start; j <= end; j += 1) {
+      if (DEFENSIVE_DENYLIST_RE.test(lines[j])) {
+        hasDefensiveContext = true;
+        break;
+      }
+    }
+    if (!hasDefensiveContext) return true;
+  }
+  return false;
+}
+
 function addFinding(findings, finding) {
   if (!findings.some((f) => f.code === finding.code && f.file === finding.file && f.severity === finding.severity)) {
     findings.push(finding);
@@ -190,11 +309,12 @@ export function scanZipBuffer(buffer) {
     if (!CODE_FILE_EXTS.has(ext)) continue;
     scannedFiles += 1;
     const text = buf.toString('utf8');
+    const codeText = stripComments(text, ext);
     const isVendored = isVendoredMinifiedAsset(relLower);
 
     if (!isVendored) {
       const isPs = ext === 'ps1' || ext === 'psm1' || ext === 'psd1';
-      if (DIRECT_KILL_RE.test(text) || (isPs && PS_DOTNET_KILL_RE.test(text))) {
+      if (DIRECT_KILL_RE.test(codeText) || (isPs && PS_DOTNET_KILL_RE.test(codeText))) {
         addFinding(findings, {
           severity: 'high',
           code: 'DIRECT_PROCESS_KILL',
@@ -204,7 +324,7 @@ export function scanZipBuffer(buffer) {
           targets: [],
         });
       }
-      if (OBFUSCATED_EVAL_RE.test(text) || (text.match(HEX_OBF_RE) || []).length >= 5) {
+      if (OBFUSCATED_EVAL_RE.test(codeText) || (codeText.match(HEX_OBF_RE) || []).length >= 5) {
         addFinding(findings, {
           severity: 'high',
           code: 'OBFUSCATED_EXECUTION',
@@ -214,7 +334,7 @@ export function scanZipBuffer(buffer) {
           targets: [],
         });
       }
-      if (CREDENTIAL_THEFT_RE.test(text)) {
+      if (hasCredentialTheftRisk(codeText)) {
         addFinding(findings, {
           severity: 'high',
           code: 'CREDENTIAL_OR_PERSISTENCE',
@@ -224,7 +344,7 @@ export function scanZipBuffer(buffer) {
           targets: [],
         });
       }
-      if (DESTRUCTIVE_OS_RE.test(text)) {
+      if (DESTRUCTIVE_OS_RE.test(codeText)) {
         addFinding(findings, {
           severity: 'high',
           code: 'DESTRUCTIVE_OS_COMMAND',
@@ -235,10 +355,10 @@ export function scanZipBuffer(buffer) {
         });
       }
 
-      if (OUTBOUND_NET_API_RE.test(text)) {
+      if (OUTBOUND_NET_API_RE.test(codeText)) {
         const fileDomains = [];
-        for (const line of text.split(/\r?\n/)) {
-          if (isUrlOnlyForBrowserOpen(text, line)) continue;
+        for (const line of codeText.split(/\r?\n/)) {
+          if (isUrlOnlyForBrowserOpen(codeText, line)) continue;
           URL_RE.lastIndex = 0;
           let match;
           while ((match = URL_RE.exec(line)) !== null) {
@@ -264,7 +384,7 @@ export function scanZipBuffer(buffer) {
         }
       }
 
-      if (CHAT_OR_BRAIN_RE.test(text)) {
+      if (CHAT_OR_BRAIN_RE.test(codeText)) {
         addFinding(findings, {
           severity: 'low',
           code: 'READS_CONVERSATION_DATA',
@@ -276,9 +396,9 @@ export function scanZipBuffer(buffer) {
       }
 
       if (
-        OUTSIDE_FS_RE.test(text) &&
-        !text.includes('DevToolsActivePort') &&
-        /(writeFile|mkdir|rmSync|unlink|Set-Content|Out-File)/.test(text)
+        OUTSIDE_FS_RE.test(codeText) &&
+        !codeText.includes('DevToolsActivePort') &&
+        /(writeFile|mkdir|rmSync|unlink|Set-Content|Out-File)/.test(codeText)
       ) {
         addFinding(findings, {
           severity: 'low',
@@ -290,7 +410,7 @@ export function scanZipBuffer(buffer) {
         });
       }
 
-      if (MANAGER_BRIDGE_RE.test(text)) {
+      if (MANAGER_BRIDGE_RE.test(codeText)) {
         addFinding(findings, {
           severity: 'low',
           code: 'MANAGER_BRIDGE_PROCESS_CONTROL',

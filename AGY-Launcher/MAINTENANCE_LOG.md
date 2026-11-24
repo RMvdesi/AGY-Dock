@@ -6,6 +6,24 @@ Format follows the rules in `AGY-Launcher/AGENTS.md` and Semantic Versioning (`M
 
 ---
 
+## [v2.9.4] - 2026-11-24 21:40
+### Scope & Summary
+- Create missing `plugin-official-submit` and `plugin-third-party-submit` labels on GitHub (`haoan33/AGY-Dock`), update `.github/workflows/plugin-submission.yml` to also match submission title prefixes as a fallback, and resolve Issues `#1`, `#2`, and `#3`.
+- Fix scanner false positives identically in `scripts/scan-plugin.mjs` and `src-tauri/src/security_scan.rs`: strip comments (preserving string literals) before scanning and exempt bare quoted filenames (`'login data'`, `'local state'`, `'web data'`) when used inside a defensive denylist context without filesystem path/access tokens, while retaining strict hard rules (`CryptUnprotectData`, actual file paths, binaries, obfuscation).
+- Upgrade `scripts/sync-third-party-releases.mjs` and `.github/workflows/sync-third-party-releases.yml` to skip `prerelease` / prerelease-tagged assets, apply full SemVer prerelease precedence (`1.0.8` > `1.0.8-beta.1`), and open `[人工复核 · 新版更新]` review PRs when an official plugin's new release hits high-risk rules instead of silently skipping it.
+- Bump synchronized manifests to `2.9.4` and add regression tests in `src-tauri/src/security_scan.rs` and `scripts/process-plugin-submission.test.mjs`.
+
+### Files Changed
+- `.github/workflows/plugin-submission.yml`, `.github/workflows/sync-third-party-releases.yml`, `scripts/sync-third-party-releases.mjs` — label/title fallback trigger, SemVer prerelease handling, and official update review PR queue.
+- `scripts/scan-plugin.mjs`, `src-tauri/src/security_scan.rs`, `scripts/process-plugin-submission.test.mjs` — comment stripping, defensive credential denylist detection, and regression tests.
+- `VERSION`, `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, `AGY-Launcher/server.mjs`, `AGY-Launcher/lib/process-manager.mjs`, `CHANGELOG.md`, `README.md` — synchronized `2.9.4` version bump and changelog notes.
+
+### Verification
+- `npm run build` (`tsc --noEmit && vite build`) -> built 2280 modules in 4.87s, 0 errors; `npx tsc --noEmit` re-verified cleanly.
+- `cargo test --manifest-path src-tauri/Cargo.toml` -> 63 passed, 0 failed (`agy_dock_lib`, 0 warnings).
+- `node --test scripts/process-plugin-submission.test.mjs AGY-Launcher/tests/process-manager.test.mjs` -> 16 passed, 0 failed.
+- `node scripts/scan-plugin.mjs AGY-Launcher/plugin-packages/agy-telemetry-v1.3.6.zip` -> exited 0 (`[NONE]`, 5 files scanned).
+
 ## [v2.9.3] - 2026-11-24 21:28
 ### Scope & Summary
 - Support Option B manual review & approval in the Official Marketplace pipeline: `scripts/process-plugin-submission.mjs` (`--official`) and `.github/workflows/plugin-submission.yml` now create a clearly flagged Pull Request (`[人工复核 · 含高敏行为]`) with upstream repo links and full finding details when high-risk rules trigger, leaving final merge approval to the repository maintainer while keeping Third-Party auto-publishing and 15-minute unattended auto-sync strictly blocked on high risk.
