@@ -184,6 +184,49 @@ fn strip_manifest_prefix(raw: &str) -> String {
         .to_string()
 }
 
+fn is_url_only_for_browser_open(text: &str, line: &str) -> bool {
+    let line_lower = line.to_ascii_lowercase();
+    if line_lower.contains("openexternalurl(")
+        || line_lower.contains("window.open(")
+        || line_lower.contains("href=")
+    {
+        return true;
+    }
+    // Check `const FOO_URL = "https://..."` where FOO_URL is only used in openExternalUrl / window.open
+    let trimmed = line.trim();
+    if let Some(after_kw) = trimmed
+        .strip_prefix("const ")
+        .or_else(|| trimmed.strip_prefix("let "))
+        .or_else(|| trimmed.strip_prefix("var "))
+    {
+        if let Some((ident, _)) = after_kw.split_once('=') {
+            let ident = ident.trim();
+            if !ident.is_empty() && ident.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                let mut total_refs = 0usize;
+                let mut safe_refs = 0usize;
+                for l in text.lines() {
+                    if l.contains(ident) {
+                        total_refs += 1;
+                        let ll = l.to_ascii_lowercase();
+                        if l.trim().starts_with("const ")
+                            || l.trim().starts_with("let ")
+                            || l.trim().starts_with("var ")
+                            || ll.contains("openexternalurl(")
+                            || ll.contains("window.open(")
+                        {
+                            safe_refs += 1;
+                        }
+                    }
+                }
+                if total_refs > 0 && total_refs == safe_refs {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn add_finding(findings: &mut Vec<SecurityFinding>, finding: SecurityFinding) {
     if !findings.iter().any(|f| {
         f.code == finding.code && f.file == finding.file && f.severity == finding.severity
@@ -344,15 +387,20 @@ pub fn scan_zip_bytes(bytes: &[u8]) -> Result<SecurityScanReport, String> {
         // Low-risk / sensitivity checks
         let mut file_domains: Vec<String> = Vec::new();
         if !is_vendored && outbound_net_api_re().is_match(text) {
-            for cap in url_re().captures_iter(text) {
-                if let Some(host_m) = cap.get(1) {
-                    let host = host_m.as_str().trim().to_ascii_lowercase();
-                    if !host.is_empty() && !is_ignored_domain(&host) {
-                        if external_domain_set.insert(host.clone()) {
-                            external_domains.push(host.clone());
-                        }
-                        if !file_domains.contains(&host) {
-                            file_domains.push(host);
+            for line in text.lines() {
+                if is_url_only_for_browser_open(text, line) {
+                    continue;
+                }
+                for cap in url_re().captures_iter(line) {
+                    if let Some(host_m) = cap.get(1) {
+                        let host = host_m.as_str().trim().to_ascii_lowercase();
+                        if !host.is_empty() && !is_ignored_domain(&host) {
+                            if external_domain_set.insert(host.clone()) {
+                                external_domains.push(host.clone());
+                            }
+                            if !file_domains.contains(&host) {
+                                file_domains.push(host);
+                            }
                         }
                     }
                 }

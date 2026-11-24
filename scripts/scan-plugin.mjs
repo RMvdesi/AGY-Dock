@@ -106,6 +106,36 @@ function isIgnoredDomain(host) {
   return IGNORED_DOMAINS.some((d) => lower === d || lower.endsWith(`.${d}`));
 }
 
+function isUrlOnlyForBrowserOpen(text, line) {
+  const ll = line.toLowerCase();
+  if (ll.includes('openexternalurl(') || ll.includes('window.open(') || ll.includes('href=')) {
+    return true;
+  }
+  const m = line.trim().match(/^(?:const|let|var)\s+([A-Za-z0-9_]+)\s*=/);
+  if (m) {
+    const ident = m[1];
+    const lines = text.split(/\r?\n/);
+    let totalRefs = 0;
+    let safeRefs = 0;
+    for (const l of lines) {
+      if (l.includes(ident)) {
+        totalRefs += 1;
+        const t = l.trim();
+        const tLower = t.toLowerCase();
+        if (
+          /^(?:const|let|var)\s+/.test(t) ||
+          tLower.includes('openexternalurl(') ||
+          tLower.includes('window.open(')
+        ) {
+          safeRefs += 1;
+        }
+      }
+    }
+    if (totalRefs > 0 && totalRefs === safeRefs) return true;
+  }
+  return false;
+}
+
 function addFinding(findings, finding) {
   if (!findings.some((f) => f.code === finding.code && f.file === finding.file && f.severity === finding.severity)) {
     findings.push(finding);
@@ -207,16 +237,19 @@ export function scanZipBuffer(buffer) {
 
       if (OUTBOUND_NET_API_RE.test(text)) {
         const fileDomains = [];
-        URL_RE.lastIndex = 0;
-        let match;
-        while ((match = URL_RE.exec(text)) !== null) {
-          const host = String(match[1] || '').trim().toLowerCase();
-          if (host && !isIgnoredDomain(host)) {
-            if (!externalDomainSet.has(host)) {
-              externalDomainSet.add(host);
-              externalDomains.push(host);
+        for (const line of text.split(/\r?\n/)) {
+          if (isUrlOnlyForBrowserOpen(text, line)) continue;
+          URL_RE.lastIndex = 0;
+          let match;
+          while ((match = URL_RE.exec(line)) !== null) {
+            const host = String(match[1] || '').trim().toLowerCase();
+            if (host && !isIgnoredDomain(host)) {
+              if (!externalDomainSet.has(host)) {
+                externalDomainSet.add(host);
+                externalDomains.push(host);
+              }
+              if (!fileDomains.includes(host)) fileDomains.push(host);
             }
-            if (!fileDomains.includes(host)) fileDomains.push(host);
           }
         }
         if (fileDomains.length > 0) {
